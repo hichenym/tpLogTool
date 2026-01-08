@@ -22,8 +22,9 @@ from multiprocessing import Process
 from ctypes import *
 
 global func_lib
-add_path = os.path.split(os.path.abspath(__file__))[0]+'\\'
-os.add_dll_directory(add_path)
+add_path = os.path.dirname(os.path.abspath(__file__))
+if hasattr(os, 'add_dll_directory'):  # Only available on Windows
+    os.add_dll_directory(add_path)
 test = False
 # 定义回调函数类型
 callback_type = CFUNCTYPE(c_int, c_uint, POINTER(c_char),  c_uint, POINTER(c_void_p), c_uint)
@@ -278,7 +279,7 @@ def func_lib_init():
     调用动态链接库函数
     """
     global func_lib
-    path = os.getcwd() + '\\Funclib.dll'
+    path = os.path.join(os.getcwd(), 'Funclib.dll')
 
     if platform.system().lower() == 'windows':
         func_lib = CDLL(path, winmode=0)
@@ -539,7 +540,7 @@ def get_yun_log(yun_id, pwd, name, sn, timeout):
     :return:
     """
     global log_name
-    log_name = os.getcwd() + f"\\远程日志\\{name}_{sn}_{str(yun_id)}.txt"
+    log_name = os.path.join(os.getcwd(), "远程日志", f"{name}_{sn}_{str(yun_id)}.txt")
     with open(log_name, "w", encoding="utf-8", errors='ignore') as f1:
         f1.write("")
     cloud_test.clear()    # 清空  临时数据存放字典
