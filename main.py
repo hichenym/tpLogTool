@@ -11,10 +11,11 @@ from PyQt5.QtWidgets import (
     QHeaderView, QCheckBox, QStatusBar, QMessageBox, QSplitter, QFrame,
     QLineEdit, QFileDialog
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QTimer
 from PyQt5.QtGui import QClipboard, QIcon, QPixmap
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import icon_res  # 导入资源文件
+from version import get_version_string  # 导入版本信息
 
 # 禁用SSL警告
 requests.packages.urllib3.disable_warnings()
@@ -250,6 +251,20 @@ def wake_device_smart(dev_id, sn, token, host='console.seetong.com', max_times=3
             time.sleep(1)
     
     return False  # 多次唤醒后仍离线
+
+
+class ClickableLabel(QLabel):
+    """可点击的标签，用于显示版本信息"""
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)  # 设置鼠标指针为手型
+        self.clicked = None  # 点击事件回调
+        
+    def mousePressEvent(self, event):
+        """鼠标点击事件"""
+        if event.button() == Qt.LeftButton and self.clicked:
+            self.clicked()
+        super().mousePressEvent(event)
 
 
 class PlainTextEdit(QTextEdit):
@@ -490,6 +505,7 @@ class MainWindow(QMainWindow):
         self.query_input_type = None  # 记录查询类型 'sn' 或 'id'
         self.query_input_list = []  # 记录输入的列表
         self.export_path = ""  # 导出路径
+        self.version_timer = None  # 版本信息隐藏定时器
         self.init_ui()
         # 加载配置
         self.load_config()
@@ -654,6 +670,7 @@ class MainWindow(QMainWindow):
         self.export_path_input = QLineEdit()
         self.export_path_input.setPlaceholderText("选择CSV文件保存目录...")
         self.export_path_input.setReadOnly(True)
+        self.export_path_input.setFocusPolicy(Qt.NoFocus)  # 禁用焦点
         self.browse_btn = QPushButton("浏览")
         self.browse_btn.setIcon(QIcon(":/icon/save.png"))
         self.browse_btn.setIconSize(QSize(16, 16))
@@ -690,6 +707,13 @@ class MainWindow(QMainWindow):
         # 状态栏
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+        
+        # 在状态栏右侧添加版本号（默认隐藏）
+        self.version_label = ClickableLabel("  ")  # 默认显示空格占位
+        self.version_label.setStyleSheet("color: gray; padding-right: 10px;")
+        self.version_label.clicked = self.on_version_clicked
+        self.status_bar.addPermanentWidget(self.version_label)
+        
         self.status_bar.showMessage("就绪")
 
         # 绑定事件
@@ -710,6 +734,25 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         # 延迟调用以确保窗口已完全显示
         self.adjust_table_columns()
+
+    def on_version_clicked(self):
+        """点击版本标签时显示版本信息"""
+        # 显示版本信息
+        self.version_label.setText(get_version_string())
+        
+        # 如果已有定时器，先停止
+        if self.version_timer:
+            self.version_timer.stop()
+        
+        # 创建1秒后隐藏的定时器
+        self.version_timer = QTimer()
+        self.version_timer.setSingleShot(True)  # 只触发一次
+        self.version_timer.timeout.connect(self.hide_version)
+        self.version_timer.start(1000)  # 1秒后触发
+    
+    def hide_version(self):
+        """隐藏版本信息"""
+        self.version_label.setText("  ")  # 恢复为空格占位
 
     def center_on_screen(self):
         """将窗口居中显示在屏幕上"""
@@ -794,24 +837,48 @@ class MainWindow(QMainWindow):
         sn_list = [line.strip() for line in sn_text.split('\n') if line.strip()]
         id_list = [line.strip() for line in id_text.split('\n') if line.strip()]
         
-        # 记录查询类型和输入列表
-        if sn_list and not id_list:
-            self.query_input_type = 'sn'
+        # 判断查询类型：优先使用上次的查询类型，避免重复查询
+        # 如果上次是SN查询，这次只查询SN（即使ID框有自动填充的数据）
+        # 如果上次是ID查询，这次只查询ID（即使SN框有自动填充的数据）
+        if self.query_input_type == 'sn' and sn_list:
+            # 上次是SN查询，继续只查询SN
+            id_list = []
             self.query_input_list = sn_list
-        elif id_list and not sn_list:
-            self.query_input_type = 'id'
+        elif self.query_input_type == 'id' and id_list:
+            # 上次是ID查询，继续只查询ID
+            sn_list = []
             self.query_input_list = id_list
         else:
-            # 两个都有输入，不做自动填充
-            self.query_input_type = None
-            self.query_input_list = []
+            # 首次查询或两个框都清空后重新输入
+            if sn_list and not id_list:
+                self.query_input_type = 'sn'
+                self.query_input_list = sn_list
+            elif id_list and not sn_list:
+                self.query_input_type = 'id'
+                self.query_input_list = id_list
+            else:
+                # 两个都有输入，不做自动填充
+                self.query_input_type = None
+                self.query_input_list = []
         
         # 重置查询结果
         self.query_results = {}
         
-        # 禁用查询按钮，防止重复点击
+        # 禁用所有按钮，防止重复操作
         self.query_btn.setEnabled(False)
         self.query_btn.setText("查询中...")
+        self.clear_btn.setEnabled(False)
+        self.batch_wake_btn.setEnabled(False)
+        self.select_all_checkbox.setEnabled(False)
+        self.browse_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
+        
+        # 禁用所有已存在的唤醒按钮
+        for row in range(self.result_table.rowCount()):
+            btn_container = self.result_table.cellWidget(row, 7)
+            wake_btn = btn_container.findChild(QPushButton) if btn_container else None
+            if wake_btn:
+                wake_btn.setEnabled(False)
         
         # 重置计数
         self.total_count = len(sn_list) + len(id_list)
@@ -840,6 +907,7 @@ class MainWindow(QMainWindow):
             wake_btn.setIcon(QIcon(":/icon/werk_up.png"))
             wake_btn.setIconSize(QSize(16, 16))  # 16x16 像素
             wake_btn.setFocusPolicy(Qt.NoFocus)  # 禁用焦点
+            wake_btn.setEnabled(False)  # 查询时禁用唤醒按钮
             wake_btn.clicked.connect(lambda checked, r=row: self.on_wake_single(r))
             
             # 将按钮放在容器中并居中
@@ -909,6 +977,20 @@ class MainWindow(QMainWindow):
         """查询出错"""
         self.query_btn.setEnabled(True)
         self.query_btn.setText("查询")
+        # 启用所有按钮
+        self.clear_btn.setEnabled(True)
+        self.batch_wake_btn.setEnabled(True)
+        self.select_all_checkbox.setEnabled(True)
+        self.browse_btn.setEnabled(True)
+        self.export_btn.setEnabled(True)
+        
+        # 启用所有唤醒按钮
+        for row in range(self.result_table.rowCount()):
+            btn_container = self.result_table.cellWidget(row, 7)
+            wake_btn = btn_container.findChild(QPushButton) if btn_container else None
+            if wake_btn:
+                wake_btn.setEnabled(True)
+        
         QMessageBox.critical(self, "错误", f"查询失败: {error_msg}")
         self.status_bar.showMessage("查询失败")
 
@@ -916,6 +998,20 @@ class MainWindow(QMainWindow):
         """查询完成"""
         self.query_btn.setEnabled(True)
         self.query_btn.setText("查询")
+        # 启用所有按钮
+        self.clear_btn.setEnabled(True)
+        self.batch_wake_btn.setEnabled(True)
+        self.select_all_checkbox.setEnabled(True)
+        self.browse_btn.setEnabled(True)
+        self.export_btn.setEnabled(True)
+        
+        # 启用所有唤醒按钮
+        for row in range(self.result_table.rowCount()):
+            btn_container = self.result_table.cellWidget(row, 7)
+            wake_btn = btn_container.findChild(QPushButton) if btn_container else None
+            if wake_btn:
+                wake_btn.setEnabled(True)
+        
         # 确保文本框可编辑
         self.sn_input.setEnabled(True)
         self.sn_input.setReadOnly(False)
@@ -991,6 +1087,10 @@ class MainWindow(QMainWindow):
         self.id_input.clear()
         self.result_table.setRowCount(0)
         self.select_all_checkbox.setChecked(False)
+        # 重置查询类型
+        self.query_input_type = None
+        self.query_input_list = []
+        self.query_results = {}
         self.status_bar.showMessage("清空完成", 2000)
 
     def on_wake_single(self, row):
@@ -1005,6 +1105,10 @@ class MainWindow(QMainWindow):
         # 清除选中状态
         self.result_table.clearSelection()
         
+        # 禁用查询和清空按钮
+        self.query_btn.setEnabled(False)
+        self.clear_btn.setEnabled(False)
+        
         # 获取按钮容器中的按钮
         btn_container = self.result_table.cellWidget(row, 7)
         wake_btn = None
@@ -1018,6 +1122,34 @@ class MainWindow(QMainWindow):
         # 在后台线程中唤醒
         self.on_batch_wake_single(dev_id, sn, row, wake_btn)
 
+    def update_device_count(self):
+        """更新设备在线/离线统计"""
+        total = 0
+        online = 0
+        offline = 0
+        
+        for row in range(self.result_table.rowCount()):
+            status_item = self.result_table.item(row, 6)
+            if status_item:
+                status_text = status_item.text()
+                if status_text in ["在线", "离线"]:
+                    total += 1
+                    if status_text == "在线":
+                        online += 1
+                    else:
+                        offline += 1
+        
+        # 更新成员变量
+        self.total_count = total
+        self.online_count = online
+        self.offline_count = offline
+        
+        # 更新状态栏
+        if total > 0:
+            self.status_bar.showMessage(
+                f"共 {total} 台设备，在线 {online} 台，离线 {offline} 台"
+            )
+
     def on_batch_wake_single(self, dev_id, sn, row, wake_btn):
         """唤醒单个设备（后台线程）"""
         def on_wake_done(name, success):
@@ -1025,6 +1157,10 @@ class MainWindow(QMainWindow):
             if wake_btn:
                 wake_btn.setText("唤醒")
                 wake_btn.setEnabled(True)
+            
+            # 启用查询和清空按钮
+            self.query_btn.setEnabled(True)
+            self.clear_btn.setEnabled(True)
             
             # 更新在线状态
             if success:
@@ -1038,6 +1174,9 @@ class MainWindow(QMainWindow):
                     status_item = QTableWidgetItem(status_text)
                     status_item.setForeground(status_color)
                     self.result_table.setItem(row, 6, status_item)
+                    
+                    # 更新设备统计
+                    self.update_device_count()
                 except:
                     pass
         
@@ -1056,6 +1195,9 @@ class MainWindow(QMainWindow):
             if wake_btn:
                 wake_btn.setText("唤醒")
                 wake_btn.setEnabled(True)
+            # 启用查询和清空按钮
+            self.query_btn.setEnabled(True)
+            self.clear_btn.setEnabled(True)
 
     def on_batch_wake(self):
         """批量唤醒"""
@@ -1075,9 +1217,14 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("请先选择设备", 3000)
             return
         
-        # 禁用批量唤醒按钮
+        # 禁用所有操作按钮
+        self.query_btn.setEnabled(False)
+        self.clear_btn.setEnabled(False)
         self.batch_wake_btn.setEnabled(False)
         self.batch_wake_btn.setText("唤醒中...")
+        self.select_all_checkbox.setEnabled(False)
+        self.browse_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
         
         # 将所有选中设备的唤醒按钮改为"唤醒中..."并禁用
         for row in selected_rows:
@@ -1099,6 +1246,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.batch_wake_btn.setEnabled(True)
             self.batch_wake_btn.setText("批量唤醒")
+            # 启用所有按钮
+            self.query_btn.setEnabled(True)
+            self.clear_btn.setEnabled(True)
+            self.select_all_checkbox.setEnabled(True)
+            self.browse_btn.setEnabled(True)
+            self.export_btn.setEnabled(True)
             # 恢复按钮状态
             for row in selected_rows:
                 btn_container = self.result_table.cellWidget(row, 7)
@@ -1111,7 +1264,6 @@ class MainWindow(QMainWindow):
     def on_wake_result(self, device_name, success, selected_rows=None):
         """单个设备唤醒结果"""
         status = "✓ 成功" if success else "✗ 失败"
-        self.status_bar.showMessage(f"唤醒 {device_name}: {status}")
         
         # 更新在线状态
         if success and selected_rows:
@@ -1139,6 +1291,13 @@ class MainWindow(QMainWindow):
         """唤醒出错"""
         self.batch_wake_btn.setEnabled(True)
         self.batch_wake_btn.setText("批量唤醒")
+        # 启用所有按钮
+        self.query_btn.setEnabled(True)
+        self.clear_btn.setEnabled(True)
+        self.select_all_checkbox.setEnabled(True)
+        self.browse_btn.setEnabled(True)
+        self.export_btn.setEnabled(True)
+        
         QMessageBox.critical(self, "错误", f"唤醒失败: {error_msg}")
         self.status_bar.showMessage("唤醒失败")
 
@@ -1146,7 +1305,12 @@ class MainWindow(QMainWindow):
         """唤醒完成"""
         self.batch_wake_btn.setEnabled(True)
         self.batch_wake_btn.setText("批量唤醒")
-        self.status_bar.showMessage("唤醒完成")
+        # 启用所有按钮
+        self.query_btn.setEnabled(True)
+        self.clear_btn.setEnabled(True)
+        self.select_all_checkbox.setEnabled(True)
+        self.browse_btn.setEnabled(True)
+        self.export_btn.setEnabled(True)
         
         # 恢复所有唤醒按钮状态
         for row in range(self.result_table.rowCount()):
@@ -1155,6 +1319,9 @@ class MainWindow(QMainWindow):
             if wake_btn and wake_btn.text() == "唤醒中...":
                 wake_btn.setText("唤醒")
                 wake_btn.setEnabled(True)
+        
+        # 更新设备统计
+        self.update_device_count()
         
         # 等待线程完成
         if self.wake_thread:

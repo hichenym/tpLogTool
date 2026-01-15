@@ -74,14 +74,41 @@ ie4uinit.exe -show
 
 ## 打包发布
 
-### 方式一：使用 spec 文件（推荐）
+### 版本管理
+
+项目使用 `version.py` 统一管理版本信息：
+
+```python
+VERSION_MAJOR = 1  # 主版本号：重大功能更新或架构变更
+VERSION_MINOR = 0  # 次版本号：新增功能或较大改进
+VERSION_PATCH = 0  # 修订号：Bug修复或小改进
+BUILD_DATE = "20260115"  # 编译日期（自动生成）
+```
+
+版本号格式：`V主版本.次版本.修订号 (编译日期)`
+例如：`V1.0.0 (20260115)`
+
+### 方式一：使用自动打包脚本（推荐）
+
+```bash
+# 自动更新编译日期并打包
+python build.py
+```
+
+脚本会自动：
+1. 更新 `version.py` 中的编译日期为当前日期
+2. 显示当前版本信息
+3. 执行 PyInstaller 打包
+4. 清理临时文件
+
+### 方式二：使用 spec 文件
 
 ```bash
 # 清理之前的打包文件
 pyinstaller 设备查询工具.spec --clean
 ```
 
-### 方式二：使用命令行参数
+### 方式三：使用命令行参数
 
 ```bash
 pyinstaller -F -w -i ./icon/logo.ico --name "设备查询工具" main.py --noconsole
