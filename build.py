@@ -42,7 +42,28 @@ def build_exe():
         print("✓ 清理dist目录")
     
     # 执行打包
-    cmd = 'pyinstaller -F -w -i ./icon/logo.ico --name "设备查询工具" main.py --noconsole'
+    # 修复问题：确保 ddddocr 及其依赖被正确打包
+    # 
+    # 关键依赖说明：
+    # 1. ddddocr - 验证码识别库（已在 main.py 开头显式导入）
+    # 2. onnxruntime - ddddocr 依赖的 AI 模型运行时，包含大量二进制文件
+    # 3. cv2 (opencv-python-headless) - ddddocr 的图像处理依赖
+    # 
+    # 打包参数说明：
+    # --hidden-import: 显式告诉 PyInstaller 包含这些模块
+    # --collect-all=ddddocr: 收集 ddddocr 的所有数据文件（包括 .onnx 模型文件）
+    # --collect-binaries=onnxruntime: 只收集 onnxruntime 的二进制文件，不收集其他无用文件
+    #   （相比 --collect-all，这样可以大幅减小打包体积，避免包含开发工具和文档）
+    cmd = (
+        'pyinstaller -F -w -i ./icon/logo.ico --name "设备查询工具" main.py --noconsole '
+        '--hidden-import=ddddocr '
+        '--hidden-import=onnxruntime '
+        '--hidden-import=cv2 '
+        '--hidden-import=numpy '
+        '--collect-all=ddddocr '
+        '--collect-binaries=onnxruntime '
+        '--collect-data=onnxruntime'
+    )
     print(f"\n执行命令: {cmd}")
     
     result = subprocess.run(cmd, shell=True)

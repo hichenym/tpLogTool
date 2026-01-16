@@ -5,11 +5,15 @@ import time
 import hashlib
 import requests
 import winreg
+import base64
+import csv
+from datetime import datetime
+import ddddocr
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem,
-    QHeaderView, QCheckBox, QStatusBar, QMessageBox, QSplitter, QFrame,
-    QLineEdit, QFileDialog
+    QHeaderView, QCheckBox, QStatusBar, QSplitter, QFrame,
+    QLineEdit, QFileDialog, QDesktopWidget
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QTimer
 from PyQt5.QtGui import QClipboard, QIcon, QPixmap
@@ -52,13 +56,21 @@ class DeviceQuery:
         self.password = password
         self.host = 'console.seetong.com' if env == 'pro' else 'console-test.seetong.com'
         self.env = env
+        self.token = None
+        self.refresh_token = None
+        self.init_error = None  # 记录初始化错误
         
-        if use_cache and self._load_token_cache():
-            pass
-        else:
-            self.token, self.refresh_token = self._get_token()
-            if use_cache:
-                self._save_token_cache()
+        try:
+            if use_cache and self._load_token_cache():
+                pass
+            else:
+                self.token, self.refresh_token = self._get_token()
+                if self.token is None:
+                    self.init_error = "登录失败：无法获取访问令牌，请检查网络连接或账号密码"
+                elif use_cache:
+                    self._save_token_cache()
+        except Exception as e:
+            self.init_error = f"初始化失败: {str(e)}"
 
     def _load_token_cache(self):
         try:
@@ -88,9 +100,6 @@ class DeviceQuery:
             pass
 
     def _get_captcha(self):
-        import ddddocr
-        import base64
-        
         url = f'https://{self.host}/api/seetong-auth/oauth/captcha'
         r = requests.get(url, verify=False)
         res = r.json()
@@ -100,6 +109,7 @@ class DeviceQuery:
         return res['key'], ocr.classification(img_data)
 
     def _get_token(self, retry=3):
+        """获取登录token，失败时返回 None"""
         for i in range(retry):
             try:
                 captcha_key, captcha_code = self._get_captcha()
@@ -123,10 +133,11 @@ class DeviceQuery:
                 res = r.json()
                 if res.get('access_token'):
                     return res['access_token'], res['refresh_token']
-            except:
-                pass
+            except Exception as e:
+                if i == retry - 1:  # 最后一次重试失败
+                    print(f"登录失败: {e}")
             time.sleep(1)
-        sys.exit(1)
+        return None, None  # 登录失败返回 None
 
     def _request(self, api_path, params):
         url = f'https://{self.host}{api_path}'
@@ -609,13 +620,11 @@ class MainWindow(QMainWindow):
         self.result_table.setSelectionMode(QTableWidget.NoSelection)
         self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)  # 禁用编辑
         
-        # 设置单元格内边距样式和选中边框，超出显示省略号
+        # 设置单元格内边距样式和选中边框
+        # 注意：Qt 样式表不支持 overflow 和 text-overflow，文本截断由 Qt 自动处理
         self.result_table.setStyleSheet("""
             QTableWidget::item {
                 padding-right: 10px;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
             }
             QTableWidget::item:selected {
                 background-color: transparent;
@@ -756,7 +765,6 @@ class MainWindow(QMainWindow):
 
     def center_on_screen(self):
         """将窗口居中显示在屏幕上"""
-        from PyQt5.QtWidgets import QDesktopWidget
         screen = QDesktopWidget().screenGeometry()
         window = self.geometry()
         x = (screen.width() - window.width()) // 2
@@ -923,10 +931,26 @@ class MainWindow(QMainWindow):
         # 在主线程中初始化 query
         try:
             query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+            # 检查初始化是否成功
+            if query.init_error:
+                self.query_btn.setEnabled(True)
+                self.query_btn.setText("查询")
+                self.clear_btn.setEnabled(True)
+                self.batch_wake_btn.setEnabled(True)
+                self.select_all_checkbox.setEnabled(True)
+                self.browse_btn.setEnabled(True)
+                self.export_btn.setEnabled(True)
+                self.status_bar.showMessage(f"❌ {query.init_error}", 5000)
+                return
         except Exception as e:
             self.query_btn.setEnabled(True)
             self.query_btn.setText("查询")
-            QMessageBox.critical(self, "错误", f"初始化失败: {e}")
+            self.clear_btn.setEnabled(True)
+            self.batch_wake_btn.setEnabled(True)
+            self.select_all_checkbox.setEnabled(True)
+            self.browse_btn.setEnabled(True)
+            self.export_btn.setEnabled(True)
+            self.status_bar.showMessage(f"❌ 初始化失败: {str(e)}", 5000)
             return
         
         # 启动多线程查询
@@ -991,8 +1015,7 @@ class MainWindow(QMainWindow):
             if wake_btn:
                 wake_btn.setEnabled(True)
         
-        QMessageBox.critical(self, "错误", f"查询失败: {error_msg}")
-        self.status_bar.showMessage("查询失败")
+        self.status_bar.showMessage(f"❌ 查询失败: {error_msg}", 5000)
 
     def on_query_complete(self):
         """查询完成"""
@@ -1099,7 +1122,7 @@ class MainWindow(QMainWindow):
         dev_id = self.result_table.item(row, 2).text()
         
         if not sn or not dev_id:
-            QMessageBox.warning(self, "提示", "设备信息不完整")
+            self.status_bar.showMessage("⚠️ 设备信息不完整，无法唤醒", 3000)
             return
         
         # 清除选中状态
@@ -1167,6 +1190,9 @@ class MainWindow(QMainWindow):
                 # 查询最新的在线状态
                 try:
                     query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+                    if query.init_error:
+                        self.status_bar.showMessage(f"⚠️ {query.init_error}", 3000)
+                        return
                     is_online = check_device_online(sn, query.token)
                     status_text = "在线" if is_online else "离线"
                     status_color = Qt.green if is_online else Qt.red
@@ -1177,8 +1203,8 @@ class MainWindow(QMainWindow):
                     
                     # 更新设备统计
                     self.update_device_count()
-                except:
-                    pass
+                except Exception as e:
+                    self.status_bar.showMessage(f"⚠️ 更新状态失败: {str(e)}", 3000)
         
         def on_thread_finished():
             if thread in self.wake_threads:
@@ -1186,6 +1212,14 @@ class MainWindow(QMainWindow):
         
         try:
             query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+            if query.init_error:
+                if wake_btn:
+                    wake_btn.setText("唤醒")
+                    wake_btn.setEnabled(True)
+                self.query_btn.setEnabled(True)
+                self.clear_btn.setEnabled(True)
+                self.status_bar.showMessage(f"❌ {query.init_error}", 5000)
+                return
             thread = WakeThread([(dev_id, sn)], query, max_workers=1)
             thread.wake_result.connect(on_wake_done)
             thread.finished.connect(on_thread_finished)
@@ -1198,6 +1232,7 @@ class MainWindow(QMainWindow):
             # 启用查询和清空按钮
             self.query_btn.setEnabled(True)
             self.clear_btn.setEnabled(True)
+            self.status_bar.showMessage(f"❌ 唤醒失败: {str(e)}", 5000)
 
     def on_batch_wake(self):
         """批量唤醒"""
@@ -1214,7 +1249,7 @@ class MainWindow(QMainWindow):
                     selected_rows.append(row)
         
         if not selected_devices:
-            self.status_bar.showMessage("请先选择设备", 3000)
+            self.status_bar.showMessage("⚠️ 请先选择要唤醒的设备", 3000)
             return
         
         # 禁用所有操作按钮
@@ -1237,6 +1272,24 @@ class MainWindow(QMainWindow):
         # 启动多线程唤醒
         try:
             query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+            if query.init_error:
+                self.batch_wake_btn.setEnabled(True)
+                self.batch_wake_btn.setText("批量唤醒")
+                self.query_btn.setEnabled(True)
+                self.clear_btn.setEnabled(True)
+                self.select_all_checkbox.setEnabled(True)
+                self.browse_btn.setEnabled(True)
+                self.export_btn.setEnabled(True)
+                # 恢复按钮状态
+                for row in selected_rows:
+                    btn_container = self.result_table.cellWidget(row, 7)
+                    wake_btn = btn_container.findChild(QPushButton) if btn_container else None
+                    if wake_btn:
+                        wake_btn.setText("唤醒")
+                        wake_btn.setEnabled(True)
+                self.status_bar.showMessage(f"❌ {query.init_error}", 5000)
+                return
+            
             self.wake_thread = WakeThread(selected_devices, query, max_workers=30)
             self.wake_thread.wake_result.connect(lambda name, success: self.on_wake_result(name, success, selected_rows))
             self.wake_thread.all_done.connect(self.on_wake_complete)
@@ -1259,7 +1312,7 @@ class MainWindow(QMainWindow):
                 if wake_btn:
                     wake_btn.setText("唤醒")
                     wake_btn.setEnabled(True)
-            QMessageBox.critical(self, "错误", f"初始化失败: {e}")
+            self.status_bar.showMessage(f"❌ 初始化失败: {str(e)}", 5000)
 
     def on_wake_result(self, device_name, success, selected_rows=None):
         """单个设备唤醒结果"""
@@ -1272,6 +1325,8 @@ class MainWindow(QMainWindow):
                 if device_name.startswith(sn):
                     try:
                         query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+                        if query.init_error:
+                            continue
                         is_online = check_device_online(sn, query.token)
                         status_text = "在线" if is_online else "离线"
                         status_color = Qt.green if is_online else Qt.red
@@ -1279,7 +1334,7 @@ class MainWindow(QMainWindow):
                         status_item = QTableWidgetItem(status_text)
                         status_item.setForeground(status_color)
                         self.result_table.setItem(row, 6, status_item)
-                    except:
+                    except Exception as e:
                         pass
                     break
 
@@ -1298,8 +1353,7 @@ class MainWindow(QMainWindow):
         self.browse_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
         
-        QMessageBox.critical(self, "错误", f"唤醒失败: {error_msg}")
-        self.status_bar.showMessage("唤醒失败")
+        self.status_bar.showMessage(f"❌ 唤醒失败: {error_msg}", 5000)
 
     def on_wake_complete(self):
         """唤醒完成"""
@@ -1359,14 +1413,16 @@ class MainWindow(QMainWindow):
                 self.export_path = export_path
                 self.export_path_input.setText(export_path)
         except Exception as e:
-            print(f"加载配置失败: {e}")
+            # 注册表读取失败不影响程序运行，静默处理
+            pass
 
     def save_config(self):
         """保存配置到注册表"""
         try:
             set_registry_value(REGISTRY_PATH, 'export_path', self.export_path)
         except Exception as e:
-            print(f"保存配置失败: {e}")
+            # 注册表写入失败不影响程序运行，静默处理
+            pass
 
     def on_browse_path(self):
         """浏览按钮点击事件"""
@@ -1385,17 +1441,14 @@ class MainWindow(QMainWindow):
     def on_export_csv(self):
         """导出CSV按钮点击事件"""
         if not self.export_path:
-            self.status_bar.showMessage("请先选择保存目录", 3000)
+            self.status_bar.showMessage("⚠️ 请先选择保存目录", 3000)
             return
         
         if self.result_table.rowCount() == 0:
-            self.status_bar.showMessage("没有可导出的数据", 3000)
+            self.status_bar.showMessage("⚠️ 没有可导出的数据", 3000)
             return
         
         try:
-            import csv
-            from datetime import datetime
-            
             # 生成带时间戳的文件名
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_name = f"设备信息_{timestamp}.csv"
@@ -1424,9 +1477,9 @@ class MainWindow(QMainWindow):
                         writer.writerow([sn, dev_id, password, version])
                         exported_count += 1
             
-            self.status_bar.showMessage(f"导出成功：{file_name}（共{exported_count}条数据）", 5000)
+            self.status_bar.showMessage(f"✓ 导出成功：{file_name}（共{exported_count}条数据）", 5000)
         except Exception as e:
-            self.status_bar.showMessage(f"导出失败：{str(e)}", 5000)
+            self.status_bar.showMessage(f"❌ 导出失败：{str(e)}", 5000)
 
 
 if __name__ == "__main__":
