@@ -5,11 +5,11 @@ from datetime import datetime
 
 # 版本号配置
 VERSION_MAJOR = 1  # 主版本号：重大功能更新或架构变更
-VERSION_MINOR = 0  # 次版本号：新增功能或较大改进
+VERSION_MINOR = 1  # 次版本号：新增功能或较大改进
 VERSION_PATCH = 0  # 修订号：Bug修复或小改进
 
 # 自动获取编译日期
-BUILD_DATE = "20260115"
+BUILD_DATE = "20260117"
 
 def get_version():
     """获取版本号元组"""

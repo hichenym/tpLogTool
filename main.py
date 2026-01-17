@@ -13,7 +13,8 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QStatusBar, QSplitter, QFrame,
-    QLineEdit, QFileDialog, QDesktopWidget
+    QLineEdit, QFileDialog, QDesktopWidget, QStackedWidget, QComboBox,
+    QCompleter
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QTimer
 from PyQt5.QtGui import QClipboard, QIcon, QPixmap
@@ -197,6 +198,16 @@ class DeviceQuery:
         """获取设备绑定用户信息"""
         params = {"deviceId": dev_id}
         return self._request('/api/seetong-member-device/device-bind-user/list', params)
+
+    def get_user_by_mobile(self, mobile):
+        """根据手机号查询用户ID"""
+        params = {"mobile": mobile, "current": "1", "size": "10", "descs": "id"}
+        return self._request('/api/seetong-client/client/member/list', params)
+
+    def get_user_bind_devices(self, user_id):
+        """根据用户ID查询绑定设备列表"""
+        params = {"userId": user_id}
+        return self._request('/api/seetong-member-device/user-bind-device/list', params)
 
     def get_device_name(self, dev_id):
         """获取设备名称"""
@@ -573,11 +584,143 @@ class MainWindow(QMainWindow):
         self.center_on_screen()
 
     def init_ui(self):
+        # 创建自定义菜单栏（使用按钮代替QMenuBar）
+        menu_widget = QWidget()
+        menu_widget.setFixedHeight(28)  # 固定高度28像素
+        menu_widget.setStyleSheet("""
+            QWidget {
+                background-color: #fafafa;
+                border-bottom: 1px solid #e0e0e0;
+            }
+        """)
+        menu_layout = QHBoxLayout(menu_widget)
+        menu_layout.setContentsMargins(5, 0, 0, 0)  # 左边距5像素
+        menu_layout.setSpacing(0)
+        
+        # 状态按钮
+        self.device_menu_btn = QPushButton('状态')
+        self.device_menu_btn.setCheckable(True)
+        self.device_menu_btn.setChecked(True)  # 默认选中
+        self.device_menu_btn.clicked.connect(lambda: self.switch_page(0))
+        
+        # 设备按钮
+        self.other_menu_btn = QPushButton('设备')
+        self.other_menu_btn.setCheckable(True)
+        self.other_menu_btn.clicked.connect(lambda: self.switch_page(1))
+        
+        # 设置按钮样式
+        menu_btn_style = """
+            QPushButton {
+                border: none;
+                padding: 4px 16px;
+                background-color: transparent;
+                color: #555;
+                font-size: 13px;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: #f0f0f0;
+            }
+            QPushButton:checked {
+                background-color: #e8f4fd;
+                color: #0066cc;
+                font-weight: bold;
+            }
+        """
+        self.device_menu_btn.setStyleSheet(menu_btn_style)
+        self.other_menu_btn.setStyleSheet(menu_btn_style)
+        
+        menu_layout.addWidget(self.device_menu_btn)
+        menu_layout.addWidget(self.other_menu_btn)
+        menu_layout.addStretch()
+        
+        # 创建中心部件
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)  # 移除所有边距
-        main_layout.setSpacing(0)  # 移除间距
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # 添加菜单栏
+        main_layout.addWidget(menu_widget)
+        
+        # 创建堆叠窗口部件来管理多个页面
+        self.stacked_widget = QStackedWidget()
+        
+        # 创建设备页面
+        device_page = self.create_device_page()
+        self.stacked_widget.addWidget(device_page)
+        
+        # 创建其他页面（空白页）
+        other_page = self.create_other_page()
+        self.stacked_widget.addWidget(other_page)
+        
+        # 加载上次选择的页面索引
+        try:
+            last_page_index = get_registry_value(REGISTRY_PATH, 'last_page_index', '0')
+            page_index = int(last_page_index)
+            if page_index in [0, 1]:
+                self.stacked_widget.setCurrentIndex(page_index)
+                # 更新按钮状态
+                if page_index == 0:
+                    self.device_menu_btn.setChecked(True)
+                    self.other_menu_btn.setChecked(False)
+                else:
+                    self.device_menu_btn.setChecked(False)
+                    self.other_menu_btn.setChecked(True)
+            else:
+                self.stacked_widget.setCurrentIndex(0)
+        except:
+            # 默认显示第一个页面
+            self.stacked_widget.setCurrentIndex(0)
+        
+        main_layout.addWidget(self.stacked_widget)
+
+        # 状态栏
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        
+        # 在状态栏右侧添加版本号（默认隐藏）
+        self.version_label = ClickableLabel("  ")  # 默认显示空格占位
+        self.version_label.setStyleSheet("color: gray; padding-right: 10px;")
+        self.version_label.clicked = self.on_version_clicked
+        self.status_bar.addPermanentWidget(self.version_label)
+        
+        self.status_bar.showMessage("就绪")
+
+        # 绑定事件
+        self.query_btn.clicked.connect(self.on_query)
+        self.clear_btn.clicked.connect(self.on_clear)
+        self.batch_wake_btn.clicked.connect(self.on_batch_wake)
+        self.select_all_checkbox.stateChanged.connect(self.on_select_all)
+        self.export_btn.clicked.connect(self.on_export_csv)
+
+    def switch_page(self, index):
+        """切换页面"""
+        self.stacked_widget.setCurrentIndex(index)
+        
+        # 更新按钮选中状态
+        if index == 0:
+            self.device_menu_btn.setChecked(True)
+            self.other_menu_btn.setChecked(False)
+            self.status_bar.showMessage("状态页面")
+        elif index == 1:
+            self.device_menu_btn.setChecked(False)
+            self.other_menu_btn.setChecked(True)
+            self.status_bar.showMessage("设备页面")
+        
+        # 保存当前页面索引到注册表
+        try:
+            set_registry_value(REGISTRY_PATH, 'last_page_index', str(index))
+        except:
+            pass
+
+    def create_device_page(self):
+        """创建设备页面"""
+        device_page = QWidget()
+        page_layout = QVBoxLayout(device_page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
 
         # 使用QSplitter实现可拖拽调整高度
         splitter = QSplitter(Qt.Vertical)
@@ -738,7 +881,6 @@ class MainWindow(QMainWindow):
         
         export_layout.addWidget(export_label)
         export_layout.addWidget(self.export_path_input, 1)
-        export_layout.addSpacing(10)  # 添加10像素间隔
         export_layout.addWidget(self.export_btn)
         bottom_layout.addLayout(export_layout)
         
@@ -758,26 +900,101 @@ class MainWindow(QMainWindow):
             }
         """)
         
-        main_layout.addWidget(splitter)
-
-        # 状态栏
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
+        page_layout.addWidget(splitter)
         
-        # 在状态栏右侧添加版本号（默认隐藏）
-        self.version_label = ClickableLabel("  ")  # 默认显示空格占位
-        self.version_label.setStyleSheet("color: gray; padding-right: 10px;")
-        self.version_label.clicked = self.on_version_clicked
-        self.status_bar.addPermanentWidget(self.version_label)
-        
-        self.status_bar.showMessage("就绪")
+        return device_page
 
-        # 绑定事件
-        self.query_btn.clicked.connect(self.on_query)
-        self.clear_btn.clicked.connect(self.on_clear)
-        self.batch_wake_btn.clicked.connect(self.on_batch_wake)
-        self.select_all_checkbox.stateChanged.connect(self.on_select_all)
-        self.export_btn.clicked.connect(self.on_export_csv)
+    def create_other_page(self):
+        """创建其他页面（手机号查询设备）"""
+        other_page = QWidget()
+        layout = QVBoxLayout(other_page)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(15)  # 增加行间距
+        
+        # 顶部输入区域
+        input_layout = QHBoxLayout()
+        input_layout.setSpacing(10)  # 设置元素间距
+        
+        # 账号输入（使用可编辑的下拉框）
+        phone_label = QLabel("账号：")
+        phone_label.setFixedWidth(70)  # 固定标签宽度
+        phone_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)  # 右对齐，垂直居中
+        self.phone_input = QComboBox()
+        self.phone_input.setEditable(True)  # 可编辑
+        self.phone_input.setInsertPolicy(QComboBox.NoInsert)  # 不自动插入新项
+        self.phone_input.lineEdit().setPlaceholderText("请输入账号...")
+        self.phone_input.setFixedHeight(30)
+        
+        # 查询按钮
+        self.phone_query_btn = QPushButton("查询")
+        self.phone_query_btn.setIcon(QIcon(":/icon/search.png"))
+        self.phone_query_btn.setIconSize(QSize(16, 16))
+        self.phone_query_btn.setFixedSize(80, 30)
+        self.phone_query_btn.clicked.connect(self.on_phone_query)
+        
+        input_layout.addWidget(phone_label)
+        input_layout.addWidget(self.phone_input)
+        input_layout.addWidget(self.phone_query_btn)
+        layout.addLayout(input_layout)
+        
+        # 设备型号筛选区域
+        filter_layout = QHBoxLayout()
+        filter_layout.setSpacing(10)  # 设置元素间距
+        
+        model_label = QLabel("型号：")
+        model_label.setFixedWidth(70)  # 与上面标签宽度一致
+        model_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)  # 右对齐，垂直居中
+        self.model_combo = QComboBox()
+        self.model_combo.setFixedHeight(30)
+        self.model_combo.addItem("全部")
+        self.model_combo.currentIndexChanged.connect(self.on_model_filter_changed)
+        
+        # 设备数量标签
+        self.device_count_label = QLabel("数量：0")
+        self.device_count_label.setFixedWidth(80)  # 与查询按钮宽度一致
+        self.device_count_label.setAlignment(Qt.AlignCenter)  # 居中对齐
+        
+        filter_layout.addWidget(model_label)
+        filter_layout.addWidget(self.model_combo)
+        filter_layout.addWidget(self.device_count_label)
+        layout.addLayout(filter_layout)
+        
+        # 表格和文本框的水平布局
+        table_layout = QHBoxLayout()
+        
+        # 结果表格
+        self.phone_result_table = QTableWidget()
+        self.phone_result_table.setColumnCount(3)
+        self.phone_result_table.setHorizontalHeaderLabels(["型号", "设备名", "SN"])
+        self.phone_result_table.setFocusPolicy(Qt.NoFocus)
+        self.phone_result_table.setSelectionMode(QTableWidget.NoSelection)
+        self.phone_result_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        
+        # 设置列宽
+        header = self.phone_result_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        self.phone_result_table.setColumnWidth(0, 150)
+        self.phone_result_table.setColumnWidth(1, 200)
+        
+        # 连接双击复制事件
+        self.phone_result_table.cellDoubleClicked.connect(self.on_phone_cell_double_clicked)
+        
+        # SN列表文本框
+        self.sn_list_text = PlainTextEdit()
+        self.sn_list_text.setPlaceholderText("筛选后的SN列表...")
+        self.sn_list_text.setReadOnly(True)
+        self.sn_list_text.setMaximumWidth(200)  # 固定宽度
+        
+        table_layout.addWidget(self.phone_result_table, 3)  # 表格占3份
+        table_layout.addWidget(self.sn_list_text, 1)  # 文本框占1份
+        layout.addLayout(table_layout)
+        
+        # 存储查询结果
+        self.phone_query_results = []  # 存储所有设备数据
+        
+        return other_page
 
     def on_window_resize(self, event):
         """窗口resize事件"""
@@ -1452,17 +1669,59 @@ class MainWindow(QMainWindow):
             if export_path:
                 self.export_path = export_path
                 self.export_path_input.setText(export_path)
+            
+            # 加载手机号历史记录
+            phone_history = get_registry_value(REGISTRY_PATH, 'phone_history', '')
+            if phone_history:
+                self.phone_history = phone_history.split('|')[:5]  # 最多5个
+            else:
+                self.phone_history = []
+            
+            # 填充到下拉框
+            if self.phone_history:
+                self.phone_input.addItems(self.phone_history)
+                # 设置自动补全
+                completer = self.phone_input.completer()
+                completer.setCompletionMode(QCompleter.PopupCompletion)
+                completer.setCaseSensitivity(Qt.CaseInsensitive)
         except Exception as e:
             # 注册表读取失败不影响程序运行，静默处理
-            pass
+            self.phone_history = []
 
     def save_config(self):
         """保存配置到注册表"""
         try:
             set_registry_value(REGISTRY_PATH, 'export_path', self.export_path)
+            
+            # 保存手机号历史记录
+            if hasattr(self, 'phone_history') and self.phone_history:
+                phone_history_str = '|'.join(self.phone_history[:5])  # 最多保存5个
+                set_registry_value(REGISTRY_PATH, 'phone_history', phone_history_str)
         except Exception as e:
             # 注册表写入失败不影响程序运行，静默处理
             pass
+
+    def add_phone_to_history(self, phone):
+        """添加手机号到历史记录"""
+        if not hasattr(self, 'phone_history'):
+            self.phone_history = []
+        
+        # 如果已存在，先移除
+        if phone in self.phone_history:
+            self.phone_history.remove(phone)
+        
+        # 添加到列表开头
+        self.phone_history.insert(0, phone)
+        
+        # 只保留最近5个
+        self.phone_history = self.phone_history[:5]
+        
+        # 更新下拉框
+        self.phone_input.clear()
+        self.phone_input.addItems(self.phone_history)
+        
+        # 保存到注册表
+        self.save_config()
 
     def on_export_csv(self):
         """导出CSV按钮点击事件"""
@@ -1529,6 +1788,171 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"✓ 导出成功：{filename}（共{exported_count}条数据）", 5000)
         except Exception as e:
             self.status_bar.showMessage(f"❌ 导出失败：{str(e)}", 5000)
+
+    def on_phone_query(self):
+        """账号查询按钮点击事件"""
+        phone = self.phone_input.currentText().strip()
+        
+        if not phone:
+            self.status_bar.showMessage("⚠️ 请输入账号", 3000)
+            return
+        
+        # 禁用查询按钮和型号下拉框
+        self.phone_query_btn.setEnabled(False)
+        self.phone_query_btn.setText("查询中...")
+        self.model_combo.setEnabled(False)  # 禁用型号下拉框
+        self.status_bar.showMessage("正在查询设备列表...")
+        
+        # 清空之前的结果
+        self.phone_query_results = []
+        self.model_combo.clear()
+        self.model_combo.addItem("全部")
+        self.phone_result_table.setRowCount(0)
+        
+        try:
+            # 初始化查询对象
+            query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+            if query.init_error:
+                self.status_bar.showMessage(f"❌ {query.init_error}", 5000)
+                return
+            
+            # 第一步：根据手机号查询用户ID
+            self.status_bar.showMessage("正在查询用户信息...")
+            user_response = query.get_user_by_mobile(phone)
+            if not user_response or not user_response.get('data'):
+                self.status_bar.showMessage("❌ 未找到该手机号对应的用户", 5000)
+                return
+            
+            records = user_response['data'].get('records', [])
+            if not records:
+                self.status_bar.showMessage("❌ 未找到该手机号对应的用户", 5000)
+                return
+            
+            user_id = records[0].get('id')
+            if not user_id:
+                self.status_bar.showMessage("❌ 无法获取用户ID", 5000)
+                return
+            
+            # 第二步：根据用户ID查询绑定设备列表
+            self.status_bar.showMessage("正在查询绑定设备...")
+            devices_response = query.get_user_bind_devices(user_id)
+            if not devices_response or not devices_response.get('data'):
+                self.status_bar.showMessage("❌ 未找到该用户的绑定设备", 5000)
+                return
+            
+            devices = devices_response['data']
+            if not devices:
+                self.status_bar.showMessage("该用户暂无绑定设备", 3000)
+                return
+            
+            # 第三步：并发查询所有设备的型号信息
+            self.status_bar.showMessage(f"正在查询 {len(devices)} 台设备的型号信息...")
+            
+            def get_device_model(device):
+                """查询单个设备的型号"""
+                device_sn = device.get('deviceSn', '')
+                device_name = device.get('deviceName', '')
+                
+                if not device_sn:
+                    return {
+                        "model": "未知型号",
+                        "name": device_name,
+                        "sn": device_sn
+                    }
+                
+                try:
+                    header_info = query.get_device_header(device_sn)
+                    product_name = ""
+                    if header_info and header_info.get('data'):
+                        product_name = header_info['data'].get('productName', '未知型号')
+                    else:
+                        product_name = "未知型号"
+                    
+                    return {
+                        "model": product_name,
+                        "name": device_name,
+                        "sn": device_sn
+                    }
+                except Exception as e:
+                    return {
+                        "model": "查询失败",
+                        "name": device_name,
+                        "sn": device_sn
+                    }
+            
+            # 使用线程池并发查询
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(get_device_model, device) for device in devices]
+                completed = 0
+                for future in as_completed(futures):
+                    result = future.result()
+                    self.phone_query_results.append(result)
+                    completed += 1
+                    self.status_bar.showMessage(f"正在查询型号信息... {completed}/{len(devices)}")
+            
+            # 提取所有设备型号
+            models = set()
+            for device in self.phone_query_results:
+                if device["model"] and device["model"] not in ["未知型号", "查询失败"]:
+                    models.add(device["model"])
+            
+            # 添加到下拉框
+            for model in sorted(models):
+                self.model_combo.addItem(model)
+            
+            # 显示所有设备
+            self.update_phone_result_table()
+            
+            # 查询成功后，添加手机号到历史记录
+            self.add_phone_to_history(phone)
+            
+            self.status_bar.showMessage(f"✓ 查询完成，共找到 {len(self.phone_query_results)} 台设备", 5000)
+        except Exception as e:
+            self.status_bar.showMessage(f"❌ 查询失败：{str(e)}", 5000)
+        finally:
+            # 恢复查询按钮和型号下拉框
+            self.phone_query_btn.setEnabled(True)
+            self.phone_query_btn.setText("查询")
+            self.model_combo.setEnabled(True)  # 启用型号下拉框
+
+    def on_model_filter_changed(self):
+        """型号筛选变化事件"""
+        self.update_phone_result_table()
+
+    def update_phone_result_table(self):
+        """更新账号查询结果表格"""
+        selected_model = self.model_combo.currentText()
+        
+        # 筛选设备
+        if selected_model == "全部":
+            filtered_devices = self.phone_query_results
+        else:
+            filtered_devices = [d for d in self.phone_query_results if d["model"] == selected_model]
+        
+        # 更新设备数量
+        self.device_count_label.setText(f"数量：{len(filtered_devices)}")
+        
+        # 更新表格
+        self.phone_result_table.setRowCount(len(filtered_devices))
+        sn_list = []  # 收集SN列表
+        for row, device in enumerate(filtered_devices):
+            self.phone_result_table.setItem(row, 0, QTableWidgetItem(device["model"]))
+            self.phone_result_table.setItem(row, 1, QTableWidgetItem(device["name"]))
+            self.phone_result_table.setItem(row, 2, QTableWidgetItem(device["sn"]))
+            sn_list.append(device["sn"])
+        
+        # 更新SN列表文本框
+        self.sn_list_text.setPlainText('\n'.join(sn_list))
+
+    def on_phone_cell_double_clicked(self, row, column):
+        """账号查询表格单元格双击事件，自动复制内容"""
+        item = self.phone_result_table.item(row, column)
+        if item:
+            text = item.text()
+            if text:
+                clipboard = QApplication.clipboard()
+                clipboard.setText(text)
+                self.status_bar.showMessage(f"已复制: {text}", 2000)
 
 
 if __name__ == "__main__":
