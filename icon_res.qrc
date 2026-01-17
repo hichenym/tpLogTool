@@ -7,5 +7,6 @@
 	<file>icon/werk_up_all.png</file>
 	<file>icon/save.png</file>
 	<file>icon/export.png</file>
+	<file>icon/setting.png</file>
 </qresource>
 </RCC>

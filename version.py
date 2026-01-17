@@ -6,7 +6,7 @@ from datetime import datetime
 # 版本号配置
 VERSION_MAJOR = 1  # 主版本号：重大功能更新或架构变更
 VERSION_MINOR = 1  # 次版本号：新增功能或较大改进
-VERSION_PATCH = 0  # 修订号：Bug修复或小改进
+VERSION_PATCH = 1  # 修订号：Bug修复或小改进
 
 # 自动获取编译日期
 BUILD_DATE = "20260117"
@@ -36,6 +36,24 @@ def get_build_date_formatted():
 
 # 版本历史
 VERSION_HISTORY = """
+V1.1.1 (20260117)
+- 修复重复定义save_account_config函数的问题
+- 改进异常处理，使用具体异常类型替代bare except
+- 增强线程清理机制，防止窗口关闭时崩溃
+- 添加网络请求超时设置（5秒），防止无限等待
+- 优化错误日志输出，便于调试
+- 修复PhoneQueryWorker中的空指针检查
+- 提升代码健壮性和稳定性
+
+V1.1.0 (20260117)
+- 新增账号密码配置功能
+- 新增设置界面（菜单栏右侧）
+- 新增测试连接功能
+- 密码Base64编码存储到注册表
+- 支持自定义环境（生产/测试）
+- 优化菜单栏布局
+- 移除硬编码默认账号密码，提升安全性
+
 V1.0.0 (20260115)
 - 初始版本发布
 - 支持批量查询设备信息（SN/ID）

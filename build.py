@@ -18,9 +18,9 @@ def update_build_date():
     # 获取当前日期
     current_date = datetime.now().strftime("%Y%m%d")
     
-    # 替换BUILD_DATE
+    # 替换BUILD_DATE（匹配固定字符串格式）
     import re
-    pattern = r'BUILD_DATE = datetime\.now\(\)\.strftime\("%Y%m%d"\)'
+    pattern = r'BUILD_DATE = "\d{8}"'
     replacement = f'BUILD_DATE = "{current_date}"'
     content = re.sub(pattern, replacement, content)
     

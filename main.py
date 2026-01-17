@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QLabel, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QStatusBar, QSplitter, QFrame,
     QLineEdit, QFileDialog, QDesktopWidget, QStackedWidget, QComboBox,
-    QCompleter
+    QCompleter, QDialog, QRadioButton, QButtonGroup, QMessageBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QTimer
 from PyQt5.QtGui import QClipboard, QIcon, QPixmap
@@ -36,7 +36,7 @@ def get_registry_value(key_name, value_name, default=None):
         value, _ = winreg.QueryValueEx(key, value_name)
         winreg.CloseKey(key)
         return value
-    except:
+    except (WindowsError, FileNotFoundError, OSError):
         return default
 
 def set_registry_value(key_name, value_name, value, value_type=winreg.REG_SZ):
@@ -46,8 +46,172 @@ def set_registry_value(key_name, value_name, value, value_type=winreg.REG_SZ):
         winreg.SetValueEx(key, value_name, 0, value_type, value)
         winreg.CloseKey(key)
         return True
-    except:
+    except (WindowsError, OSError) as e:
+        print(f"注册表写入失败: {e}")
         return False
+
+
+def get_account_config():
+    """获取账号配置（从注册表读取）"""
+    env = get_registry_value(REGISTRY_PATH, 'account_env', 'pro')
+    username = get_registry_value(REGISTRY_PATH, 'account_username', '')
+    # 密码使用Base64简单编码存储
+    password_encoded = get_registry_value(REGISTRY_PATH, 'account_password', '')
+    if password_encoded:
+        try:
+            password = base64.b64decode(password_encoded.encode()).decode()
+        except (ValueError, UnicodeDecodeError) as e:
+            print(f"密码解码失败: {e}")
+            password = ''
+    else:
+        password = ''
+    
+    return env, username, password
+
+
+def save_account_config(env, username, password):
+    """保存账号配置到注册表"""
+    try:
+        set_registry_value(REGISTRY_PATH, 'account_env', env)
+        set_registry_value(REGISTRY_PATH, 'account_username', username)
+        # 密码使用Base64简单编码存储
+        password_encoded = base64.b64encode(password.encode()).decode()
+        set_registry_value(REGISTRY_PATH, 'account_password', password_encoded)
+        return True
+    except Exception as e:
+        print(f"保存配置失败: {e}")
+        return False
+
+
+class SettingsDialog(QDialog):
+    """设置对话框"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("账号密码设置")
+        self.setFixedSize(360, 180)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        
+        # 加载当前配置，默认使用生产环境
+        self.env, self.username, self.password = get_account_config()
+        self.env = 'pro'  # 固定使用生产环境
+        
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # 账号输入
+        username_layout = QHBoxLayout()
+        username_label = QLabel("账号：")
+        username_label.setFixedWidth(60)
+        self.username_input = QLineEdit()
+        self.username_input.setText(self.username)
+        self.username_input.setPlaceholderText("请输入账号...")
+        username_layout.addWidget(username_label)
+        username_layout.addWidget(self.username_input)
+        layout.addLayout(username_layout)
+        
+        # 密码输入
+        password_layout = QHBoxLayout()
+        password_label = QLabel("密码：")
+        password_label.setFixedWidth(60)
+        self.password_input = QLineEdit()
+        self.password_input.setText(self.password)
+        self.password_input.setPlaceholderText("请输入密码...")
+        self.password_input.setEchoMode(QLineEdit.Password)
+        password_layout.addWidget(password_label)
+        password_layout.addWidget(self.password_input)
+        layout.addLayout(password_layout)
+        
+        # 显示密码复选框
+        self.show_password_checkbox = QCheckBox("显示密码")
+        self.show_password_checkbox.stateChanged.connect(self.on_show_password_changed)
+        layout.addWidget(self.show_password_checkbox)
+        
+        # 分隔线
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(line)
+        
+        # 按钮区域
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        self.test_btn = QPushButton("测试连接")
+        self.test_btn.setFixedSize(90, 32)
+        self.test_btn.clicked.connect(self.on_test_connection)
+        
+        self.save_btn = QPushButton("保存")
+        self.save_btn.setFixedSize(80, 32)
+        self.save_btn.clicked.connect(self.on_save)
+        
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.setFixedSize(80, 32)
+        self.cancel_btn.clicked.connect(self.reject)
+        
+        button_layout.addWidget(self.test_btn)
+        button_layout.addWidget(self.save_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.addLayout(button_layout)
+    
+    def on_show_password_changed(self, state):
+        """显示/隐藏密码"""
+        if state == Qt.Checked:
+            self.password_input.setEchoMode(QLineEdit.Normal)
+        else:
+            self.password_input.setEchoMode(QLineEdit.Password)
+    
+    def on_test_connection(self):
+        """测试连接"""
+        username = self.username_input.text().strip()
+        password = self.password_input.text().strip()
+        env = 'pro'  # 固定使用生产环境
+        
+        if not username or not password:
+            QMessageBox.warning(self, "提示", "请输入账号和密码")
+            return
+        
+        # 禁用按钮
+        self.test_btn.setEnabled(False)
+        self.test_btn.setText("测试中...")
+        self.save_btn.setEnabled(False)
+        
+        try:
+            # 尝试登录
+            query = DeviceQuery(env, username, password, use_cache=False)
+            if query.init_error:
+                QMessageBox.critical(self, "连接失败", f"登录失败：{query.init_error}")
+            elif query.token:
+                QMessageBox.information(self, "连接成功", "账号密码验证成功！")
+            else:
+                QMessageBox.critical(self, "连接失败", "无法获取访问令牌，请检查账号密码")
+        except Exception as e:
+            QMessageBox.critical(self, "连接失败", f"测试失败：{str(e)}")
+        finally:
+            # 恢复按钮
+            self.test_btn.setEnabled(True)
+            self.test_btn.setText("测试连接")
+            self.save_btn.setEnabled(True)
+    
+    def on_save(self):
+        """保存配置"""
+        username = self.username_input.text().strip()
+        password = self.password_input.text().strip()
+        env = 'pro'  # 固定使用生产环境
+        
+        if not username or not password:
+            QMessageBox.warning(self, "提示", "请输入账号和密码")
+            return
+        
+        # 保存到注册表
+        if save_account_config(env, username, password):
+            QMessageBox.information(self, "保存成功", "配置已保存！")
+            self.accept()
+        else:
+            QMessageBox.critical(self, "保存失败", "无法保存配置到注册表")
 
 
 class DeviceQuery:
@@ -86,7 +250,8 @@ class DeviceQuery:
                     self.token = token
                     self.refresh_token = refresh_token
                     return True
-        except:
+        except (ValueError, TypeError) as e:
+            print(f"加载token缓存失败: {e}")
             pass
         return False
 
@@ -97,7 +262,8 @@ class DeviceQuery:
             set_registry_value(REGISTRY_PATH, 'token', self.token)
             set_registry_value(REGISTRY_PATH, 'refresh_token', self.refresh_token)
             set_registry_value(REGISTRY_PATH, 'timestamp', str(time.time()))
-        except:
+        except Exception as e:
+            print(f"保存token缓存失败: {e}")
             pass
 
     def _get_captcha(self):
@@ -243,8 +409,9 @@ def wake_device(dev_id, sn, token, host='console.seetong.com', times=3):
     for i in range(times):
         data = {'devId': dev_id, 'type': 'LOW_POWER_WAKE', 'msg': f'wake-{i+1}'}
         try:
-            r = requests.post(url, data=json.dumps(data), headers=headers, verify=False)
-        except:
+            r = requests.post(url, data=json.dumps(data), headers=headers, verify=False, timeout=5)
+        except (requests.RequestException, Exception) as e:
+            print(f"唤醒请求失败: {e}")
             pass
         time.sleep(1)
 
@@ -259,12 +426,13 @@ def check_device_online(sn, token, host='console.seetong.com'):
             "Seetong-Auth": token,
         }
         params = {"sn": sn}
-        r = requests.get(url, params=params, headers=headers, verify=False)
+        r = requests.get(url, params=params, headers=headers, verify=False, timeout=5)
         res = r.json()
         data = res.get('data', {})
         online_status = data.get('onlineStatus', 0)
         return online_status == 1
-    except:
+    except (requests.RequestException, ValueError, KeyError) as e:
+        print(f"查询在线状态失败: {e}")
         return False
 
 
@@ -281,8 +449,9 @@ def wake_device_smart(dev_id, sn, token, host='console.seetong.com', max_times=3
         # 发送唤醒命令
         data = {'devId': dev_id, 'type': 'LOW_POWER_WAKE', 'msg': f'wake-{i+1}'}
         try:
-            requests.post(url, data=json.dumps(data), headers=headers, verify=False)
-        except:
+            requests.post(url, data=json.dumps(data), headers=headers, verify=False, timeout=5)
+        except (requests.RequestException, Exception) as e:
+            print(f"唤醒请求失败: {e}")
             pass
         
         # 等待 2 秒后查询在线状态
@@ -346,12 +515,16 @@ class QueryWorker(QObject):
     all_done = pyqtSignal()  # 全部完成信号
     progress = pyqtSignal(str)
     error = pyqtSignal(str)
+    init_success = pyqtSignal()  # 初始化成功信号
     
-    def __init__(self, sn_list, id_list, query, max_workers=30):
+    def __init__(self, sn_list, id_list, env, username, password, max_workers=30):
         super().__init__()
         self.sn_list = sn_list
         self.id_list = id_list
-        self.query = query  # 已初始化的DeviceQuery对象
+        self.env = env
+        self.username = username
+        self.password = password
+        self.query = None  # 将在run中初始化
         self.max_workers = max_workers
         self._stop = False
         
@@ -412,6 +585,18 @@ class QueryWorker(QObject):
     
     def run(self):
         try:
+            # 在后台线程中初始化DeviceQuery
+            self.progress.emit("正在登录...")
+            self.query = DeviceQuery(self.env, self.username, self.password)
+            
+            # 检查初始化是否成功
+            if self.query.init_error:
+                self.error.emit(self.query.init_error)
+                return
+            
+            # 初始化成功，发送信号
+            self.init_success.emit()
+            
             # 构建任务列表：(行号, 查询类型, 值)
             tasks = []
             row = 0
@@ -454,14 +639,16 @@ class QueryThread(QThread):
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     error = pyqtSignal(str)
+    init_success = pyqtSignal()  # 初始化成功信号
     
-    def __init__(self, sn_list, id_list, query, max_workers=30):
+    def __init__(self, sn_list, id_list, env, username, password, max_workers=30):
         super().__init__()
-        self.worker = QueryWorker(sn_list, id_list, query, max_workers)
+        self.worker = QueryWorker(sn_list, id_list, env, username, password, max_workers)
         self.worker.single_result.connect(self.single_result)
         self.worker.all_done.connect(self.all_done)
         self.worker.progress.connect(self.progress)
         self.worker.error.connect(self.error)
+        self.worker.init_success.connect(self.init_success)
         
     def run(self):
         self.worker.run()
@@ -527,10 +714,7 @@ class WakeWorker(QObject):
             self.all_done.emit()
         except Exception as e:
             self.error.emit(str(e))
-            
             self.all_done.emit()
-        except Exception as e:
-            self.error.emit(str(e))
 
 
 class WakeThread(QThread):
@@ -555,6 +739,134 @@ class WakeThread(QThread):
         self.worker.stop()
 
 
+class PhoneQueryWorker(QObject):
+    """账号查询工作器"""
+    progress = pyqtSignal(str)
+    error = pyqtSignal(str)
+    success = pyqtSignal(list, list)  # (查询结果, 型号列表)
+    
+    def __init__(self, phone, env, username, password):
+        super().__init__()
+        self.phone = phone
+        self.env = env
+        self.username = username
+        self.password = password
+        
+    def run(self):
+        try:
+            # 初始化查询对象
+            self.progress.emit("正在登录...")
+            query = DeviceQuery(self.env, self.username, self.password)
+            
+            if query.init_error:
+                self.error.emit(query.init_error)
+                return
+            
+            # 第一步：根据手机号查询用户ID
+            self.progress.emit("正在查询用户信息...")
+            user_response = query.get_user_by_mobile(self.phone)
+            if not user_response or not user_response.get('data'):
+                self.error.emit("未找到该手机号对应的用户")
+                return
+            
+            records = user_response['data'].get('records', [])
+            if not records:
+                self.error.emit("未找到该手机号对应的用户")
+                return
+            
+            user_id = records[0].get('id')
+            if not user_id:
+                self.error.emit("无法获取用户ID")
+                return
+            
+            # 第二步：根据用户ID查询绑定设备列表
+            self.progress.emit("正在查询绑定设备...")
+            devices_response = query.get_user_bind_devices(user_id)
+            if not devices_response or not devices_response.get('data'):
+                self.error.emit("未找到该用户的绑定设备")
+                return
+            
+            devices = devices_response['data']
+            if not devices:
+                self.error.emit("该用户暂无绑定设备")
+                return
+            
+            # 第三步：并发查询所有设备的型号信息
+            self.progress.emit(f"正在查询 {len(devices)} 台设备的型号信息...")
+            
+            def get_device_model(device):
+                """查询单个设备的型号"""
+                device_sn = device.get('deviceSn', '')
+                device_name = device.get('deviceName', '')
+                
+                if not device_sn:
+                    return {
+                        "model": "未知型号",
+                        "name": device_name,
+                        "sn": device_sn
+                    }
+                
+                try:
+                    header_info = query.get_device_header(device_sn)
+                    product_name = ""
+                    if header_info and header_info.get('data'):
+                        product_name = header_info['data'].get('productName', '未知型号')
+                    else:
+                        product_name = "未知型号"
+                    
+                    return {
+                        "model": product_name,
+                        "name": device_name,
+                        "sn": device_sn
+                    }
+                except Exception as e:
+                    return {
+                        "model": "查询失败",
+                        "name": device_name,
+                        "sn": device_sn
+                    }
+            
+            # 使用线程池并发查询
+            results = []
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(get_device_model, device) for device in devices]
+                completed = 0
+                for future in as_completed(futures):
+                    result = future.result()
+                    results.append(result)
+                    completed += 1
+                    self.progress.emit(f"正在查询型号信息... {completed}/{len(devices)}")
+            
+            # 提取所有设备型号
+            models = set()
+            for device in results:
+                if device["model"] and device["model"] not in ["未知型号", "查询失败"]:
+                    models.add(device["model"])
+            
+            # 发送成功信号
+            self.success.emit(results, sorted(list(models)))
+            
+        except Exception as e:
+            self.error.emit(f"查询失败：{str(e)}")
+
+
+class PhoneQueryThread(QThread):
+    """账号查询线程"""
+    progress = pyqtSignal(str)
+    error = pyqtSignal(str)
+    success = pyqtSignal(list, list)
+    
+    def __init__(self, phone, env, username, password):
+        super().__init__()
+        self.worker = PhoneQueryWorker(phone, env, username, password)
+        self.worker.progress.connect(self.progress)
+        self.worker.error.connect(self.error)
+        self.worker.success.connect(self.success)
+        
+    def run(self):
+        self.worker.run()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -567,6 +879,7 @@ class MainWindow(QMainWindow):
         self.query_thread = None
         self.wake_thread = None
         self.wake_threads = []  # 保持线程引用
+        self.phone_query_thread = None  # 账号查询线程
         self.total_count = 0
         self.online_count = 0
         self.offline_count = 0
@@ -608,6 +921,14 @@ class MainWindow(QMainWindow):
         self.other_menu_btn.setCheckable(True)
         self.other_menu_btn.clicked.connect(lambda: self.switch_page(1))
         
+        # 设置按钮（不可选中，放在最右边，只显示图标）
+        self.settings_btn = QPushButton()
+        self.settings_btn.setIcon(QIcon(":/icon/setting.png"))
+        self.settings_btn.setIconSize(QSize(18, 18))
+        self.settings_btn.setFixedSize(32, 28)
+        self.settings_btn.setToolTip("设置")
+        self.settings_btn.clicked.connect(self.on_settings_clicked)
+        
         # 设置按钮样式
         menu_btn_style = """
             QPushButton {
@@ -627,12 +948,30 @@ class MainWindow(QMainWindow):
                 font-weight: bold;
             }
         """
+        
+        # 设置按钮单独样式（不可选中）
+        settings_btn_style = """
+            QPushButton {
+                border: none;
+                padding: 0px;
+                background-color: transparent;
+                color: #555;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #f0f0f0;
+            }
+        """
+        
         self.device_menu_btn.setStyleSheet(menu_btn_style)
         self.other_menu_btn.setStyleSheet(menu_btn_style)
+        self.settings_btn.setStyleSheet(settings_btn_style)
         
         menu_layout.addWidget(self.device_menu_btn)
         menu_layout.addWidget(self.other_menu_btn)
         menu_layout.addStretch()
+        menu_layout.addWidget(self.settings_btn)
+        menu_layout.addSpacing(5)  # 设置按钮右边距5像素
         
         # 创建中心部件
         central_widget = QWidget()
@@ -714,6 +1053,11 @@ class MainWindow(QMainWindow):
             set_registry_value(REGISTRY_PATH, 'last_page_index', str(index))
         except:
             pass
+
+    def on_settings_clicked(self):
+        """设置按钮点击事件"""
+        dialog = SettingsDialog(self)
+        dialog.exec_()
 
     def create_device_page(self):
         """创建设备页面"""
@@ -1104,6 +1448,24 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("请输入SN/ID信息", 3000)
             return
         
+        # 先检查账号密码是否已配置
+        env, username, password = get_account_config()
+        if not username or not password:
+            # 提示用户配置账号密码
+            reply = QMessageBox.question(
+                self,
+                "需要配置账号密码",
+                "检测到账号密码未配置，是否现在配置？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            
+            if reply == QMessageBox.Yes:
+                # 打开设置对话框
+                self.on_settings_clicked()
+            
+            return
+        
         # 解析输入的SN/ID列表
         sn_list = [line.strip() for line in sn_text.split('\n') if line.strip()]
         id_list = [line.strip() for line in id_text.split('\n') if line.strip()]
@@ -1155,6 +1517,17 @@ class MainWindow(QMainWindow):
         self.online_count = 0
         self.offline_count = 0
         
+        # 启动多线程查询（在后台线程中初始化DeviceQuery）
+        self.query_thread = QueryThread(sn_list, id_list, env, username, password, max_workers=30)
+        self.query_thread.init_success.connect(self.on_query_init_success)
+        self.query_thread.single_result.connect(self.on_single_result)
+        self.query_thread.all_done.connect(self.on_query_complete)
+        self.query_thread.progress.connect(self.on_query_progress)
+        self.query_thread.error.connect(self.on_query_error)
+        self.query_thread.start()
+    
+    def on_query_init_success(self):
+        """查询初始化成功，创建表格行"""
         # 预先创建表格行（按输入顺序）
         self.result_table.setRowCount(self.total_count)
         for row in range(self.total_count):
@@ -1189,37 +1562,6 @@ class MainWindow(QMainWindow):
             btn_layout.setContentsMargins(0, 0, 0, 0)  # 无边距
             btn_layout.setSpacing(0)
             self.result_table.setCellWidget(row, 9, btn_container)
-        
-        # 在主线程中初始化 query
-        try:
-            query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
-            # 检查初始化是否成功
-            if query.init_error:
-                self.query_btn.setEnabled(True)
-                self.query_btn.setText("查询")
-                self.clear_btn.setEnabled(True)
-                self.batch_wake_btn.setEnabled(True)
-                self.select_all_checkbox.setEnabled(True)
-                self.export_btn.setEnabled(True)
-                self.status_bar.showMessage(f"❌ {query.init_error}", 5000)
-                return
-        except Exception as e:
-            self.query_btn.setEnabled(True)
-            self.query_btn.setText("查询")
-            self.clear_btn.setEnabled(True)
-            self.batch_wake_btn.setEnabled(True)
-            self.select_all_checkbox.setEnabled(True)
-            self.export_btn.setEnabled(True)
-            self.status_bar.showMessage(f"❌ 初始化失败: {str(e)}", 5000)
-            return
-        
-        # 启动多线程查询
-        self.query_thread = QueryThread(sn_list, id_list, query, max_workers=30)
-        self.query_thread.single_result.connect(self.on_single_result)
-        self.query_thread.all_done.connect(self.on_query_complete)
-        self.query_thread.progress.connect(self.on_query_progress)
-        self.query_thread.error.connect(self.on_query_error)
-        self.query_thread.start()
 
     def on_single_result(self, row, item):
         """单个设备查询完成，立即更新表格"""
@@ -1271,12 +1613,16 @@ class MainWindow(QMainWindow):
         self.select_all_checkbox.setEnabled(True)
         self.export_btn.setEnabled(True)
         
-        # 启用所有唤醒按钮
-        for row in range(self.result_table.rowCount()):
-            btn_container = self.result_table.cellWidget(row, 9)
-            wake_btn = btn_container.findChild(QPushButton) if btn_container else None
-            if wake_btn:
-                wake_btn.setEnabled(True)
+        # 启用所有唤醒按钮（如果表格已创建）
+        try:
+            for row in range(self.result_table.rowCount()):
+                btn_container = self.result_table.cellWidget(row, 9)
+                if btn_container:
+                    wake_btn = btn_container.findChild(QPushButton)
+                    if wake_btn:
+                        wake_btn.setEnabled(True)
+        except Exception as e:
+            print(f"恢复唤醒按钮状态时出错: {e}")
         
         self.status_bar.showMessage(f"❌ 查询失败: {error_msg}", 5000)
 
@@ -1451,7 +1797,8 @@ class MainWindow(QMainWindow):
             if success:
                 # 查询最新的在线状态
                 try:
-                    query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+                    env, username, password = get_account_config()
+                    query = DeviceQuery(env, username, password)
                     if query.init_error:
                         self.status_bar.showMessage(f"⚠️ {query.init_error}", 3000)
                         return
@@ -1473,7 +1820,8 @@ class MainWindow(QMainWindow):
                 self.wake_threads.remove(thread)
         
         try:
-            query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+            env, username, password = get_account_config()
+            query = DeviceQuery(env, username, password)
             if query.init_error:
                 if wake_btn:
                     wake_btn.setText("唤醒")
@@ -1532,7 +1880,8 @@ class MainWindow(QMainWindow):
         
         # 启动多线程唤醒
         try:
-            query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+            env, username, password = get_account_config()
+            query = DeviceQuery(env, username, password)
             if query.init_error:
                 self.batch_wake_btn.setEnabled(True)
                 self.batch_wake_btn.setText("批量唤醒")
@@ -1583,7 +1932,8 @@ class MainWindow(QMainWindow):
                 sn = self.result_table.item(row, 2).text()
                 if device_name.startswith(sn):
                     try:
-                        query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
+                        env, username, password = get_account_config()
+                        query = DeviceQuery(env, username, password)
                         if query.init_error:
                             continue
                         is_online = check_device_online(sn, query.token)
@@ -1797,11 +2147,28 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("⚠️ 请输入账号", 3000)
             return
         
+        # 先检查账号密码是否已配置
+        env, username, password = get_account_config()
+        if not username or not password:
+            # 提示用户配置账号密码
+            reply = QMessageBox.question(
+                self,
+                "需要配置账号密码",
+                "检测到账号密码未配置，是否现在配置？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            
+            if reply == QMessageBox.Yes:
+                # 打开设置对话框
+                self.on_settings_clicked()
+            
+            return
+        
         # 禁用查询按钮和型号下拉框
         self.phone_query_btn.setEnabled(False)
         self.phone_query_btn.setText("查询中...")
-        self.model_combo.setEnabled(False)  # 禁用型号下拉框
-        self.status_bar.showMessage("正在查询设备列表...")
+        self.model_combo.setEnabled(False)
         
         # 清空之前的结果
         self.phone_query_results = []
@@ -1809,111 +2176,46 @@ class MainWindow(QMainWindow):
         self.model_combo.addItem("全部")
         self.phone_result_table.setRowCount(0)
         
-        try:
-            # 初始化查询对象
-            query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
-            if query.init_error:
-                self.status_bar.showMessage(f"❌ {query.init_error}", 5000)
-                return
-            
-            # 第一步：根据手机号查询用户ID
-            self.status_bar.showMessage("正在查询用户信息...")
-            user_response = query.get_user_by_mobile(phone)
-            if not user_response or not user_response.get('data'):
-                self.status_bar.showMessage("❌ 未找到该手机号对应的用户", 5000)
-                return
-            
-            records = user_response['data'].get('records', [])
-            if not records:
-                self.status_bar.showMessage("❌ 未找到该手机号对应的用户", 5000)
-                return
-            
-            user_id = records[0].get('id')
-            if not user_id:
-                self.status_bar.showMessage("❌ 无法获取用户ID", 5000)
-                return
-            
-            # 第二步：根据用户ID查询绑定设备列表
-            self.status_bar.showMessage("正在查询绑定设备...")
-            devices_response = query.get_user_bind_devices(user_id)
-            if not devices_response or not devices_response.get('data'):
-                self.status_bar.showMessage("❌ 未找到该用户的绑定设备", 5000)
-                return
-            
-            devices = devices_response['data']
-            if not devices:
-                self.status_bar.showMessage("该用户暂无绑定设备", 3000)
-                return
-            
-            # 第三步：并发查询所有设备的型号信息
-            self.status_bar.showMessage(f"正在查询 {len(devices)} 台设备的型号信息...")
-            
-            def get_device_model(device):
-                """查询单个设备的型号"""
-                device_sn = device.get('deviceSn', '')
-                device_name = device.get('deviceName', '')
-                
-                if not device_sn:
-                    return {
-                        "model": "未知型号",
-                        "name": device_name,
-                        "sn": device_sn
-                    }
-                
-                try:
-                    header_info = query.get_device_header(device_sn)
-                    product_name = ""
-                    if header_info and header_info.get('data'):
-                        product_name = header_info['data'].get('productName', '未知型号')
-                    else:
-                        product_name = "未知型号"
-                    
-                    return {
-                        "model": product_name,
-                        "name": device_name,
-                        "sn": device_sn
-                    }
-                except Exception as e:
-                    return {
-                        "model": "查询失败",
-                        "name": device_name,
-                        "sn": device_sn
-                    }
-            
-            # 使用线程池并发查询
-            with ThreadPoolExecutor(max_workers=20) as executor:
-                futures = [executor.submit(get_device_model, device) for device in devices]
-                completed = 0
-                for future in as_completed(futures):
-                    result = future.result()
-                    self.phone_query_results.append(result)
-                    completed += 1
-                    self.status_bar.showMessage(f"正在查询型号信息... {completed}/{len(devices)}")
-            
-            # 提取所有设备型号
-            models = set()
-            for device in self.phone_query_results:
-                if device["model"] and device["model"] not in ["未知型号", "查询失败"]:
-                    models.add(device["model"])
-            
-            # 添加到下拉框
-            for model in sorted(models):
-                self.model_combo.addItem(model)
-            
-            # 显示所有设备
-            self.update_phone_result_table()
-            
-            # 查询成功后，添加手机号到历史记录
-            self.add_phone_to_history(phone)
-            
-            self.status_bar.showMessage(f"✓ 查询完成，共找到 {len(self.phone_query_results)} 台设备", 5000)
-        except Exception as e:
-            self.status_bar.showMessage(f"❌ 查询失败：{str(e)}", 5000)
-        finally:
-            # 恢复查询按钮和型号下拉框
-            self.phone_query_btn.setEnabled(True)
-            self.phone_query_btn.setText("查询")
-            self.model_combo.setEnabled(True)  # 启用型号下拉框
+        # 启动后台查询线程
+        self.phone_query_thread = PhoneQueryThread(phone, env, username, password)
+        self.phone_query_thread.progress.connect(self.on_phone_query_progress)
+        self.phone_query_thread.error.connect(self.on_phone_query_error)
+        self.phone_query_thread.success.connect(self.on_phone_query_success)
+        self.phone_query_thread.start()
+    
+    def on_phone_query_progress(self, msg):
+        """账号查询进度更新"""
+        self.status_bar.showMessage(msg)
+    
+    def on_phone_query_error(self, error_msg):
+        """账号查询出错"""
+        self.phone_query_btn.setEnabled(True)
+        self.phone_query_btn.setText("查询")
+        self.model_combo.setEnabled(True)
+        self.status_bar.showMessage(f"❌ {error_msg}", 5000)
+    
+    def on_phone_query_success(self, results, models):
+        """账号查询成功"""
+        # 保存查询结果
+        self.phone_query_results = results
+        
+        # 添加型号到下拉框
+        for model in models:
+            self.model_combo.addItem(model)
+        
+        # 显示所有设备
+        self.update_phone_result_table()
+        
+        # 查询成功后，添加手机号到历史记录
+        phone = self.phone_input.currentText().strip()
+        self.add_phone_to_history(phone)
+        
+        # 恢复查询按钮和型号下拉框
+        self.phone_query_btn.setEnabled(True)
+        self.phone_query_btn.setText("查询")
+        self.model_combo.setEnabled(True)
+        
+        self.status_bar.showMessage(f"✓ 查询完成，共找到 {len(self.phone_query_results)} 台设备", 5000)
 
     def on_model_filter_changed(self):
         """型号筛选变化事件"""
@@ -1953,6 +2255,31 @@ class MainWindow(QMainWindow):
                 clipboard = QApplication.clipboard()
                 clipboard.setText(text)
                 self.status_bar.showMessage(f"已复制: {text}", 2000)
+    
+    def closeEvent(self, event):
+        """窗口关闭事件，清理资源"""
+        try:
+            # 停止所有正在运行的线程
+            if hasattr(self, 'query_thread') and self.query_thread and self.query_thread.isRunning():
+                self.query_thread.stop()
+                self.query_thread.wait(1000)  # 等待最多1秒
+            
+            if hasattr(self, 'wake_thread') and self.wake_thread and self.wake_thread.isRunning():
+                self.wake_thread.stop()
+                self.wake_thread.wait(1000)
+            
+            if hasattr(self, 'wake_threads'):
+                for thread in self.wake_threads:
+                    if thread and thread.isRunning():
+                        thread.stop()
+                        thread.wait(1000)
+            
+            if hasattr(self, 'phone_query_thread') and self.phone_query_thread and self.phone_query_thread.isRunning():
+                self.phone_query_thread.wait(1000)
+        except Exception as e:
+            print(f"清理资源时出错: {e}")
+        
+        event.accept()
 
 
 if __name__ == "__main__":
