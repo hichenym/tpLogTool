@@ -185,6 +185,28 @@ class DeviceQuery:
             return res['data'].get('fileVersion', '')
         return ''
 
+    def get_device_last_heartbeat(self, dev_id):
+        """获取设备最后心跳时间"""
+        params = {"devId": dev_id}
+        res = self._request('/api/seetong-device/device-running-status/running_info', params)
+        if res and res.get('data'):
+            return res['data'].get('devLastLoginTM', '')
+        return ''
+
+    def get_device_bind_user(self, dev_id):
+        """获取设备绑定用户信息"""
+        params = {"deviceId": dev_id}
+        return self._request('/api/seetong-member-device/device-bind-user/list', params)
+
+    def get_device_name(self, dev_id):
+        """获取设备名称"""
+        res = self.get_device_bind_user(dev_id)
+        if res and res.get('data'):
+            bind_user_list = res['data'].get('bindUserList', [])
+            if bind_user_list:
+                return bind_user_list[0].get('deviceName', '')
+        return ''
+
     def get_access_node(self, dev_sn=None, dev_id=None):
         if dev_sn and not dev_id:
             res = self.get_device_info(dev_sn=dev_sn)
@@ -288,6 +310,25 @@ class PlainTextEdit(QTextEdit):
             super().insertFromMimeData(source)
 
 
+class ClickableLineEdit(QLineEdit):
+    """可双击打开目录的输入框"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)  # 设置鼠标指针为手型
+        
+    def mouseDoubleClickEvent(self, event):
+        """鼠标双击事件"""
+        if event.button() == Qt.LeftButton:
+            path = self.text().strip()
+            if path and os.path.exists(path):
+                # 在Windows上打开资源管理器
+                try:
+                    os.startfile(path)
+                except Exception as e:
+                    print(f"无法打开目录: {e}")
+        super().mouseDoubleClickEvent(event)
+
+
 class QueryWorker(QObject):
     """查询工作器，管理多线程查询"""
     single_result = pyqtSignal(int, dict)  # 单个结果信号：(行号, 结果)
@@ -328,26 +369,34 @@ class QueryWorker(QObject):
                 # 使用新接口获取在线状态
                 header_info = self.query.get_device_header(sn) if sn else {}
                 online_status = header_info.get('data', {}).get('onlineStatus', 0) if header_info else 0
+                # 获取最后心跳时间
+                last_heartbeat = self.query.get_device_last_heartbeat(dev_id) if dev_id else ''
+                # 获取设备名称
+                device_name = self.query.get_device_name(dev_id) if dev_id else ''
                 return row, {
+                    'device_name': device_name or '',
                     'sn': sn,
                     'id': str(dev_id) if dev_id else '',
                     'password': password or '',
                     'node': node_info.get('serverId', '') if node_info else '',
                     'version': version or '',
-                    'online': online_status
+                    'online': online_status,
+                    'last_heartbeat': last_heartbeat or ''
                 }
             else:
                 return row, {
+                    'device_name': '',
                     'sn': value if query_type == 'sn' else '',
                     'id': value if query_type == 'id' else '',
-                    'password': '', 'node': '', 'version': '', 'online': -1
+                    'password': '', 'node': '', 'version': '', 'online': -1, 'last_heartbeat': ''
                 }
         except Exception as e:
             return row, {
+                'device_name': '',
                 'sn': value if query_type == 'sn' else '',
                 'id': value if query_type == 'id' else '',
                 'password': '', 'node': '', 'version': '',
-                'online': -2, 'error': str(e)
+                'online': -2, 'last_heartbeat': '', 'error': str(e)
             }
     
     def run(self):
@@ -501,7 +550,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("设备信息查询工具")
         self.setGeometry(100, 100, 600, 350)
         # 设置窗口最小尺寸
-        self.setMinimumSize(500, 300)
+        self.setMinimumSize(700, 450)
         # 设置窗口图标
         self.setWindowIcon(QIcon(":/icon/logo.png"))
         self.query_thread = None
@@ -611,9 +660,9 @@ class MainWindow(QMainWindow):
 
         # 结果表格
         self.result_table = QTableWidget()
-        self.result_table.setColumnCount(8)
+        self.result_table.setColumnCount(10)
         self.result_table.setHorizontalHeaderLabels(
-            ["选择", "SN", "ID", "密码", "接入节点", "版本号", "在线状态", "操作"]
+            ["选择", "设备名称", "SN", "ID", "密码", "接入节点", "版本号", "在线状态", "最后心跳", "操作"]
         )
         # 禁用表格焦点、选中和编辑
         self.result_table.setFocusPolicy(Qt.NoFocus)
@@ -637,30 +686,32 @@ class MainWindow(QMainWindow):
         
         # 设置列宽模式：固定列用Fixed，可调节列用Interactive
         header.setSectionResizeMode(0, QHeaderView.Fixed)  # 选择列固定
-        header.setSectionResizeMode(7, QHeaderView.Fixed)  # 操作列固定
+        header.setSectionResizeMode(9, QHeaderView.Fixed)  # 操作列固定
         
-        # 中间列设为Interactive，允许用户拖拽调节（包括在线状态列）
-        for col in range(1, 7):
+        # 中间列设为Interactive，允许用户拖拽调节
+        for col in range(1, 9):
             header.setSectionResizeMode(col, QHeaderView.Interactive)
         
         # 初始化列宽：固定列 + 内容列均分
         self.result_table.setColumnWidth(0, 50)  # 选择列固定
-        self.result_table.setColumnWidth(7, 140)  # 操作列固定
+        self.result_table.setColumnWidth(9, 140)  # 操作列固定
         
-        # 中间6列初始均分
+        # 中间8列初始均分
         available_width = 600 - 50 - 140
-        col_width = available_width // 6
-        for col in range(1, 7):
+        col_width = available_width // 8
+        for col in range(1, 9):
             self.result_table.setColumnWidth(col, col_width)
         
         # 初始化列宽比例（用于缩放）
         self.column_width_ratios = {
-            1: col_width,  # SN
-            2: col_width,  # ID
-            3: col_width,  # 密码
-            4: col_width,  # 接入节点
-            5: col_width,  # 版本号
-            6: col_width,  # 在线状态
+            1: col_width,  # 设备名称
+            2: col_width,  # SN
+            3: col_width,  # ID
+            4: col_width,  # 密码
+            5: col_width,  # 接入节点
+            6: col_width,  # 版本号
+            7: col_width,  # 在线状态
+            8: col_width,  # 最后心跳
         }
         
         # 禁用水平滚动条
@@ -676,14 +727,10 @@ class MainWindow(QMainWindow):
         # 导出区域
         export_layout = QHBoxLayout()
         export_label = QLabel("保存位置：")
-        self.export_path_input = QLineEdit()
-        self.export_path_input.setPlaceholderText("选择CSV文件保存目录...")
+        self.export_path_input = ClickableLineEdit()
+        self.export_path_input.setPlaceholderText("点击导出按钮选择保存位置（双击可打开目录）...")
         self.export_path_input.setReadOnly(True)
         self.export_path_input.setFocusPolicy(Qt.NoFocus)  # 禁用焦点
-        self.browse_btn = QPushButton("浏览")
-        self.browse_btn.setIcon(QIcon(":/icon/save.png"))
-        self.browse_btn.setIconSize(QSize(16, 16))
-        self.browse_btn.setFixedSize(80, 30)
         self.export_btn = QPushButton("导出")
         self.export_btn.setIcon(QIcon(":/icon/export.png"))
         self.export_btn.setIconSize(QSize(16, 16))
@@ -691,15 +738,15 @@ class MainWindow(QMainWindow):
         
         export_layout.addWidget(export_label)
         export_layout.addWidget(self.export_path_input, 1)
-        export_layout.addWidget(self.browse_btn)
+        export_layout.addSpacing(10)  # 添加10像素间隔
         export_layout.addWidget(self.export_btn)
         bottom_layout.addLayout(export_layout)
         
         # 添加到splitter
         splitter.addWidget(top_widget)
         splitter.addWidget(bottom_widget)
-        splitter.setStretchFactor(0, 1)  # 输入区初始比例
-        splitter.setStretchFactor(1, 2)  # 表格区初始比例
+        splitter.setStretchFactor(0, 4)  # 输入区初始比例
+        splitter.setStretchFactor(1, 5)  # 表格区初始比例
         splitter.setHandleWidth(1)
         splitter.setStyleSheet("""
             QSplitter::handle {
@@ -730,7 +777,6 @@ class MainWindow(QMainWindow):
         self.clear_btn.clicked.connect(self.on_clear)
         self.batch_wake_btn.clicked.connect(self.on_batch_wake)
         self.select_all_checkbox.stateChanged.connect(self.on_select_all)
-        self.browse_btn.clicked.connect(self.on_browse_path)
         self.export_btn.clicked.connect(self.on_export_csv)
 
     def on_window_resize(self, event):
@@ -774,7 +820,7 @@ class MainWindow(QMainWindow):
     def on_column_resized(self, logicalIndex):
         """列宽被用户调节时，实时调整其他列以保持表格宽度与窗口一致"""
         # 跳过固定列
-        if logicalIndex == 0 or logicalIndex == 7:
+        if logicalIndex == 0 or logicalIndex == 9:
             return
         
         # 获取表格可用宽度（减去固定列）
@@ -786,7 +832,7 @@ class MainWindow(QMainWindow):
             return
         
         # 计算当前内容列的总宽度
-        current_total = sum(self.result_table.columnWidth(col) for col in range(1, 7))
+        current_total = sum(self.result_table.columnWidth(col) for col in range(1, 9))
         
         # 如果总宽度不等于可用宽度，调整其他列
         if current_total != available_width:
@@ -794,7 +840,7 @@ class MainWindow(QMainWindow):
             diff = available_width - current_total
             
             # 从其他列均匀调整
-            other_cols = [col for col in range(1, 7) if col != logicalIndex]
+            other_cols = [col for col in range(1, 9) if col != logicalIndex]
             if other_cols:
                 adjustment_per_col = diff / len(other_cols)
                 for col in other_cols:
@@ -818,7 +864,7 @@ class MainWindow(QMainWindow):
             return
         
         # 计算当前内容列的总宽度
-        current_total = sum(self.result_table.columnWidth(col) for col in range(1, 7))
+        current_total = sum(self.result_table.columnWidth(col) for col in range(1, 9))
         
         # 如果当前总宽度不等于可用宽度，需要调整
         if current_total != available_width:
@@ -827,7 +873,7 @@ class MainWindow(QMainWindow):
                 scale_factor = available_width / current_total
                 
                 # 按比例调整每列宽度
-                for col in range(1, 7):
+                for col in range(1, 9):
                     current_width = self.result_table.columnWidth(col)
                     new_width = max(50, int(current_width * scale_factor))
                     self.result_table.setColumnWidth(col, new_width)
@@ -878,12 +924,11 @@ class MainWindow(QMainWindow):
         self.clear_btn.setEnabled(False)
         self.batch_wake_btn.setEnabled(False)
         self.select_all_checkbox.setEnabled(False)
-        self.browse_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
         
         # 禁用所有已存在的唤醒按钮
         for row in range(self.result_table.rowCount()):
-            btn_container = self.result_table.cellWidget(row, 7)
+            btn_container = self.result_table.cellWidget(row, 9)
             wake_btn = btn_container.findChild(QPushButton) if btn_container else None
             if wake_btn:
                 wake_btn.setEnabled(False)
@@ -907,7 +952,7 @@ class MainWindow(QMainWindow):
             
             # 占位显示"查询中..."
             self.result_table.setItem(row, 1, QTableWidgetItem("查询中..."))
-            for col in range(2, 7):
+            for col in range(2, 9):
                 self.result_table.setItem(row, col, QTableWidgetItem(""))
             
             # 唤醒按钮
@@ -926,7 +971,7 @@ class MainWindow(QMainWindow):
             btn_layout.addStretch()
             btn_layout.setContentsMargins(0, 0, 0, 0)  # 无边距
             btn_layout.setSpacing(0)
-            self.result_table.setCellWidget(row, 7, btn_container)
+            self.result_table.setCellWidget(row, 9, btn_container)
         
         # 在主线程中初始化 query
         try:
@@ -938,7 +983,6 @@ class MainWindow(QMainWindow):
                 self.clear_btn.setEnabled(True)
                 self.batch_wake_btn.setEnabled(True)
                 self.select_all_checkbox.setEnabled(True)
-                self.browse_btn.setEnabled(True)
                 self.export_btn.setEnabled(True)
                 self.status_bar.showMessage(f"❌ {query.init_error}", 5000)
                 return
@@ -948,7 +992,6 @@ class MainWindow(QMainWindow):
             self.clear_btn.setEnabled(True)
             self.batch_wake_btn.setEnabled(True)
             self.select_all_checkbox.setEnabled(True)
-            self.browse_btn.setEnabled(True)
             self.export_btn.setEnabled(True)
             self.status_bar.showMessage(f"❌ 初始化失败: {str(e)}", 5000)
             return
@@ -966,14 +1009,15 @@ class MainWindow(QMainWindow):
         # 存储查询结果
         self.query_results[row] = item
         
-        self.result_table.setItem(row, 1, QTableWidgetItem(item['sn']))
-        self.result_table.setItem(row, 2, QTableWidgetItem(item['id']))
-        self.result_table.setItem(row, 3, QTableWidgetItem(item['password']))
-        self.result_table.setItem(row, 4, QTableWidgetItem(str(item['node'])))
-        self.result_table.setItem(row, 5, QTableWidgetItem(item['version']))
+        self.result_table.setItem(row, 1, QTableWidgetItem(item.get('device_name', '')))
+        self.result_table.setItem(row, 2, QTableWidgetItem(item['sn']))
+        self.result_table.setItem(row, 3, QTableWidgetItem(item['id']))
+        self.result_table.setItem(row, 4, QTableWidgetItem(item['password']))
+        self.result_table.setItem(row, 5, QTableWidgetItem(str(item.get('node', ''))))
+        self.result_table.setItem(row, 6, QTableWidgetItem(item.get('version', '')))
         
         # 在线状态
-        online_status = item['online']
+        online_status = item.get('online', -1)
         if online_status == 1:
             status_text = "在线"
             status_color = Qt.green
@@ -991,7 +1035,10 @@ class MainWindow(QMainWindow):
         
         status_item = QTableWidgetItem(status_text)
         status_item.setForeground(status_color)
-        self.result_table.setItem(row, 6, status_item)
+        self.result_table.setItem(row, 7, status_item)
+        
+        # 最后心跳时间
+        self.result_table.setItem(row, 8, QTableWidgetItem(item.get('last_heartbeat', '')))
 
     def on_query_progress(self, msg):
         """查询进度更新"""
@@ -1005,12 +1052,11 @@ class MainWindow(QMainWindow):
         self.clear_btn.setEnabled(True)
         self.batch_wake_btn.setEnabled(True)
         self.select_all_checkbox.setEnabled(True)
-        self.browse_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
         
         # 启用所有唤醒按钮
         for row in range(self.result_table.rowCount()):
-            btn_container = self.result_table.cellWidget(row, 7)
+            btn_container = self.result_table.cellWidget(row, 9)
             wake_btn = btn_container.findChild(QPushButton) if btn_container else None
             if wake_btn:
                 wake_btn.setEnabled(True)
@@ -1025,12 +1071,11 @@ class MainWindow(QMainWindow):
         self.clear_btn.setEnabled(True)
         self.batch_wake_btn.setEnabled(True)
         self.select_all_checkbox.setEnabled(True)
-        self.browse_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
         
         # 启用所有唤醒按钮
         for row in range(self.result_table.rowCount()):
-            btn_container = self.result_table.cellWidget(row, 7)
+            btn_container = self.result_table.cellWidget(row, 9)
             wake_btn = btn_container.findChild(QPushButton) if btn_container else None
             if wake_btn:
                 wake_btn.setEnabled(True)
@@ -1118,8 +1163,8 @@ class MainWindow(QMainWindow):
 
     def on_wake_single(self, row):
         """单个设备唤醒"""
-        sn = self.result_table.item(row, 1).text()
-        dev_id = self.result_table.item(row, 2).text()
+        sn = self.result_table.item(row, 2).text()
+        dev_id = self.result_table.item(row, 3).text()
         
         if not sn or not dev_id:
             self.status_bar.showMessage("⚠️ 设备信息不完整，无法唤醒", 3000)
@@ -1133,7 +1178,7 @@ class MainWindow(QMainWindow):
         self.clear_btn.setEnabled(False)
         
         # 获取按钮容器中的按钮
-        btn_container = self.result_table.cellWidget(row, 7)
+        btn_container = self.result_table.cellWidget(row, 9)
         wake_btn = None
         if btn_container:
             wake_btn = btn_container.findChild(QPushButton)
@@ -1152,7 +1197,7 @@ class MainWindow(QMainWindow):
         offline = 0
         
         for row in range(self.result_table.rowCount()):
-            status_item = self.result_table.item(row, 6)
+            status_item = self.result_table.item(row, 7)
             if status_item:
                 status_text = status_item.text()
                 if status_text in ["在线", "离线"]:
@@ -1199,7 +1244,7 @@ class MainWindow(QMainWindow):
                     
                     status_item = QTableWidgetItem(status_text)
                     status_item.setForeground(status_color)
-                    self.result_table.setItem(row, 6, status_item)
+                    self.result_table.setItem(row, 7, status_item)
                     
                     # 更新设备统计
                     self.update_device_count()
@@ -1242,8 +1287,8 @@ class MainWindow(QMainWindow):
             checkbox_widget = self.result_table.cellWidget(row, 0)
             checkbox = checkbox_widget.findChild(QCheckBox)
             if checkbox and checkbox.isChecked():
-                sn = self.result_table.item(row, 1).text()
-                dev_id = self.result_table.item(row, 2).text()
+                sn = self.result_table.item(row, 2).text()
+                dev_id = self.result_table.item(row, 3).text()
                 if sn and dev_id:
                     selected_devices.append((dev_id, sn))
                     selected_rows.append(row)
@@ -1258,12 +1303,11 @@ class MainWindow(QMainWindow):
         self.batch_wake_btn.setEnabled(False)
         self.batch_wake_btn.setText("唤醒中...")
         self.select_all_checkbox.setEnabled(False)
-        self.browse_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
         
         # 将所有选中设备的唤醒按钮改为"唤醒中..."并禁用
         for row in selected_rows:
-            btn_container = self.result_table.cellWidget(row, 7)
+            btn_container = self.result_table.cellWidget(row, 9)
             wake_btn = btn_container.findChild(QPushButton) if btn_container else None
             if wake_btn:
                 wake_btn.setText("唤醒中...")
@@ -1278,11 +1322,10 @@ class MainWindow(QMainWindow):
                 self.query_btn.setEnabled(True)
                 self.clear_btn.setEnabled(True)
                 self.select_all_checkbox.setEnabled(True)
-                self.browse_btn.setEnabled(True)
                 self.export_btn.setEnabled(True)
                 # 恢复按钮状态
                 for row in selected_rows:
-                    btn_container = self.result_table.cellWidget(row, 7)
+                    btn_container = self.result_table.cellWidget(row, 9)
                     wake_btn = btn_container.findChild(QPushButton) if btn_container else None
                     if wake_btn:
                         wake_btn.setText("唤醒")
@@ -1303,11 +1346,10 @@ class MainWindow(QMainWindow):
             self.query_btn.setEnabled(True)
             self.clear_btn.setEnabled(True)
             self.select_all_checkbox.setEnabled(True)
-            self.browse_btn.setEnabled(True)
             self.export_btn.setEnabled(True)
             # 恢复按钮状态
             for row in selected_rows:
-                btn_container = self.result_table.cellWidget(row, 7)
+                btn_container = self.result_table.cellWidget(row, 9)
                 wake_btn = btn_container.findChild(QPushButton) if btn_container else None
                 if wake_btn:
                     wake_btn.setText("唤醒")
@@ -1321,7 +1363,7 @@ class MainWindow(QMainWindow):
         # 更新在线状态
         if success and selected_rows:
             for row in selected_rows:
-                sn = self.result_table.item(row, 1).text()
+                sn = self.result_table.item(row, 2).text()
                 if device_name.startswith(sn):
                     try:
                         query = DeviceQuery('pro', 'yinjia', 'Yjtest123456.')
@@ -1333,7 +1375,7 @@ class MainWindow(QMainWindow):
                         
                         status_item = QTableWidgetItem(status_text)
                         status_item.setForeground(status_color)
-                        self.result_table.setItem(row, 6, status_item)
+                        self.result_table.setItem(row, 7, status_item)
                     except Exception as e:
                         pass
                     break
@@ -1350,7 +1392,6 @@ class MainWindow(QMainWindow):
         self.query_btn.setEnabled(True)
         self.clear_btn.setEnabled(True)
         self.select_all_checkbox.setEnabled(True)
-        self.browse_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
         
         self.status_bar.showMessage(f"❌ 唤醒失败: {error_msg}", 5000)
@@ -1363,12 +1404,11 @@ class MainWindow(QMainWindow):
         self.query_btn.setEnabled(True)
         self.clear_btn.setEnabled(True)
         self.select_all_checkbox.setEnabled(True)
-        self.browse_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
         
         # 恢复所有唤醒按钮状态
         for row in range(self.result_table.rowCount()):
-            btn_container = self.result_table.cellWidget(row, 7)
+            btn_container = self.result_table.cellWidget(row, 9)
             wake_btn = btn_container.findChild(QPushButton) if btn_container else None
             if wake_btn and wake_btn.text() == "唤醒中...":
                 wake_btn.setText("唤醒")
@@ -1392,7 +1432,7 @@ class MainWindow(QMainWindow):
     def on_cell_double_clicked(self, row, column):
         """单元格双击事件，自动复制内容"""
         # 跳过选择列和操作列
-        if column == 0 or column == 7:
+        if column == 0 or column == 9:
             return
         
         # 获取单元格内容
@@ -1424,60 +1464,69 @@ class MainWindow(QMainWindow):
             # 注册表写入失败不影响程序运行，静默处理
             pass
 
-    def on_browse_path(self):
-        """浏览按钮点击事件"""
-        # 选择目录而不是文件
-        dir_path = QFileDialog.getExistingDirectory(
-            self,
-            "选择保存目录",
-            self.export_path if self.export_path else ""
-        )
-        if dir_path:
-            self.export_path = dir_path
-            self.export_path_input.setText(dir_path)
-            # 保存配置
-            self.save_config()
-
     def on_export_csv(self):
         """导出CSV按钮点击事件"""
-        if not self.export_path:
-            self.status_bar.showMessage("⚠️ 请先选择保存目录", 3000)
-            return
-        
         if self.result_table.rowCount() == 0:
             self.status_bar.showMessage("⚠️ 没有可导出的数据", 3000)
             return
         
         try:
-            # 生成带时间戳的文件名
+            # 生成默认文件名（带时间戳）
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_name = f"设备信息_{timestamp}.csv"
-            file_path = os.path.join(self.export_path, file_name)
+            default_filename = f"设备信息_{timestamp}.csv"
             
+            # 确定初始目录
+            initial_dir = self.export_path if self.export_path else os.path.expanduser("~")
+            default_path = os.path.join(initial_dir, default_filename)
+            
+            # 打开文件保存对话框
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "保存CSV文件",
+                default_path,
+                "CSV文件 (*.csv);;所有文件 (*.*)"
+            )
+            
+            # 如果用户取消了对话框
+            if not file_path:
+                return
+            
+            # 确保文件扩展名为.csv
+            if not file_path.lower().endswith('.csv'):
+                file_path += '.csv'
+            
+            # 保存文件所在目录到配置
+            self.export_path = os.path.dirname(file_path)
+            self.export_path_input.setText(self.export_path)
+            self.save_config()
+            
+            # 写入CSV文件
             with open(file_path, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
                 # 写入表头
-                writer.writerow(['SN', 'ID', '密码', '版本号'])
+                writer.writerow(['设备名称', 'SN', 'ID', '密码'])
                 
                 # 写入数据
                 exported_count = 0
                 for row in range(self.result_table.rowCount()):
-                    sn_item = self.result_table.item(row, 1)
-                    id_item = self.result_table.item(row, 2)
-                    pwd_item = self.result_table.item(row, 3)
-                    ver_item = self.result_table.item(row, 5)
+                    name_item = self.result_table.item(row, 1)
+                    sn_item = self.result_table.item(row, 2)
+                    id_item = self.result_table.item(row, 3)
+                    pwd_item = self.result_table.item(row, 4)
                     
+                    name = name_item.text() if name_item else ''
                     sn = sn_item.text() if sn_item else ''
                     dev_id = id_item.text() if id_item else ''
                     password = pwd_item.text() if pwd_item else ''
-                    version = ver_item.text() if ver_item else ''
                     
                     # 跳过空行或查询中的行
-                    if sn and sn != "查询中...":
-                        writer.writerow([sn, dev_id, password, version])
+                    if name and name != "查询中...":
+                        writer.writerow([name, sn, dev_id, password])
                         exported_count += 1
             
-            self.status_bar.showMessage(f"✓ 导出成功：{file_name}（共{exported_count}条数据）", 5000)
+            # 获取文件名（不含路径）
+            filename = os.path.basename(file_path)
+            self.status_bar.showMessage(f"✓ 导出成功：{filename}（共{exported_count}条数据）", 5000)
         except Exception as e:
             self.status_bar.showMessage(f"❌ 导出失败：{str(e)}", 5000)
 
