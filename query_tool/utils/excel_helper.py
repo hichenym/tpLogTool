@@ -54,6 +54,12 @@ def create_gitlab_xlsx(commits, output_path, keywords=None):
             date_str = c['committed_date'][:19].replace('T', ' ')
             message = c['message'].strip() if c['message'] else ''
             author = c.get('author_name', '')
+            
+            # 排除前面有合并标识的提交（如【合并】、[合并]等）
+            if message and (message.startswith('【合并】') or message.startswith('[合并]') or 
+                           message.startswith('Merge ') or message.startswith('merge ')):
+                continue
+            
             message_lower = message.lower()
             highlight = any(kw.lower() in message_lower for kw in keyword_list) if keyword_list else False
             
