@@ -139,6 +139,9 @@ class SettingsDialog(QDialog):
         self.setFixedSize(360, 180)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         
+        # 保存父窗口引用，用于显示消息
+        self.main_window = parent
+        
         # 加载当前配置，默认使用生产环境
         self.env, self.username, self.password = get_account_config()
         self.env = 'pro'  # 固定使用生产环境
@@ -224,7 +227,8 @@ class SettingsDialog(QDialog):
         env = 'pro'  # 固定使用生产环境
         
         if not username or not password:
-            show_message_box(self, QMessageBox.Warning, "提示", "请输入账号和密码")
+            if self.main_window and hasattr(self.main_window, 'show_warning'):
+                self.main_window.show_warning("请输入账号和密码")
             return
         
         # 禁用按钮
@@ -232,17 +236,25 @@ class SettingsDialog(QDialog):
         self.test_btn.setText("测试中...")
         self.save_btn.setEnabled(False)
         
+        # 显示进度消息
+        if self.main_window and hasattr(self.main_window, 'show_progress'):
+            self.main_window.show_progress("正在测试连接...")
+        
         try:
             # 尝试登录
             query = DeviceQuery(env, username, password, use_cache=False)
             if query.init_error:
-                show_message_box(self, QMessageBox.Critical, "连接失败", f"登录失败：{query.init_error}")
+                if self.main_window and hasattr(self.main_window, 'show_error'):
+                    self.main_window.show_error(f"连接失败：{query.init_error}")
             elif query.token:
-                show_message_box(self, QMessageBox.Information, "连接成功", "账号密码验证成功！")
+                if self.main_window and hasattr(self.main_window, 'show_success'):
+                    self.main_window.show_success("账号密码验证成功！")
             else:
-                show_message_box(self, QMessageBox.Critical, "连接失败", "无法获取访问令牌，请检查账号密码")
+                if self.main_window and hasattr(self.main_window, 'show_error'):
+                    self.main_window.show_error("无法获取访问令牌，请检查账号密码")
         except Exception as e:
-            show_message_box(self, QMessageBox.Critical, "连接失败", f"测试失败：{str(e)}")
+            if self.main_window and hasattr(self.main_window, 'show_error'):
+                self.main_window.show_error(f"测试失败：{str(e)}")
         finally:
             # 恢复按钮
             self.test_btn.setEnabled(True)
@@ -256,12 +268,15 @@ class SettingsDialog(QDialog):
         env = 'pro'  # 固定使用生产环境
         
         if not username or not password:
-            show_message_box(self, QMessageBox.Warning, "提示", "请输入账号和密码")
+            if self.main_window and hasattr(self.main_window, 'show_warning'):
+                self.main_window.show_warning("请输入账号和密码")
             return
         
         # 保存到注册表
         if save_account_config(env, username, password):
-            show_message_box(self, QMessageBox.Information, "保存成功", "配置已保存！")
+            if self.main_window and hasattr(self.main_window, 'show_success'):
+                self.main_window.show_success("配置已保存！")
             self.accept()
         else:
-            show_message_box(self, QMessageBox.Critical, "保存失败", "无法保存配置到注册表")
+            if self.main_window and hasattr(self.main_window, 'show_error'):
+                self.main_window.show_error("无法保存配置到注册表")

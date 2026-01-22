@@ -168,9 +168,11 @@ class DeviceStatusPage(BasePage):
         self.batch_wake_btn.setIconSize(QSize(16, 16))
         self.batch_wake_btn.setFixedSize(100, 35)
         self.batch_wake_btn.clicked.connect(self.on_batch_wake)
+        self.batch_wake_btn.setEnabled(False)  # 初始禁用
         
         self.select_all_checkbox = QCheckBox("全选")
         self.select_all_checkbox.stateChanged.connect(self.on_select_all)
+        self.select_all_checkbox.setEnabled(False)  # 初始禁用
         
         result_header.addWidget(result_label)
         result_header.addStretch()
@@ -550,6 +552,12 @@ class DeviceStatusPage(BasePage):
         self.show_success(
             f"查询完成：共 {self.total_count} 台设备，在线 {self.online_count} 台，离线 {self.offline_count} 台"
         )
+        
+        # 查询完成后启用全选框
+        if self.result_table.rowCount() > 0:
+            self.select_all_checkbox.setEnabled(True)
+        else:
+            self.select_all_checkbox.setEnabled(False)
 
     def on_clear(self):
         """清空按钮点击"""
@@ -560,6 +568,11 @@ class DeviceStatusPage(BasePage):
         self.query_input_type = None
         self.query_input_list = []
         self.query_results = {}
+        
+        # 清空后禁用全选框和批量唤醒按钮
+        self.select_all_checkbox.setEnabled(False)
+        self.batch_wake_btn.setEnabled(False)
+        
         self.show_success("清空完成")
     
     def on_select_all(self, state):
@@ -569,6 +582,9 @@ class DeviceStatusPage(BasePage):
             checkbox = checkbox_widget.findChild(QCheckBox)
             if checkbox:
                 checkbox.setChecked(state == Qt.Checked)
+        
+        # 根据全选框状态控制批量唤醒按钮
+        self.batch_wake_btn.setEnabled(state == Qt.Checked)
     
     def on_wake_single(self, row):
         """单个设备唤醒"""
