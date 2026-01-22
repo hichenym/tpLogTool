@@ -184,9 +184,12 @@ class DeviceStatusPage(BasePage):
         self.result_table.setHorizontalHeaderLabels(
             ["选择", "设备名称", "SN", "ID", "密码", "接入节点", "版本号", "在线状态", "最后心跳", "操作"]
         )
-        self.result_table.setFocusPolicy(Qt.NoFocus)
-        self.result_table.setSelectionMode(QTableWidget.NoSelection)
+        self.result_table.setFocusPolicy(Qt.StrongFocus)  # 允许焦点
+        self.result_table.setSelectionMode(QTableWidget.SingleSelection)  # 单选模式
+        self.result_table.setSelectionBehavior(QTableWidget.SelectItems)  # 选择单元格
         self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.result_table.setShowGrid(True)  # 显示网格线
+        self.result_table.setFrameShape(QTableWidget.NoFrame)  # 移除外框
         StyleManager.apply_to_widget(self.result_table, "TABLE")
         
         # 设置列宽
@@ -208,6 +211,12 @@ class DeviceStatusPage(BasePage):
         
         # 连接列宽变化事件
         header.sectionResized.connect(self.on_column_resized)
+        
+        # 连接双击复制事件
+        self.result_table.cellDoubleClicked.connect(self.on_cell_double_clicked)
+        
+        # 连接单击事件
+        self.result_table.cellClicked.connect(self.on_cell_clicked)
         
         self.result_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.result_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -328,6 +337,36 @@ class DeviceStatusPage(BasePage):
             self.show_info(f"已选中 {total_lines} 行数据")
         else:
             self.show_info("就绪")
+    
+    def on_cell_double_clicked(self, row, column):
+        """表格单元格双击复制"""
+        # 跳过选择列和操作列
+        if column == 0 or column == 9:
+            return
+        
+        item = self.result_table.item(row, column)
+        if item:
+            text = item.text()
+            if text and text not in ["查询中...", ""]:
+                from PyQt5.QtWidgets import QApplication
+                clipboard = QApplication.clipboard()
+                clipboard.setText(text)
+                
+                # 选中当前单元格
+                self.result_table.setCurrentCell(row, column)
+                
+                self.show_success(f"已复制: {text}", 2000)
+    
+    def on_cell_clicked(self, row, column):
+        """表格单元格单击"""
+        # 跳过选择列和操作列
+        if column == 0 or column == 9:
+            # 清除选中状态
+            self.result_table.clearSelection()
+            return
+        
+        # 选中当前单元格
+        self.result_table.setCurrentCell(row, column)
     
     def on_query(self):
         """查询按钮点击"""

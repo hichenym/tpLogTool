@@ -69,13 +69,26 @@ class StyleManager:
             color: #e0e0e0;
             gridline-color: #555555;
             border: 1px solid #555555;
+            show-decoration-selected: 0;
         }
         QTableWidget::item {
             padding-right: 10px;
+            border: none;
+            outline: none;
         }
         QTableWidget::item:selected {
-            background-color: transparent;
-            border: 2px solid #0d7377;
+            background-color: rgba(13, 115, 119, 0.3);
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:focus {
+            background-color: rgba(13, 115, 119, 0.3);
+            border: none;
+            outline: none;
+        }
+        QTableWidget:focus {
+            outline: none;
+            border: 1px solid #555555;
         }
         QHeaderView::section {
             background-color: #2b2b2b;

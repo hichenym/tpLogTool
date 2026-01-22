@@ -92,9 +92,12 @@ class PhoneQueryPage(BasePage):
         self.phone_result_table = QTableWidget()
         self.phone_result_table.setColumnCount(3)
         self.phone_result_table.setHorizontalHeaderLabels(["型号", "设备名", "SN"])
-        self.phone_result_table.setFocusPolicy(Qt.NoFocus)
-        self.phone_result_table.setSelectionMode(QTableWidget.NoSelection)
+        self.phone_result_table.setFocusPolicy(Qt.StrongFocus)  # 允许焦点
+        self.phone_result_table.setSelectionMode(QTableWidget.SingleSelection)  # 单选模式
+        self.phone_result_table.setSelectionBehavior(QTableWidget.SelectItems)  # 选择单元格
         self.phone_result_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.phone_result_table.setShowGrid(True)  # 显示网格线
+        self.phone_result_table.setFrameShape(QTableWidget.NoFrame)  # 移除外框
         
         # 应用深色主题样式
         from utils import StyleManager
@@ -108,6 +111,7 @@ class PhoneQueryPage(BasePage):
         self.phone_result_table.setColumnWidth(1, 200)
         
         self.phone_result_table.cellDoubleClicked.connect(self.on_phone_cell_double_clicked)
+        self.phone_result_table.cellClicked.connect(self.on_phone_cell_clicked)  # 添加单击事件
         
         # SN列表文本框
         self.sn_list_text = PlainTextEdit()
@@ -236,7 +240,16 @@ class PhoneQueryPage(BasePage):
                 from PyQt5.QtWidgets import QApplication
                 clipboard = QApplication.clipboard()
                 clipboard.setText(text)
+                
+                # 选中当前单元格
+                self.phone_result_table.setCurrentCell(row, column)
+                
                 self.show_success(f"已复制: {text}", 2000)
+    
+    def on_phone_cell_clicked(self, row, column):
+        """单击选中单元格"""
+        # 选中当前单元格
+        self.phone_result_table.setCurrentCell(row, column)
     
     def add_phone_to_history(self, phone):
         """添加手机号到历史"""
