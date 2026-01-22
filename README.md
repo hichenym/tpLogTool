@@ -4,13 +4,24 @@
 
 ## 功能特性
 
+### 设备管理
 - 🔍 批量查询设备信息（支持SN/ID查询）
 - 📊 实时显示设备在线状态
 - ⚡ 批量唤醒离线设备
 - 📤 导出设备信息为CSV文件
+
+### GitLab 日志导出（新增）
+- 🔗 连接 GitLab 服务器
+- 📋 查询项目提交记录
+- 🔍 支持按分支、提交者、时间范围筛选
+- 🎨 关键词高亮导出
+- 📊 导出为 Excel 文件（带超链接）
+- 💾 记录最近使用的项目和分支
+
+### 通用功能
 - ⚙️ 账号密码配置（支持自定义账号密码）
 - 💾 配置信息保存到注册表
-- 🎨 友好的图形界面
+- 🎨 友好的图形界面（深色主题）
 
 ## 环境要求
 
@@ -64,7 +75,7 @@ python -m PyQt5.uic.pyuic ui/mainWindow.ui -o mainWindow.py
 ### 图片资源转 Python 文件
 
 ```bash
-pyrcc5 icon_res.qrc -o icon_res.py
+pyrcc5 resources/icon_res.qrc -o resources/icon_res.py
 ```
 
 ### 清除图标缓存（Windows）
@@ -73,17 +84,24 @@ pyrcc5 icon_res.qrc -o icon_res.py
 ie4uinit.exe -show
 ```
 
+### 清除编译文件
+
+```bash
+# 清除 __pycache__、*.pyc、build、dist 等编译生成的文件
+python scripts/clean.py
+```
+
 ## 打包发布
 
 ### 版本管理
 
-项目使用 `version.py` 统一管理版本信息：
+项目使用 `query_tool/version.py` 统一管理版本信息：
 
 ```python
-VERSION_MAJOR = 1  # 主版本号：重大功能更新或架构变更
+VERSION_MAJOR = 2  # 主版本号：重大功能更新或架构变更
 VERSION_MINOR = 0  # 次版本号：新增功能或较大改进
 VERSION_PATCH = 0  # 修订号：Bug修复或小改进
-BUILD_DATE = "20260115"  # 编译日期（自动生成）
+BUILD_DATE = "20260122"  # 编译日期（自动生成）
 ```
 
 版本号格式：`V主版本.次版本.修订号 (编译日期)`
@@ -156,45 +174,91 @@ dir /s /o-s dist\设备查询工具
 ## 项目结构
 
 ```
-.
-├── utils/                  # 🆕 工具模块（已重构）
-│   ├── config.py          # 配置管理
-│   ├── device_query.py    # 设备查询API
-│   ├── workers.py         # 多线程Worker
-│   ├── button_manager.py  # 按钮管理器
-│   ├── message_manager.py # 消息管理器
-│   ├── style_manager.py   # 样式管理器
-│   ├── table_helper.py    # 表格工具
-│   └── thread_manager.py  # 线程管理器
-├── widgets/                # 🆕 自定义控件（已重构）
-│   └── custom_widgets.py  # 自定义控件
-├── md/                     # 📚 文档目录
-│   ├── 代码重构说明.md
-│   ├── 重构进度报告.md
-│   ├── 重构模块使用指南.md
-│   └── 重构完成总结.md
-├── icon/                   # 图标资源目录
-│   ├── logo.ico           # 程序图标
-│   ├── logo.png           # Logo图片
-│   ├── search.png         # 搜索图标
-│   ├── clean.png          # 清空图标
-│   ├── save.png           # 保存图标
-│   ├── export.png         # 导出图标
-│   ├── werk_up.png        # 唤醒图标
-│   └── werk_up_all.png    # 批量唤醒图标
-├── main.py                # 主程序文件
-├── icon_res.py            # 图标资源文件
-├── icon_res.qrc           # Qt资源配置文件
-├── 设备查询工具.spec      # PyInstaller配置文件
-├── requirements.txt       # 依赖包清单
-├── version.py             # 版本信息
-└── README.md              # 项目说明文档
+query-tool/
+├── query_tool/                  # 主包（源代码）
+│   ├── __init__.py             # 包初始化
+│   ├── main.py                 # 程序入口
+│   ├── version.py              # 版本信息
+│   ├── pages/                  # 页面模块
+│   │   ├── __init__.py
+│   │   ├── base_page.py       # 页面基类
+│   │   ├── page_registry.py   # 页面注册机制
+│   │   ├── device_status_page.py  # 设备状态页面
+│   │   ├── phone_query_page.py    # 账号查询页面
+│   │   └── gitlab_log_page.py     # GitLab日志页面
+│   ├── utils/                  # 工具模块
+│   │   ├── __init__.py
+│   │   ├── config.py          # 配置管理
+│   │   ├── device_query.py    # 设备查询API
+│   │   ├── workers.py         # 多线程Worker
+│   │   ├── button_manager.py  # 按钮管理器
+│   │   ├── message_manager.py # 消息管理器
+│   │   ├── style_manager.py   # 样式管理器
+│   │   ├── table_helper.py    # 表格工具
+│   │   ├── thread_manager.py  # 线程管理器
+│   │   ├── gitlab_api.py      # GitLab API封装
+│   │   └── excel_helper.py    # Excel导出工具
+│   └── widgets/                # 自定义控件
+│       ├── __init__.py
+│       └── custom_widgets.py  # 自定义控件
+├── resources/                   # 资源文件
+│   ├── icons/                  # 图标资源
+│   │   ├── app/               # 应用图标
+│   │   ├── common/            # 通用操作图标
+│   │   ├── device/            # 设备操作图标
+│   │   ├── gitlab/            # GitLab相关图标
+│   │   ├── system/            # 系统设置图标
+│   │   └── README.md          # 图标说明
+│   ├── icon_res.qrc            # Qt资源配置
+│   └── icon_res.py             # 编译后的资源
+├── docs/                        # 文档目录
+│   ├── README.md               # 文档索引
+│   ├── quick-start.md          # 快速开始
+│   ├── settings-guide.md       # 设置指南
+│   ├── account-config-guide.md # 账号配置
+│   ├── gitlab-quick-start.md   # GitLab快速开始
+│   ├── modules-guide.md        # 模块使用指南
+│   ├── gitlab-dev-guide.md     # GitLab开发指南
+│   ├── gitlab-features.md      # GitLab功能清单
+│   ├── features-summary.md     # 功能总结
+│   ├── disabled-style-guide.md # 禁用样式说明
+│   ├── dark-theme-guide.md     # 深色主题说明
+│   ├── build-guide.md          # 打包说明
+│   └── version-guide.md        # 版本管理指南
+├── scripts/                     # 脚本目录
+│   └── build.py                # 打包脚本
+├── venv/                        # 虚拟环境
+├── .gitignore                   # Git忽略配置
+├── README.md                    # 项目说明
+├── requirements.txt             # 依赖清单
+└── run.py                       # 启动脚本
 ```
 
-> **📢 重要提示**：项目正在进行模块化重构（已完成60%），新增了 `utils/` 和 `widgets/` 模块。
-> 详细信息请查看 [md/重构完成总结.md](md/重构完成总结.md)
 
-## 使用方法
+
+## 运行程序
+
+### 开发模式
+
+```bash
+# 激活虚拟环境
+.\venv\Scripts\Activate.ps1
+
+# 运行程序
+python run.py
+```
+
+### 直接运行
+
+```bash
+python run.py
+```
+
+或者直接运行主文件：
+
+```bash
+python query_tool/main.py
+```
 
 ### 1. 配置账号密码（首次使用必须）
 
@@ -207,7 +271,7 @@ dir /s /o-s dist\设备查询工具
 
 如果未配置账号密码，查询时会自动提示您配置。
 
-详细说明请参考：[账号密码配置说明.md](账号密码配置说明.md)
+详细说明请参考：[md/account-config-guide.md](md/account-config-guide.md)
 
 ### 2. 查询设备信息
 
@@ -228,16 +292,27 @@ dir /s /o-s dist\设备查询工具
 - 点击"导出"按钮导出CSV文件
 - 文件名自动带时间戳，避免覆盖
 
-### 5. 其他功能
+### 5. GitLab 日志导出（新功能）
+
+- 点击菜单栏的"Git日志"按钮切换到日志页面
+- 填写 GitLab 服务器地址和 Token
+- 点击"连接"按钮连接服务器
+- 选择项目、分支、提交者（可选）
+- 设置时间范围和关键词（可选）
+- 选择保存路径
+- 点击"导出"按钮导出 Excel 文件
+
+### 6. 其他功能
 
 - 双击表格单元格可复制内容
 - 点击"清空"按钮清除所有输入和结果
 - 支持全选/取消全选设备
+- 页面切换自动保存状态
 
 ## 配置说明
 
 程序配置信息保存在 Windows 注册表中：
-- 路径: `HKEY_CURRENT_USER\Software\TPDevQuery`
+- 路径: `HKEY_CURRENT_USER\Software\TPQueryTool`
 - 包含: 账号密码、Token缓存、导出路径等配置
 
 ### 账号密码配置
@@ -250,7 +325,7 @@ dir /s /o-s dist\设备查询工具
 - 固定使用生产环境
 - 未配置时查询会自动提示
 
-详细说明请参考：[账号密码配置说明.md](账号密码配置说明.md)
+详细说明请参考：[md/account-config-guide.md](md/account-config-guide.md)
 
 ## 技术栈
 
@@ -270,7 +345,7 @@ dir /s /o-s dist\设备查询工具
 ## 常见问题
 
 ### Q: 打包后体积过大？
-A: 参考"打包优化说明.md"文档进行优化，可减小到30-60MB
+A: 参考 [md/build-guide.md](md/build-guide.md) 文档进行优化，可减小到30-60MB
 
 ### Q: 图标不显示？
 A: 修改icon_res.qrc后需要重新运行 `pyrcc5 icon_res.qrc -o icon_res.py`
@@ -282,6 +357,31 @@ A: 检查网络连接和账号密码是否正确
 A: PowerShell需要管理员权限或执行 `Set-ExecutionPolicy RemoteSigned`
 
 ## 更新日志
+
+### v2.0.0 (2026-01-22) - 重大重构版本 🎉
+- 🏗️ **项目结构完全重组（方案B）**
+  - 源代码集中在 `query_tool/` 包
+  - 资源文件集中在 `resources/`
+  - 文档集中在 `docs/`
+  - 脚本集中在 `scripts/`
+  - 所有导入路径统一为 `query_tool.*` 格式
+- ✨ **新增 GitLab 日志导出功能**
+  - 支持连接 GitLab 服务器
+  - 支持按项目、分支、提交者筛选
+  - 支持时间范围筛选
+  - 支持关键词高亮导出
+  - 导出为 Excel 文件（带超链接）
+  - 记录最近使用的项目和分支
+- 🔧 **改进**
+  - 图标资源路径更新为 `:/icons/`
+  - 启动脚本 `run.py` 支持直接运行
+  - 打包脚本更新为新的项目结构
+  - 注册表名称更新为 `TPQueryTool`
+  - 所有文档更新以反映新的项目结构
+- 📚 **文档完善**
+  - 13个核心文档完整覆盖所有功能
+  - 详细的模块使用指南
+  - 完整的打包和发布流程说明
 
 ### v3.0.0 (2026-01-21) - 代码重构版本 🎉
 - 🏗️ **重大重构**：项目模块化重构（已完成60%）
@@ -295,10 +395,10 @@ A: PowerShell需要管理员权限或执行 `Set-ExecutionPolicy RemoteSigned`
   - `table_helper.py` - 表格工具（新增）
   - `thread_manager.py` - 线程管理器（新增）
 - 🎨 新增 `widgets/` 自定义控件模块
-- � 新增详细的重构文档（4个文档）
+- 📝 新增详细的重构文档（4个文档）
 - ⚡ 减少重复代码80%，提升可维护性
 - 🔧 统一接口管理，提升代码质量
-- � 详见：[md/重构完成总结.md](md/重构完成总结.md)
+- 📚 详见：[md/features-summary.md](md/features-summary.md)
 
 ### v1.1.1 (2026-01-17)
 - 🐛 修复重复定义save_account_config函数的问题

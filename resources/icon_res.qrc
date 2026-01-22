@@ -1,0 +1,29 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource>
+	<!-- 应用图标 -->
+	<file>icons/app/logo.png</file>
+	
+	<!-- 通用操作 -->
+	<file>icons/common/search.png</file>
+	<file>icons/common/clean.png</file>
+	<file>icons/common/export.png</file>
+	<file>icons/common/save.png</file>
+	
+	<!-- 设备操作 -->
+	<file>icons/device/werk_up.png</file>
+	<file>icons/device/werk_up_all.png</file>
+	
+	<!-- 系统设置 -->
+	<file>icons/system/setting.png</file>
+	<file>icons/system/device.png</file>
+	<file>icons/system/git.png</file>
+	<file>icons/system/user.png</file>
+	
+	<!-- GitLab 相关 -->
+	<file>icons/gitlab/gitlab.png</file>
+	<file>icons/gitlab/connect.png</file>
+	<file>icons/gitlab/disconnect.png</file>
+	<file>icons/gitlab/browser.png</file>
+	<file>icons/gitlab/export.png</file>
+</qresource>
+</RCC>
