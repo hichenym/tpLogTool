@@ -130,6 +130,37 @@ class StyleManager:
         }
     """
     
+    # 纯文本编辑框样式（表格风格）
+    PLAINTEXT_EDIT_TABLE = """
+        QPlainTextEdit {
+            background-color: #404040;
+            color: #e0e0e0;
+            border: 1px solid #555555;
+            border-radius: 0px;
+        }
+        QPlainTextEdit:focus {
+            border: 1px solid #555555;
+            outline: none;
+        }
+        QScrollBar:vertical {
+            background-color: #2b2b2b;
+            width: 12px;
+            border: none;
+            margin: 0px;
+        }
+        QScrollBar::handle:vertical {
+            background-color: #555555;
+            border-radius: 6px;
+            min-height: 20px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background-color: #6a6a6a;
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            height: 0px;
+        }
+    """
+    
     # 版本标签样式
     VERSION_LABEL = "color: #b0b0b0; padding-right: 10px; border: none; background-color: transparent;"
     

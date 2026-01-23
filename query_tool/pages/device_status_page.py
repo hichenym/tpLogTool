@@ -125,12 +125,32 @@ class DeviceStatusPage(BasePage):
         self.sn_input.setMinimumHeight(80)
         self.sn_input.setPlaceholderText("")
         self.sn_input.selectionChanged.connect(self.on_text_selection_changed)
+        self.sn_input.setStyleSheet("""
+            QTextEdit {
+                background-color: #404040;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+            }
+            QTextEdit:focus {
+                border: 1px solid #555555;
+            }
+        """)
         
         # ID输入框
         self.id_input = PlainTextEdit()
         self.id_input.setMinimumHeight(80)
         self.id_input.setPlaceholderText("")
         self.id_input.selectionChanged.connect(self.on_text_selection_changed)
+        self.id_input.setStyleSheet("""
+            QTextEdit {
+                background-color: #404040;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+            }
+            QTextEdit:focus {
+                border: 1px solid #555555;
+            }
+        """)
 
         # 按钮
         btn_widget = QWidget()
@@ -267,6 +287,14 @@ class DeviceStatusPage(BasePage):
         self.export_path_input.setReadOnly(True)
         self.export_path_input.setFocusPolicy(Qt.NoFocus)
         self.export_path_input.setMinimumHeight(28)
+        self.export_path_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #404040;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                padding: 4px;
+            }
+        """)
         
         self.export_btn = QPushButton("导出")
         self.export_btn.setIcon(QIcon(":/icons/common/export.png"))

@@ -293,11 +293,11 @@ class PhoneQueryWorker(QObject):
                 self.error.emit("该用户暂无绑定设备")
                 return
             
-            # 第三步：并发查询所有设备的型号信息
-            self.progress.emit(f"正在查询 {len(devices)} 台设备的型号信息...")
+            # 第三步：并发查询所有设备的型号和版本信息
+            self.progress.emit(f"正在查询 {len(devices)} 台设备的型号和版本信息...")
             
             def get_device_model(device):
-                """查询单个设备的型号"""
+                """查询单个设备的型号和版本"""
                 device_sn = device.get('deviceSn', '')
                 device_name = device.get('deviceName', '')
                 
@@ -305,10 +305,12 @@ class PhoneQueryWorker(QObject):
                     return {
                         "model": "未知型号",
                         "name": device_name,
-                        "sn": device_sn
+                        "sn": device_sn,
+                        "version": ""
                     }
                 
                 try:
+                    # 查询型号
                     header_info = query.get_device_header(device_sn)
                     product_name = ""
                     if header_info and header_info.get('data'):
@@ -316,16 +318,30 @@ class PhoneQueryWorker(QObject):
                     else:
                         product_name = "未知型号"
                     
+                    # 查询版本号：需要先通过SN查询获取dev_id
+                    version = ""
+                    try:
+                        info = query.get_device_info(dev_sn=device_sn)
+                        records = info.get('data', {}).get('records', [])
+                        if records:
+                            dev_id = records[0].get('devId')
+                            if dev_id:
+                                version = query.get_device_version(dev_id) or ""
+                    except Exception as e:
+                        version = ""
+                    
                     return {
                         "model": product_name,
                         "name": device_name,
-                        "sn": device_sn
+                        "sn": device_sn,
+                        "version": version
                     }
                 except Exception as e:
                     return {
                         "model": "查询失败",
                         "name": device_name,
-                        "sn": device_sn
+                        "sn": device_sn,
+                        "version": ""
                     }
             
             # 使用线程池并发查询
