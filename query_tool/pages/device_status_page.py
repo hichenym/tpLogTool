@@ -7,7 +7,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QCheckBox, QSplitter, QFrame,
-    QFileDialog, QMessageBox, QWidget
+    QFileDialog, QMessageBox, QWidget, QComboBox
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
 from PyQt5.QtGui import QIcon
@@ -22,6 +22,13 @@ from query_tool.utils.workers import QueryThread, WakeThread
 from query_tool.widgets import PlainTextEdit, ClickableLineEdit, show_question_box
 
 
+class NoWheelComboBox(QComboBox):
+    """禁用鼠标滚轮切换的下拉框"""
+    def wheelEvent(self, event):
+        """禁用鼠标滚轮事件"""
+        event.ignore()
+
+
 @register_page("设备", order=1, icon=":/icons/system/device.png")
 class DeviceStatusPage(BasePage):
     """设备状态查询页面"""
@@ -34,6 +41,10 @@ class DeviceStatusPage(BasePage):
         self.btn_manager = ButtonManager()
         self.thread_mgr = ThreadManager()
         
+        # 线程数设置
+        self.thread_count = 40  # 默认线程数改为 40
+        self.thread_count_combo = None  # 线程数下拉框
+        
         # 数据
         self.query_results = {}
         self.query_input_type = None
@@ -42,6 +53,18 @@ class DeviceStatusPage(BasePage):
         self.total_count = 0
         self.online_count = 0
         self.offline_count = 0
+        
+        # 版本过滤相关
+        self.all_versions = set()
+        self.current_version_filter = None
+        self.filtered_results = {}  # 存储过滤后的结果
+        self.display_row_to_original = {}  # 映射显示行号到原始行号
+        
+        # 保存原始的 SN/ID 输入框内容
+        self.original_sn_text = ""
+        self.original_id_text = ""
+        self.original_sn_list = []  # 原始 SN 列表
+        self.original_id_list = []  # 原始 ID 列表
         
         # 列宽管理
         self.column_width_ratios = {}
@@ -157,6 +180,22 @@ class DeviceStatusPage(BasePage):
         btn_layout = QVBoxLayout(btn_widget)
         btn_layout.setContentsMargins(0, 0, 0, 0)
         
+        # 线程数控件行
+        thread_layout = QHBoxLayout()
+        thread_layout.setContentsMargins(0, 0, 0, 0)
+        thread_layout.setSpacing(0)
+        thread_label = QLabel("线程:")
+        self.thread_count_combo = NoWheelComboBox()
+        # 填充 10-70，间隔 10
+        for i in range(10, 71, 10):
+            self.thread_count_combo.addItem(str(i))
+        self.thread_count_combo.setCurrentText("40")
+        self.thread_count_combo.setFixedWidth(50)
+        self.thread_count_combo.currentTextChanged.connect(self.on_thread_count_changed)
+        thread_layout.addWidget(thread_label)
+        thread_layout.addWidget(self.thread_count_combo)
+        thread_layout.addStretch()
+        
         self.query_btn = QPushButton("查询")
         self.query_btn.setIcon(QIcon(":/icons/common/search.png"))
         self.query_btn.setIconSize(QSize(16, 16))
@@ -170,6 +209,8 @@ class DeviceStatusPage(BasePage):
         self.clear_btn.clicked.connect(self.on_clear)
         
         btn_layout.addStretch()
+        btn_layout.addLayout(thread_layout)
+        btn_layout.addSpacing(8)
         btn_layout.addWidget(self.query_btn)
         btn_layout.addSpacing(8)
         btn_layout.addWidget(self.clear_btn)
@@ -223,12 +264,31 @@ class DeviceStatusPage(BasePage):
         self.batch_wake_btn.clicked.connect(self.on_batch_wake)
         self.batch_wake_btn.setEnabled(False)  # 初始禁用
         
-        result_tip = QLabel("(双击可复制)")
+        # 版本号下拉框
+        version_label = QLabel("版本:")
+        self.version_combo = NoWheelComboBox()
+        self.version_combo.addItem("全部")
+        self.version_combo.setEnabled(False)
+        self.version_combo.currentTextChanged.connect(self.on_version_changed)
+        
+        # 匹配数量标签
+        quantity_label = QLabel("数量:")
+        self.match_count_label = QLabel("0")
+        self.match_count_label.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        
+        result_tip = QLabel("双击表格复制")
         result_tip.setStyleSheet("color: #909090; font-size: 11px;")
         
         result_header.addWidget(self.select_all_checkbox)
         result_header.addWidget(self.batch_wake_btn)
-        result_header.addStretch()
+        result_header.addSpacing(20)
+        result_header.addWidget(version_label)
+        result_header.addWidget(self.version_combo, 1)
+        result_header.addSpacing(20)
+        result_header.addWidget(quantity_label)
+        self.match_count_label.setText("0")
+        result_header.addWidget(self.match_count_label)
+        result_header.addSpacing(20)
         result_header.addWidget(result_tip)
         group_layout.addLayout(result_header)
 
@@ -446,6 +506,10 @@ class DeviceStatusPage(BasePage):
         # 选中当前单元格
         self.result_table.setCurrentCell(row, column)
     
+    def on_thread_count_changed(self, text):
+        """线程数改变事件"""
+        self.thread_count = int(text)
+    
     def on_query(self):
         """查询按钮点击"""
         sn_text = self.sn_input.toPlainText().strip()
@@ -510,7 +574,7 @@ class DeviceStatusPage(BasePage):
                 pass
         
         # 启动查询线程
-        query_thread = QueryThread(sn_list, id_list, env, username, password, max_workers=30)
+        query_thread = QueryThread(sn_list, id_list, env, username, password, max_workers=self.thread_count)
         query_thread.init_success.connect(self.on_query_init_success)
         query_thread.single_result.connect(self.on_single_result)
         query_thread.all_done.connect(self.on_query_complete)
@@ -528,6 +592,11 @@ class DeviceStatusPage(BasePage):
     def on_query_init_success(self):
         """查询初始化成功"""
         self.result_table.setRowCount(self.total_count)
+        self.display_row_to_original = {}
+        
+        # 初始化行号映射
+        for row in range(self.total_count):
+            self.display_row_to_original[row] = row
         
         # 批量创建行（每 50 行一批）
         batch_size = 50
@@ -538,7 +607,7 @@ class DeviceStatusPage(BasePage):
                 # 复选框
                 checkbox = QCheckBox()
                 checkbox_widget = QWidget()
-                checkbox_widget.setStyleSheet("background-color: transparent;")  # 设置透明背景
+                checkbox_widget.setStyleSheet("background-color: transparent;")
                 checkbox_layout = QHBoxLayout(checkbox_widget)
                 checkbox_layout.addWidget(checkbox)
                 checkbox_layout.setAlignment(Qt.AlignCenter)
@@ -559,7 +628,7 @@ class DeviceStatusPage(BasePage):
                 wake_btn.clicked.connect(lambda checked, r=row: self.on_wake_single(r))
                 
                 btn_container = QWidget()
-                btn_container.setStyleSheet("background-color: transparent;")  # 设置透明背景
+                btn_container.setStyleSheet("background-color: transparent;")
                 btn_layout = QHBoxLayout(btn_container)
                 btn_layout.addStretch()
                 btn_layout.addWidget(wake_btn)
@@ -567,10 +636,10 @@ class DeviceStatusPage(BasePage):
                 btn_layout.setContentsMargins(0, 0, 0, 0)
                 btn_layout.setSpacing(0)
                 self.result_table.setCellWidget(row, 9, btn_container)
-            
-            # 每批处理后，处理事件以保持 UI 响应
-            from PyQt5.QtWidgets import QApplication
-            QApplication.processEvents()
+        
+        # 重新启用表格更新
+        self.result_table.setUpdatesEnabled(True)
+        self.result_table.viewport().update()
     
     def on_single_result(self, row, item):
         """单个设备查询完成"""
@@ -641,7 +710,7 @@ class DeviceStatusPage(BasePage):
             if wake_btn:
                 wake_btn.setEnabled(True)
         
-        # 填充对应的输入框
+        # 填充对应的输入框并保存原始列表
         if self.query_input_type == 'sn':
             id_results = []
             for input_sn in self.query_input_list:
@@ -654,6 +723,11 @@ class DeviceStatusPage(BasePage):
                 if not found:
                     id_results.append("不存在")
             self.id_input.setPlainText('\n'.join(id_results))
+            # 保存原始列表
+            self.original_sn_list = self.query_input_list.copy()
+            self.original_id_list = id_results.copy()
+            self.original_sn_text = self.sn_input.toPlainText()
+            self.original_id_text = self.id_input.toPlainText()
         elif self.query_input_type == 'id':
             sn_results = []
             for input_id in self.query_input_list:
@@ -666,6 +740,11 @@ class DeviceStatusPage(BasePage):
                 if not found:
                     sn_results.append("不存在")
             self.sn_input.setPlainText('\n'.join(sn_results))
+            # 保存原始列表
+            self.original_sn_list = sn_results.copy()
+            self.original_id_list = self.query_input_list.copy()
+            self.original_sn_text = self.sn_input.toPlainText()
+            self.original_id_text = self.id_input.toPlainText()
         
         self.show_success(
             f"查询完成：共 {self.total_count} 台设备，在线 {self.online_count} 台，离线 {self.offline_count} 台"
@@ -676,6 +755,12 @@ class DeviceStatusPage(BasePage):
             self.select_all_checkbox.setEnabled(True)
         else:
             self.select_all_checkbox.setEnabled(False)
+        
+        # 收集所有版本号并更新下拉框
+        self.update_version_combo()
+        
+        # 初始化匹配数量为全部数量
+        self.match_count_label.setText(f"{self.result_table.rowCount()}")
 
     def on_clear(self):
         """清空按钮点击"""
@@ -690,6 +775,25 @@ class DeviceStatusPage(BasePage):
         # 清空后禁用全选框和批量唤醒按钮
         self.select_all_checkbox.setEnabled(False)
         self.batch_wake_btn.setEnabled(False)
+        
+        # 重置版本下拉框
+        self.version_combo.blockSignals(True)
+        self.version_combo.clear()
+        self.version_combo.addItem("全部")
+        self.version_combo.setEnabled(False)
+        self.version_combo.blockSignals(False)
+        self.all_versions = set()
+        self.current_version_filter = None
+        self.filtered_results = {}
+        
+        # 重置匹配数量
+        self.match_count_label.setText("0")
+        
+        # 重置原始文本和列表
+        self.original_sn_text = ""
+        self.original_id_text = ""
+        self.original_sn_list = []
+        self.original_id_list = []
         
         self.show_success("清空完成")
     
@@ -706,6 +810,9 @@ class DeviceStatusPage(BasePage):
     
     def on_wake_single(self, row):
         """单个设备唤醒"""
+        # 获取原始行号
+        original_row = self.display_row_to_original.get(row, row)
+        
         sn = self.result_table.item(row, 2).text()
         dev_id = self.result_table.item(row, 3).text()
         
@@ -820,7 +927,7 @@ class DeviceStatusPage(BasePage):
                 self.show_error(query.init_error)
                 return
             
-            wake_thread = WakeThread(selected_devices, query, max_workers=30)
+            wake_thread = WakeThread(selected_devices, query, max_workers=self.thread_count)
             wake_thread.wake_result.connect(lambda name, success: self.on_wake_result(name, success, selected_rows))
             wake_thread.all_done.connect(lambda: self.on_wake_complete(selected_rows))
             wake_thread.progress.connect(lambda msg: self.show_progress(msg))
@@ -930,6 +1037,214 @@ class DeviceStatusPage(BasePage):
         
         # 显示统计信息
         self.show_success(f"查询完成：共 {total} 台设备，在线 {online} 台，离线 {offline} 台")
+    
+    def update_filtered_status_summary(self):
+        """更新过滤后的设备状态统计信息"""
+        total = self.result_table.rowCount()
+        online = 0
+        offline = 0
+        
+        # 遍历表格统计在线离线数量
+        for row in range(total):
+            status_item = self.result_table.item(row, 7)
+            if status_item:
+                status_text = status_item.text()
+                if status_text == "在线":
+                    online += 1
+                elif status_text == "离线":
+                    offline += 1
+        
+        # 显示过滤后的统计信息
+        self.show_success(f"筛选完成：共 {total} 台设备，在线 {online} 台，离线 {offline} 台")
+    
+    def update_version_combo(self):
+        """更新版本下拉框"""
+        # 收集所有版本号
+        self.all_versions = set()
+        for row, result in self.query_results.items():
+            version = result.get('version', '')
+            if version:
+                self.all_versions.add(version)
+        
+        # 更新下拉框
+        self.version_combo.blockSignals(True)
+        self.version_combo.clear()
+        self.version_combo.addItem("全部")
+        
+        # 按版本号排序添加
+        for version in sorted(self.all_versions):
+            self.version_combo.addItem(version)
+        
+        self.version_combo.setEnabled(len(self.all_versions) > 0)
+        self.version_combo.blockSignals(False)
+        
+        # 重置过滤
+        self.current_version_filter = None
+        self.filtered_results = {}
+    
+    def on_version_changed(self, version):
+        """版本下拉框改变"""
+        if version == "全部":
+            # 显示所有数据
+            self.current_version_filter = None
+            self.filtered_results = {}
+            self.refresh_table_display()
+            # 更新匹配数量
+            self.match_count_label.setText(f"{self.result_table.rowCount()}")
+            # 恢复原始输入框内容
+            self.sn_input.setPlainText(self.original_sn_text)
+            self.id_input.setPlainText(self.original_id_text)
+            # 显示原始统计信息
+            self.show_success(
+                f"查询完成：共 {self.total_count} 台设备，在线 {self.online_count} 台，离线 {self.offline_count} 台"
+            )
+        else:
+            # 过滤指定版本的数据
+            self.current_version_filter = version
+            self.filtered_results = {}
+            
+            for row, result in self.query_results.items():
+                if result.get('version', '') == version:
+                    self.filtered_results[row] = result
+            
+            self.refresh_table_display()
+            # 更新匹配数量
+            self.match_count_label.setText(f"{self.result_table.rowCount()}")
+            # 更新输入框为过滤后的数据
+            self.update_input_boxes_from_filtered_results()
+            # 统计过滤后的在线离线数量
+            self.update_filtered_status_summary()
+    
+    def refresh_table_display(self):
+        """刷新表格显示"""
+        # 确定要显示的数据
+        display_data = self.filtered_results if self.current_version_filter else self.query_results
+        
+        # 清空表格
+        self.result_table.setRowCount(0)
+        self.display_row_to_original = {}
+        
+        if not display_data:
+            return
+        
+        # 重新填充表格
+        self.result_table.setRowCount(len(display_data))
+        
+        for display_row, (original_row, item) in enumerate(sorted(display_data.items())):
+            # 保存行号映射
+            self.display_row_to_original[display_row] = original_row
+            
+            # 复选框
+            checkbox = QCheckBox()
+            checkbox_widget = QWidget()
+            checkbox_widget.setStyleSheet("background-color: transparent;")
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            self.result_table.setCellWidget(display_row, 0, checkbox_widget)
+            
+            # 数据
+            device_name = item.get('device_name', '')
+            sn = item.get('sn', '')
+            dev_id = item.get('id', '')
+            password = item.get('password', '')
+            node = item.get('node', '')
+            version = item.get('version', '')
+            last_heartbeat = item.get('last_heartbeat', '')
+            
+            self.result_table.setItem(display_row, 1, QTableWidgetItem(device_name))
+            self.result_table.setItem(display_row, 2, QTableWidgetItem(sn))
+            self.result_table.setItem(display_row, 3, QTableWidgetItem(dev_id))
+            self.result_table.setItem(display_row, 4, QTableWidgetItem(password))
+            self.result_table.setItem(display_row, 5, QTableWidgetItem(str(node)))
+            self.result_table.setItem(display_row, 6, QTableWidgetItem(version))
+            
+            # 在线状态
+            online_status = item.get('online', -1)
+            if online_status == 1:
+                status_text = "在线"
+                status_color = Qt.green
+            elif online_status == 0:
+                status_text = "离线"
+                status_color = Qt.red
+            elif online_status == -1:
+                status_text = "未找到"
+                status_color = Qt.gray
+            else:
+                status_text = "查询失败"
+                status_color = Qt.darkYellow
+            
+            status_item = QTableWidgetItem(status_text)
+            status_item.setForeground(status_color)
+            self.result_table.setItem(display_row, 7, status_item)
+            
+            # 最后心跳
+            self.result_table.setItem(display_row, 8, QTableWidgetItem(last_heartbeat))
+            
+            # 唤醒按钮
+            wake_btn = QPushButton("唤醒")
+            wake_btn.setIcon(QIcon(":/icons/device/werk_up.png"))
+            wake_btn.setIconSize(QSize(16, 16))
+            wake_btn.setFocusPolicy(Qt.NoFocus)
+            wake_btn.clicked.connect(lambda checked, r=display_row: self.on_wake_single(r))
+            
+            btn_container = QWidget()
+            btn_container.setStyleSheet("background-color: transparent;")
+            btn_layout = QHBoxLayout(btn_container)
+            btn_layout.addStretch()
+            btn_layout.addWidget(wake_btn)
+            btn_layout.addStretch()
+            btn_layout.setContentsMargins(0, 0, 0, 0)
+            btn_layout.setSpacing(0)
+            self.result_table.setCellWidget(display_row, 9, btn_container)
+        
+        # 重新启用表格更新
+        self.result_table.setUpdatesEnabled(True)
+        self.result_table.viewport().update()
+    
+    def update_input_boxes_from_table(self):
+        """根据表格内容更新输入框"""
+        sn_list = []
+        id_list = []
+        
+        for row in range(self.result_table.rowCount()):
+            sn_item = self.result_table.item(row, 2)
+            id_item = self.result_table.item(row, 3)
+            
+            if sn_item:
+                sn = sn_item.text()
+                if sn:
+                    sn_list.append(sn)
+            
+            if id_item:
+                dev_id = id_item.text()
+                if dev_id:
+                    id_list.append(dev_id)
+        
+        # 根据原始查询类型更新对应的输入框
+        if self.query_input_type == 'sn':
+            self.id_input.setPlainText('\n'.join(id_list))
+        elif self.query_input_type == 'id':
+            self.sn_input.setPlainText('\n'.join(sn_list))
+    
+    def update_input_boxes_from_filtered_results(self):
+        """根据过滤结果更新输入框"""
+        sn_list = []
+        id_list = []
+        
+        # 从过滤结果中提取 SN 和 ID
+        for row, result in sorted(self.filtered_results.items()):
+            sn = result.get('sn', '')
+            dev_id = result.get('id', '')
+            if sn:
+                sn_list.append(sn)
+            if dev_id:
+                id_list.append(dev_id)
+        
+        # 同时更新两个输入框
+        self.sn_input.setPlainText('\n'.join(sn_list))
+        self.id_input.setPlainText('\n'.join(id_list))
     
     def load_config(self):
         """加载配置"""
