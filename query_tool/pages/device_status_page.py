@@ -845,10 +845,12 @@ class DeviceStatusPage(BasePage):
                 self.show_error(query.init_error)
                 return
             
+            # 使用唯一的线程键名，避免多个唤醒任务互相覆盖
+            thread_key = f"wake_single_{row}_{dev_id}"
             wake_thread = WakeThread([(dev_id, sn)], query, max_workers=1)
-            wake_thread.wake_result.connect(lambda name, success: self.on_single_wake_done(row, wake_btn, sn, success))
-            wake_thread.finished.connect(lambda: self.thread_mgr.cleanup("wake_single"))
-            self.thread_mgr.add("wake_single", wake_thread)
+            wake_thread.wake_result.connect(lambda name, success, r=row, btn=wake_btn, s=sn: self.on_single_wake_done(r, btn, s, success))
+            wake_thread.finished.connect(lambda key=thread_key: self.thread_mgr.cleanup(key))
+            self.thread_mgr.add(thread_key, wake_thread)
             wake_thread.start()
         except Exception as e:
             if wake_btn:
