@@ -48,19 +48,29 @@ class QueryWorker(QObject):
                 node_info = self.query.get_access_node(dev_id=dev_id) if dev_id else {}
                 # 使用新接口获取版本号
                 version = self.query.get_device_version(dev_id) if dev_id else ''
-                # 使用新接口获取在线状态
+                # 使用新接口获取在线状态和型号
                 header_info = self.query.get_device_header(sn) if sn else {}
-                online_status = header_info.get('data', {}).get('onlineStatus', 0) if header_info else 0
+                online_status = header_info.get('data', {}).get('onlineStatus', -1) if header_info and header_info.get('data') else -1
+                model = header_info.get('data', {}).get('productName', '') if header_info else ''
                 # 获取最后心跳时间
                 last_heartbeat = self.query.get_device_last_heartbeat(dev_id) if dev_id else ''
                 # 获取设备名称
                 device_name = self.query.get_device_name(dev_id) if dev_id else ''
+                
+                # 如果型号为空，尝试从版本号中提取
+                if not model and version and '-' in version:
+                    # 从版本号中提取型号，如 TS8864G-V4.6.1.1-Build202412190026 -> TS8864G
+                    extracted_model = version.split('-')[0].strip()
+                    if extracted_model:
+                        model = extracted_model
+                
                 return row, {
                     'device_name': device_name or '',
                     'sn': sn,
                     'id': str(dev_id) if dev_id else '',
                     'password': password or '',
                     'node': node_info.get('serverId', '') if node_info else '',
+                    'model': model or '',
                     'version': version or '',
                     'online': online_status,
                     'last_heartbeat': last_heartbeat or ''
@@ -70,14 +80,14 @@ class QueryWorker(QObject):
                     'device_name': '',
                     'sn': value if query_type == 'sn' else '',
                     'id': value if query_type == 'id' else '',
-                    'password': '', 'node': '', 'version': '', 'online': -1, 'last_heartbeat': ''
+                    'password': '', 'node': '', 'model': '', 'version': '', 'online': -1, 'last_heartbeat': ''
                 }
         except Exception as e:
             return row, {
                 'device_name': '',
                 'sn': value if query_type == 'sn' else '',
                 'id': value if query_type == 'id' else '',
-                'password': '', 'node': '', 'version': '',
+                'password': '', 'node': '', 'model': '', 'version': '',
                 'online': -2, 'last_heartbeat': '', 'error': str(e)
             }
     
@@ -247,12 +257,13 @@ class PhoneQueryWorker(QObject):
     error = pyqtSignal(str)
     success = pyqtSignal(list, list)  # (查询结果, 型号列表)
     
-    def __init__(self, phone, env, username, password):
+    def __init__(self, phone, env, username, password, max_workers=30):
         super().__init__()
         self.phone = phone
         self.env = env
         self.username = username
         self.password = password
+        self.max_workers = max_workers  # 使用可配置的线程数
         
     def run(self):
         try:
@@ -296,58 +307,129 @@ class PhoneQueryWorker(QObject):
             # 第三步：并发查询所有设备的型号和版本信息
             self.progress.emit(f"正在查询 {len(devices)} 台设备的型号和版本信息...")
             
-            def get_device_model(device):
-                """查询单个设备的型号和版本"""
+            def get_device_complete_info(device):
+                """查询单个设备的完整信息"""
                 device_sn = device.get('deviceSn', '')
                 device_name = device.get('deviceName', '')
                 
                 if not device_sn:
                     return {
-                        "model": "未知型号",
-                        "name": device_name,
-                        "sn": device_sn,
-                        "version": ""
+                        'device_name': device_name,
+                        'sn': device_sn,
+                        'id': '',
+                        'password': '',
+                        'node': '',
+                        'model': '未知型号',
+                        'version': '',
+                        'online': -1,
+                        'last_heartbeat': ''
                     }
                 
                 try:
-                    # 查询型号
-                    header_info = query.get_device_header(device_sn)
-                    product_name = ""
-                    if header_info and header_info.get('data'):
-                        product_name = header_info['data'].get('productName', '未知型号')
-                    else:
-                        product_name = "未知型号"
+                    # 1. 通过SN获取基本信息和dev_id
+                    info = query.get_device_info(dev_sn=device_sn)
+                    records = info.get('data', {}).get('records', [])
                     
-                    # 查询版本号：需要先通过SN查询获取dev_id
-                    version = ""
+                    dev_id = None
+                    standard_sn = device_sn  # 默认使用原始SN
+                    
+                    if records:
+                        record = records[0]
+                        dev_id = record.get('devId')
+                        # 使用从get_device_info返回的标准化SN
+                        standard_sn = record.get('devSN', device_sn)
+                    
+                    # 2. 获取其他信息（即使dev_id为空也尝试获取型号和在线状态）
+                    password = ''
+                    node = ''
+                    model = ''
+                    version = ''
+                    online_status = -1
+                    last_heartbeat = ''
+                    
+                    # 获取型号和在线状态（使用标准化的SN）
                     try:
-                        info = query.get_device_info(dev_sn=device_sn)
-                        records = info.get('data', {}).get('records', [])
-                        if records:
-                            dev_id = records[0].get('devId')
-                            if dev_id:
-                                version = query.get_device_version(dev_id) or ""
+                        header_info = query.get_device_header(standard_sn)
+                        if header_info:
+                            if header_info.get('data'):
+                                model = header_info['data'].get('productName', '')
+                                online_status = header_info['data'].get('onlineStatus', 0)
+                            elif header_info.get('code') == 20001:
+                                # 设备不存在
+                                model = '设备不存在'
+                                online_status = -1
                     except Exception as e:
-                        version = ""
+                        # 型号和在线状态获取失败
+                        pass
+                    
+                    # 以下信息需要dev_id
+                    if dev_id:
+                        try:
+                            # 获取密码
+                            password = query.get_cloud_password(dev_id) or ''
+                        except Exception as e:
+                            # 密码获取失败不影响其他信息
+                            pass
+                        
+                        try:
+                            # 获取节点
+                            node_info = query.get_access_node(dev_id=dev_id)
+                            node = node_info.get('serverId', '') if node_info else ''
+                        except Exception as e:
+                            # 节点获取失败不影响其他信息
+                            pass
+                        
+                        try:
+                            # 获取版本
+                            version = query.get_device_version(dev_id) or ''
+                        except Exception as e:
+                            # 版本获取失败不影响其他信息
+                            pass
+                        
+                        try:
+                            # 获取最后心跳
+                            last_heartbeat = query.get_device_last_heartbeat(dev_id) or ''
+                        except Exception as e:
+                            # 心跳获取失败不影响其他信息
+                            pass
+                    
+                    # 如果型号为空或未找到，尝试从版本号中提取
+                    if not model or model in ['设备不存在', '未知型号', '查询失败', '未找到']:
+                        if version and '-' in version:
+                            # 从版本号中提取型号，如 TS8864G-V4.6.1.1-Build202412190026 -> TS8864G
+                            extracted_model = version.split('-')[0].strip()
+                            if extracted_model:
+                                model = extracted_model
                     
                     return {
-                        "model": product_name,
-                        "name": device_name,
-                        "sn": device_sn,
-                        "version": version
+                        'device_name': device_name,
+                        'sn': standard_sn,  # 使用标准化的SN
+                        'id': str(dev_id) if dev_id else '',
+                        'password': password,
+                        'node': node,
+                        'model': model,
+                        'version': version,
+                        'online': online_status,
+                        'last_heartbeat': last_heartbeat
                     }
                 except Exception as e:
                     return {
-                        "model": "查询失败",
-                        "name": device_name,
-                        "sn": device_sn,
-                        "version": ""
+                        'device_name': device_name,
+                        'sn': device_sn,
+                        'id': '',
+                        'password': '',
+                        'node': '',
+                        'model': '查询失败',
+                        'version': '',
+                        'online': -2,
+                        'last_heartbeat': '',
+                        'error': str(e)
                     }
             
-            # 使用线程池并发查询
+            # 使用线程池并发查询完整信息
             results = []
-            with ThreadPoolExecutor(max_workers=20) as executor:
-                futures = [executor.submit(get_device_model, device) for device in devices]
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = [executor.submit(get_device_complete_info, device) for device in devices]
                 completed = 0
                 for future in as_completed(futures):
                     result = future.result()
@@ -355,12 +437,12 @@ class PhoneQueryWorker(QObject):
                     completed += 1
                     # 每 5 个任务或最后一个任务时更新进度
                     if completed % 5 == 0 or completed == len(devices):
-                        self.progress.emit(f"正在查询型号信息... {completed}/{len(devices)}")
+                        self.progress.emit(f"正在查询设备信息... {completed}/{len(devices)}")
             
             # 提取所有设备型号
             models = set()
             for device in results:
-                if device["model"] and device["model"] not in ["未知型号", "查询失败"]:
+                if device.get("model") and device["model"] not in ["未知型号", "查询失败", "未找到", "设备不存在"]:
                     models.add(device["model"])
             
             # 发送成功信号
@@ -376,9 +458,9 @@ class PhoneQueryThread(QThread):
     error = pyqtSignal(str)
     success = pyqtSignal(list, list)
     
-    def __init__(self, phone, env, username, password):
+    def __init__(self, phone, env, username, password, max_workers=30):
         super().__init__()
-        self.worker = PhoneQueryWorker(phone, env, username, password)
+        self.worker = PhoneQueryWorker(phone, env, username, password, max_workers)
         self.worker.progress.connect(self.progress)
         self.worker.error.connect(self.error)
         self.worker.success.connect(self.success)

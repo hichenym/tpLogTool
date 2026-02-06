@@ -76,8 +76,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("查询工具")
-        self.setGeometry(100, 100, 600, 350)
-        self.setMinimumSize(700, 450)
+        self.setGeometry(100, 100, 900, 600)
+        self.setMinimumSize(600, 450)
         self.setWindowIcon(QIcon(":/icons/app/logo.png"))
         
         # 页面实例
@@ -463,16 +463,16 @@ def main():
             border: 1px solid #555555;
         }
         QCheckBox::indicator:checked {
-            background-color: #505050;
-            border: 1px solid #555555;
+            background-color: #0d7377;
+            border: 1px solid #0d7377;
         }
         QCheckBox::indicator:disabled {
             background-color: #2b2b2b;
             border: 1px solid #3c3c3c;
         }
         QCheckBox::indicator:checked:disabled {
-            background-color: #3c3c3c;
-            border: 1px solid #3c3c3c;
+            background-color: #0a5a5d;
+            border: 1px solid #0a5a5d;
         }
         
         /* 标签样式 */
