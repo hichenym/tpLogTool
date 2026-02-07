@@ -213,6 +213,56 @@ class DeviceQuery:
             return None
         data = res['data']
         return {'serverId': data.get('serverId')}
+    
+    def send_reboot_command(self, dev_id, reboot_time):
+        """
+        发送重启命令
+        
+        Args:
+            dev_id: 设备ID
+            reboot_time: 重启时间，"now" 或 "after_five_minute"
+        
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            import json
+            url = f'https://{self.host}/api/seetong-siot-device/console/device/operate/sendCommand'
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA==",
+                "Seetong-Auth": self.token,
+            }
+            
+            # 构建参数
+            params_dict = {"reboot_time": reboot_time}
+            params_json = json.dumps(params_dict)
+            
+            # 通过 dev_id 获取 SN
+            device_info = self.get_device_info(dev_id=dev_id)
+            records = device_info.get('data', {}).get('records', [])
+            if not records:
+                return False
+            sn = records[0].get('devSN', '')
+            if not sn:
+                return False
+            
+            data = {
+                "code": "reboot",
+                "params": params_json,
+                "sn": sn,
+                "sourceType": "1"
+            }
+            
+            response = requests.post(url, json=data, headers=headers, verify=False, timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get('code') == 200 and result.get('success', False)
+            return False
+        except Exception as e:
+            print(f"发送重启命令失败: {e}")
+            return False
 
 
 def wake_device(dev_id, sn, token, host='console.seetong.com', times=3):

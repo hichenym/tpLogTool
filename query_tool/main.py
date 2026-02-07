@@ -76,7 +76,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("查询工具")
-        self.setGeometry(100, 100, 900, 600)
+        self.setGeometry(100, 100, 1080, 680)
         self.setMinimumSize(600, 450)
         self.setWindowIcon(QIcon(":/icons/app/logo.png"))
         

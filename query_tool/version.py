@@ -4,12 +4,12 @@
 from datetime import datetime
 
 # 版本号配置
-VERSION_MAJOR = 2  # 主版本号：重大功能更新或架构变更
+VERSION_MAJOR = 3  # 主版本号：重大功能更新或架构变更
 VERSION_MINOR = 0  # 次版本号：新增功能或较大改进
 VERSION_PATCH = 0  # 修订号：Bug修复或小改进
 
 # 自动获取编译日期
-BUILD_DATE = "20260122"
+BUILD_DATE = "20260207"
 
 def get_version():
     """获取版本号元组"""
@@ -36,6 +36,35 @@ def get_build_date_formatted():
 
 # 版本历史
 VERSION_HISTORY = """
+V3.0.0 (20260207)
+- 🔐 账号配置系统全面升级
+  * 运维账号和固件账号独立配置管理
+  * 使用标签页分离两个系统的账号配置
+  * 支持灵活配置：允许全部为空或只配置一个平台
+  * 单个平台的账号密码必须同时填写或同时为空
+- ✨ 智能提示系统
+  * 未配置账号时弹窗提示
+  * 点击OK自动跳转到对应标签页（运维/固件）
+  * 提示信息清晰明确，用户体验优化
+- 🏗️ 代码结构优化
+  * 移除固件系统硬编码账号密码
+  * 固件API模块移至 query_tool/utils/firmware_api.py
+  * 新增 FirmwareAccountConfig 数据类
+  * 配置管理器统一管理所有账号配置
+- 🎨 界面优化
+  * 标签页样式优化：选中时背景色 #505050，未选中 #2b2b2b
+  * 测试连接按钮根据当前标签页测试对应系统
+  * 弹窗按钮使用图标（OK/Cancel），尺寸统一 60x32
+- 📚 文档完善
+  * 更新 account-config-guide.md（账号配置指南）
+  * 更新 settings-guide.md（设置功能使用指南）
+  * 更新 features-summary.md（功能实现总结）
+  * 更新 README.md 最后更新日期
+- 🔧 技术改进
+  * 固件账号配置保存到独立注册表键
+  * Session 缓存管理优化
+  * 清除缓存功能完善
+
 V2.0.0 (20260122)
 - 🏗️ 重大重构：项目结构完全重组
   * 源代码集中在 query_tool/ 包

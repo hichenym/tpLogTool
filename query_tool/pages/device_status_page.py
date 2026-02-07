@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox, QWidget, QComboBox
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QColor
 
 from .base_page import BasePage
 from .page_registry import register_page
@@ -403,62 +403,75 @@ class DeviceStatusPage(BasePage):
         self.batch_wake_btn.clicked.connect(self.on_batch_wake)
         self.batch_wake_btn.setEnabled(False)  # 初始禁用
         
-        # 预留的批量操作按钮（暂时禁用）
+        # 预留的批量操作按钮
         self.batch_reboot_btn = QPushButton("批量重启")
+        self.batch_reboot_btn.setIcon(QIcon(":/icons/device/reboot.png"))
+        self.batch_reboot_btn.setIconSize(QSize(16, 16))
         self.batch_reboot_btn.setFixedSize(100, 28)
         self.batch_reboot_btn.setEnabled(False)
+        self.batch_reboot_btn.clicked.connect(self.on_batch_reboot)
         
         self.batch_upgrade_btn = QPushButton("批量升级")
+        self.batch_upgrade_btn.setIcon(QIcon(":/icons/device/upgrade.png"))
+        self.batch_upgrade_btn.setIconSize(QSize(16, 16))
         self.batch_upgrade_btn.setFixedSize(100, 28)
         self.batch_upgrade_btn.setEnabled(False)
-        
-        self.batch_config_btn = QPushButton("批量配置")
-        self.batch_config_btn.setFixedSize(100, 28)
-        self.batch_config_btn.setEnabled(False)
+        self.batch_upgrade_btn.clicked.connect(self.on_batch_upgrade)
         
         # 提示文本
-        result_tip = QLabel("双击表格复制")
+        result_tip = QLabel("提示: 双击单元格可复制内容，右击设备行展开操作")
         result_tip.setStyleSheet("color: #909090; font-size: 11px; border: none;")
         
         batch_layout.addWidget(self.select_all_checkbox)
         batch_layout.addWidget(self.batch_wake_btn)
         batch_layout.addWidget(self.batch_reboot_btn)
         batch_layout.addWidget(self.batch_upgrade_btn)
-        batch_layout.addWidget(self.batch_config_btn)
         batch_layout.addStretch()
         batch_layout.addWidget(result_tip)  # 添加提示到右侧
         group_layout.addWidget(batch_frame)
 
         # ===== 结果表格 =====
         self.result_table = QTableWidget()
-        self.result_table.setColumnCount(11)  # 增加一列：型号
+        self.result_table.setColumnCount(10)  # 减少一列：去掉操作列
         self.result_table.setHorizontalHeaderLabels(
-            ["选择", "设备名称", "型号", "SN", "ID", "密码", "接入节点", "版本号", "在线状态", "最后心跳", "操作"]
+            ["选择", "设备名称", "型号", "SN", "ID", "密码", "接入节点", "版本号", "在线状态", "最后心跳"]
         )
         self.result_table.setFocusPolicy(Qt.StrongFocus)
         self.result_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.result_table.setSelectionBehavior(QTableWidget.SelectItems)
+        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)  # 改为选择整行
         self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.result_table.setShowGrid(True)
         self.result_table.setFrameShape(QTableWidget.NoFrame)
         StyleManager.apply_to_widget(self.result_table, "TABLE")
         
+        # 启用右键菜单
+        self.result_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.result_table.customContextMenuRequested.connect(self.on_context_menu)
+        
         # 设置列宽
         header = self.result_table.horizontalHeader()
         header.setMinimumSectionSize(50)
         header.setSectionResizeMode(0, QHeaderView.Fixed)
-        header.setSectionResizeMode(10, QHeaderView.Fixed)
         for col in range(1, 10):
             header.setSectionResizeMode(col, QHeaderView.Interactive)
         
-        self.result_table.setColumnWidth(0, 50)
-        self.result_table.setColumnWidth(10, 140)
-        col_width = (600 - 50 - 140) // 9
-        for col in range(1, 10):
-            self.result_table.setColumnWidth(col, col_width)
+        # 设置初始列宽（根据内容调整）
+        self.result_table.setColumnWidth(0, 50)   # 选择
+        self.result_table.setColumnWidth(1, 100)  # 设备名称
+        self.result_table.setColumnWidth(2, 80)   # 型号
+        self.result_table.setColumnWidth(3, 140)  # SN
+        self.result_table.setColumnWidth(4, 100)  # ID
+        self.result_table.setColumnWidth(5, 80)   # 密码
+        self.result_table.setColumnWidth(6, 80)   # 接入节点
+        self.result_table.setColumnWidth(7, 100)  # 版本号
+        self.result_table.setColumnWidth(8, 80)   # 在线状态
+        self.result_table.setColumnWidth(9, 150)  # 最后心跳（加宽以显示完整日期时间）
         
         # 初始化列宽比例
-        self.column_width_ratios = {col: col_width for col in range(1, 10)}
+        self.column_width_ratios = {
+            1: 100, 2: 80, 3: 140, 4: 100, 5: 80,
+            6: 80, 7: 100, 8: 80, 9: 150
+        }
         
         # 连接列宽变化事件
         header.sectionResized.connect(self.on_column_resized)
@@ -521,11 +534,18 @@ class DeviceStatusPage(BasePage):
         self.main_buttons = self.btn_manager.create_group("main")
         self.main_buttons.add(
             self.query_btn, self.clear_btn, self.phone_query_btn, self.batch_wake_btn,
-            self.select_all_checkbox, self.export_btn
+            self.batch_reboot_btn, self.batch_upgrade_btn, self.select_all_checkbox, self.export_btn
         )
         
         return group
 
+    def create_status_item(self, text, color):
+        """创建状态项，颜色不受选中状态影响"""
+        item = QTableWidgetItem(text)
+        # 使用 setData 设置前景色，这样选中时颜色不会改变
+        item.setData(Qt.ForegroundRole, QColor(color) if isinstance(color, str) else color)
+        return item
+    
     def on_page_show(self):
         """页面显示时"""
         self.show_info("设备页面")
@@ -540,7 +560,7 @@ class DeviceStatusPage(BasePage):
     def on_column_resized(self, logicalIndex):
         """列宽被用户调节时，使用防抖机制延迟调整其他列"""
         # 跳过固定列
-        if logicalIndex == 0 or logicalIndex == 10:
+        if logicalIndex == 0:
             return
         
         # 如果已有待处理的调整，取消它
@@ -557,7 +577,7 @@ class DeviceStatusPage(BasePage):
         """实际执行列宽调整"""
         # 获取表格可用宽度（减去固定列）
         table_width = self.result_table.width()
-        fixed_width = 50 + 140  # 选择列 + 操作列
+        fixed_width = 50  # 选择列
         available_width = table_width - fixed_width
         
         if available_width <= 0:
@@ -589,7 +609,7 @@ class DeviceStatusPage(BasePage):
         """根据窗口宽度调整表格列宽，保持表格宽度与窗口一致"""
         # 获取表格可用宽度（减去固定列）
         table_width = self.result_table.width()
-        fixed_width = 50 + 140  # 选择列 + 操作列
+        fixed_width = 50  # 选择列
         available_width = table_width - fixed_width
         
         if available_width <= 0:
@@ -628,8 +648,8 @@ class DeviceStatusPage(BasePage):
     
     def on_cell_double_clicked(self, row, column):
         """表格单元格双击复制"""
-        # 跳过选择列和操作列
-        if column == 0 or column == 10:
+        # 跳过选择列
+        if column == 0:
             return
         
         item = self.result_table.item(row, column)
@@ -640,21 +660,177 @@ class DeviceStatusPage(BasePage):
                 clipboard = QApplication.clipboard()
                 clipboard.setText(text)
                 
-                # 选中当前单元格
-                self.result_table.setCurrentCell(row, column)
+                # 选中当前行
+                self.result_table.selectRow(row)
                 
                 self.show_success(f"已复制: {text}", 2000)
     
     def on_cell_clicked(self, row, column):
         """表格单元格单击"""
-        # 跳过选择列和操作列
-        if column == 0 or column == 10:
+        # 跳过选择列
+        if column == 0:
             # 清除选中状态
             self.result_table.clearSelection()
             return
         
-        # 选中当前单元格
-        self.result_table.setCurrentCell(row, column)
+        # 选中当前行
+        self.result_table.selectRow(row)
+    
+    def on_context_menu(self, pos):
+        """显示右键菜单"""
+        from PyQt5.QtWidgets import QMenu, QAction
+        
+        # 获取点击位置的行
+        index = self.result_table.indexAt(pos)
+        if not index.isValid():
+            return
+        
+        row = index.row()
+        
+        # 跳过选择列
+        if index.column() == 0:
+            return
+        
+        # 获取设备信息
+        if row >= self.result_table.rowCount():
+            return
+        
+        # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+        sn_item = self.result_table.item(row, 3)
+        id_item = self.result_table.item(row, 4)
+        
+        if not sn_item or not id_item:
+            return
+        
+        sn = sn_item.text()
+        dev_id = id_item.text()
+        
+        if not sn or not dev_id:
+            return
+        
+        # 高亮当前行
+        self.result_table.selectRow(row)
+        
+        # 创建右键菜单
+        menu = QMenu(self.result_table)
+        menu.setStyleSheet("""
+            QMenu {
+                min-width: 120px;
+                background-color: #3c3c3c;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                padding: 2px;
+            }
+            QMenu::item {
+                padding: 6px 30px 6px 6px;
+                margin: 1px 2px;
+                border-radius: 2px;
+            }
+            QMenu::item:selected {
+                background-color: #505050;
+                color: #ffffff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #555555;
+                margin: 3px 5px;
+            }
+        """)
+        
+        # 唤醒操作
+        wake_action = QAction(QIcon(":/icons/device/werk_up_all.png"), "唤醒设备", self)
+        wake_action.triggered.connect(lambda: self.on_wake_single(row))
+        menu.addAction(wake_action)
+        
+        # 重启操作
+        reboot_action = QAction(QIcon(":/icons/device/reboot.png"), "重启设备", self)
+        reboot_action.triggered.connect(lambda: self.on_reboot_single(row))
+        menu.addAction(reboot_action)
+        
+        # 升级操作
+        upgrade_action = QAction(QIcon(":/icons/device/upgrade.png"), "升级设备", self)
+        upgrade_action.triggered.connect(lambda: self.on_upgrade_single(row))
+        menu.addAction(upgrade_action)
+        
+        # 端口穿透操作
+        port_mapping_action = QAction(QIcon(":/icons/device/nat.png"), "端口穿透", self)
+        port_mapping_action.triggered.connect(lambda: self.on_port_mapping_single(row))
+        menu.addAction(port_mapping_action)
+        
+        # 显示菜单
+        menu.exec_(self.result_table.viewport().mapToGlobal(pos))
+    
+    def on_reboot_single(self, row):
+        """单个设备重启"""
+        # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+        sn = self.result_table.item(row, 3).text()
+        dev_id = self.result_table.item(row, 4).text()
+        
+        if not sn or not dev_id:
+            self.show_warning("设备信息不完整，无法重启")
+            return
+        
+        # 获取 DeviceQuery 对象
+        env, username, password = get_account_config()
+        device_query = self.ensure_device_query(env, username, password)
+        
+        if device_query.init_error:
+            self.show_error(device_query.init_error)
+            return
+        
+        # 显示重启对话框
+        from query_tool.widgets import RebootDialog
+        dialog = RebootDialog(sn, dev_id, device_query, self)
+        dialog.exec_()
+    
+    def on_upgrade_single(self, row):
+        """单个设备升级"""
+        # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+        device_name = self.result_table.item(row, 1).text()
+        model = self.result_table.item(row, 2).text()
+        sn = self.result_table.item(row, 3).text()
+        dev_id = self.result_table.item(row, 4).text()
+        
+        if not sn or not dev_id or not model:
+            self.show_warning("设备信息不完整，无法升级")
+            return
+        
+        # 获取 DeviceQuery 对象
+        env, username, password = get_account_config()
+        device_query = self.ensure_device_query(env, username, password)
+        
+        if device_query.init_error:
+            self.show_error(device_query.init_error)
+            return
+        
+        # 显示升级对话框
+        from query_tool.widgets import UpgradeDialog
+        dialog = UpgradeDialog(sn, dev_id, device_name, model, device_query, self)
+        dialog.exec_()
+    
+    def on_port_mapping_single(self, row):
+        """单个设备端口穿透"""
+        # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+        device_name = self.result_table.item(row, 1).text()
+        sn = self.result_table.item(row, 3).text()
+        dev_id = self.result_table.item(row, 4).text()
+        
+        if not sn or not dev_id:
+            self.show_warning("设备信息不完整，无法进行端口穿透")
+            return
+        
+        # 获取 DeviceQuery 对象
+        env, username, password = get_account_config()
+        device_query = self.ensure_device_query(env, username, password)
+        
+        if device_query.init_error:
+            self.show_error(device_query.init_error)
+            return
+        
+        # 显示端口穿透对话框
+        from query_tool.widgets import PortMappingDialog
+        dialog = PortMappingDialog(sn, dev_id, device_name, device_query, self)
+        dialog.exec_()
     
     def on_thread_count_changed(self, text):
         """线程数改变事件"""
@@ -672,13 +848,44 @@ class DeviceStatusPage(BasePage):
         # 检查账号密码
         env, username, password = get_account_config()
         if not username or not password:
-            reply = show_question_box(
-                self, "需要配置账号密码",
-                "检测到账号密码未配置，是否现在配置？"
-            )
-            if reply == QMessageBox.Yes:
+            # 显示提示对话框
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle('提示')
+            msg_box.setText('检测到运维系统账号信息未配置，点击OK前往配置。')
+            msg_box.setIcon(QMessageBox.Information)
+            msg_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            
+            # 自定义按钮图标
+            ok_btn = msg_box.button(QMessageBox.Ok)
+            cancel_btn = msg_box.button(QMessageBox.Cancel)
+            
+            if ok_btn:
+                ok_btn.setText("")
+                ok_btn.setIcon(QIcon(":/icons/common/ok.png"))
+                ok_btn.setIconSize(QSize(20, 20))
+                ok_btn.setFixedSize(60, 32)
+            
+            if cancel_btn:
+                cancel_btn.setText("")
+                cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+                cancel_btn.setIconSize(QSize(20, 20))
+                cancel_btn.setFixedSize(60, 32)
+            
+            # 应用样式
+            StyleManager.apply_to_widget(msg_box, "DIALOG")
+            
+            # 延迟设置深色标题栏
+            from query_tool.widgets.custom_widgets import set_dark_title_bar
+            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
+            
+            reply = msg_box.exec_()
+            
+            if reply == QMessageBox.Ok:
                 from query_tool.widgets import SettingsDialog
-                dialog = SettingsDialog(self)
+                dialog = SettingsDialog(self.window())
+                # 切换到运维账号标签页
+                if hasattr(dialog, 'tab_widget'):
+                    dialog.tab_widget.setCurrentIndex(0)  # 索引0是运维账号
                 dialog.exec_()
             return
         
@@ -791,24 +998,6 @@ class DeviceStatusPage(BasePage):
                 self.result_table.setItem(row, 1, QTableWidgetItem("查询中..."))
                 for col in range(2, 10):
                     self.result_table.setItem(row, col, QTableWidgetItem(""))
-                
-                # 唤醒按钮
-                wake_btn = QPushButton("唤醒")
-                wake_btn.setIcon(QIcon(":/icons/device/werk_up.png"))
-                wake_btn.setIconSize(QSize(16, 16))
-                wake_btn.setFocusPolicy(Qt.NoFocus)
-                wake_btn.setEnabled(False)
-                wake_btn.clicked.connect(lambda checked, r=row: self.on_wake_single(r))
-                
-                btn_container = QWidget()
-                btn_container.setStyleSheet("background-color: transparent;")
-                btn_layout = QHBoxLayout(btn_container)
-                btn_layout.addStretch()
-                btn_layout.addWidget(wake_btn)
-                btn_layout.addStretch()
-                btn_layout.setContentsMargins(0, 0, 0, 0)
-                btn_layout.setSpacing(0)
-                self.result_table.setCellWidget(row, 10, btn_container)
         
         # 重新启用表格更新
         self.result_table.setUpdatesEnabled(True)
@@ -850,21 +1039,20 @@ class DeviceStatusPage(BasePage):
         online_status = item.get('online', -1)
         if online_status == 1:
             status_text = "在线"
-            status_color = Qt.green
+            status_color = QColor(Qt.green)
             self.online_count += 1
         elif online_status == 0:
             status_text = "离线"
-            status_color = Qt.red
+            status_color = QColor(Qt.red)
             self.offline_count += 1
         elif online_status == -1:
             status_text = "未找到"
-            status_color = Qt.gray
+            status_color = QColor(Qt.gray)
         else:
             status_text = "查询失败"
-            status_color = Qt.darkYellow
+            status_color = QColor(Qt.darkYellow)
         
-        status_item = QTableWidgetItem(status_text)
-        status_item.setForeground(status_color)
+        status_item = self.create_status_item(status_text, status_color)
         self.result_table.setItem(row, 8, status_item)
         
         # 最后心跳
@@ -884,13 +1072,6 @@ class DeviceStatusPage(BasePage):
     def on_query_complete(self):
         """查询完成"""
         self.main_buttons.enable()
-        
-        # 启用所有唤醒按钮
-        for row in range(self.result_table.rowCount()):
-            btn_container = self.result_table.cellWidget(row, 10)
-            wake_btn = btn_container.findChild(QPushButton) if btn_container else None
-            if wake_btn:
-                wake_btn.setEnabled(True)
         
         # 填充对应的输入框并保存原始列表
         if self.query_input_type == 'sn':
@@ -932,14 +1113,16 @@ class DeviceStatusPage(BasePage):
             f"查询完成：共 {self.total_count} 台设备，在线 {self.online_count} 台，离线 {self.offline_count} 台"
         )
         
-        # 查询完成后启用全选框，但批量唤醒按钮保持禁用（直到有设备被选中）
+        # 查询完成后启用全选框，但批量操作按钮保持禁用（直到有设备被选中）
         if self.result_table.rowCount() > 0:
             self.select_all_checkbox.setEnabled(True)
         else:
             self.select_all_checkbox.setEnabled(False)
         
-        # 批量唤醒按钮初始状态为禁用，等待用户勾选设备
+        # 批量操作按钮初始状态为禁用，等待用户勾选设备
         self.batch_wake_btn.setEnabled(False)
+        self.batch_reboot_btn.setEnabled(False)
+        self.batch_upgrade_btn.setEnabled(False)
         
         # 收集所有型号和版本号并更新下拉框
         self.update_filter_combos()
@@ -964,9 +1147,11 @@ class DeviceStatusPage(BasePage):
         self.query_input_list = []
         self.query_results = {}
         
-        # 清空后禁用全选框和批量唤醒按钮
+        # 清空后禁用全选框和批量操作按钮
         self.select_all_checkbox.setEnabled(False)
         self.batch_wake_btn.setEnabled(False)
+        self.batch_reboot_btn.setEnabled(False)
+        self.batch_upgrade_btn.setEnabled(False)
         
         # 重置筛选条件
         self.sn_filter_input.clear()
@@ -1042,7 +1227,7 @@ class DeviceStatusPage(BasePage):
         self.select_all_checkbox.blockSignals(False)
     
     def update_batch_wake_button_state(self):
-        """更新批量唤醒按钮状态"""
+        """更新批量操作按钮状态"""
         # 检查是否有任何设备被选中
         has_checked = False
         for row in range(self.result_table.rowCount()):
@@ -1053,13 +1238,15 @@ class DeviceStatusPage(BasePage):
                 break
         
         self.batch_wake_btn.setEnabled(has_checked)
+        self.batch_reboot_btn.setEnabled(has_checked)
+        self.batch_upgrade_btn.setEnabled(has_checked)
     
     def on_wake_single(self, row):
         """单个设备唤醒"""
         # 获取原始行号
         original_row = self.display_row_to_original.get(row, row)
         
-        # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳 | 操作
+        # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
         sn = self.result_table.item(row, 3).text()
         dev_id = self.result_table.item(row, 4).text()
         
@@ -1069,16 +1256,12 @@ class DeviceStatusPage(BasePage):
         
         self.result_table.clearSelection()
         
+        # 在在线状态列显示"唤醒中..."
+        status_item = self.create_status_item("唤醒中...", "#FFA500")
+        self.result_table.setItem(row, 8, status_item)
+        
         # 显示开始唤醒的提示
         self.show_progress(f"正在唤醒 {sn}...")
-        
-        # 获取按钮
-        btn_container = self.result_table.cellWidget(row, 10)
-        wake_btn = btn_container.findChild(QPushButton) if btn_container else None
-        
-        if wake_btn:
-            wake_btn.setText("唤醒中...")
-            wake_btn.setEnabled(False)
         
         # 唤醒
         try:
@@ -1086,31 +1269,27 @@ class DeviceStatusPage(BasePage):
             # 使用缓存的 DeviceQuery 对象
             query = self.ensure_device_query(env, username, password)
             if query.init_error:
-                if wake_btn:
-                    wake_btn.setText("唤醒")
-                    wake_btn.setEnabled(True)
+                # 恢复状态显示
+                status_item = self.create_status_item("查询失败", QColor(Qt.darkYellow))
+                self.result_table.setItem(row, 8, status_item)
                 self.show_error(query.init_error)
                 return
             
             # 使用唯一的线程键名，避免多个唤醒任务互相覆盖
             thread_key = f"wake_single_{row}_{dev_id}"
             wake_thread = WakeThread([(dev_id, sn)], query, max_workers=1)
-            wake_thread.wake_result.connect(lambda name, success, r=row, btn=wake_btn, s=sn: self.on_single_wake_done(r, btn, s, success))
+            wake_thread.wake_result.connect(lambda name, success, r=row, s=sn: self.on_single_wake_done(r, s, success))
             wake_thread.finished.connect(lambda key=thread_key: self.thread_mgr.cleanup(key))
             self.thread_mgr.add(thread_key, wake_thread)
             wake_thread.start()
         except Exception as e:
-            if wake_btn:
-                wake_btn.setText("唤醒")
-                wake_btn.setEnabled(True)
+            # 恢复状态显示
+            status_item = self.create_status_item("唤醒失败", QColor(Qt.red))
+            self.result_table.setItem(row, 8, status_item)
             self.show_error(f"唤醒失败: {str(e)}")
     
-    def on_single_wake_done(self, row, wake_btn, sn, success):
+    def on_single_wake_done(self, row, sn, success):
         """单个唤醒完成"""
-        if wake_btn:
-            wake_btn.setText("唤醒")
-            wake_btn.setEnabled(True)
-        
         if success:
             try:
                 env, username, password = get_account_config()
@@ -1119,13 +1298,22 @@ class DeviceStatusPage(BasePage):
                 if not query.init_error:
                     is_online = check_device_online(sn, query.token)
                     status_text = "在线" if is_online else "离线"
-                    status_color = Qt.green if is_online else Qt.red
+                    status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
                     
-                    status_item = QTableWidgetItem(status_text)
-                    status_item.setForeground(status_color)
+                    status_item = self.create_status_item(status_text, status_color)
+                    self.result_table.setItem(row, 8, status_item)
+                else:
+                    # 查询失败，显示未知状态
+                    status_item = self.create_status_item("未知", QColor(Qt.gray))
                     self.result_table.setItem(row, 8, status_item)
             except Exception as e:
-                pass
+                # 查询失败，显示未知状态
+                status_item = self.create_status_item("未知", QColor(Qt.gray))
+                self.result_table.setItem(row, 8, status_item)
+        else:
+            # 唤醒失败，显示离线
+            status_item = self.create_status_item("离线", QColor(Qt.red))
+            self.result_table.setItem(row, 8, status_item)
         
         # 唤醒完成后，重新统计在线离线数量并显示
         self.update_device_status_summary()
@@ -1134,20 +1322,26 @@ class DeviceStatusPage(BasePage):
         """批量唤醒"""
         selected_devices = []
         selected_rows = []
+        sn_to_row_map = {}  # 创建SN到行号的映射
+        
         for row in range(self.result_table.rowCount()):
             checkbox_widget = self.result_table.cellWidget(row, 0)
             checkbox = checkbox_widget.findChild(QCheckBox)
             if checkbox and checkbox.isChecked():
-                # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳 | 操作
+                # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
                 sn = self.result_table.item(row, 3).text()
                 dev_id = self.result_table.item(row, 4).text()
                 if sn and dev_id:
                     selected_devices.append((dev_id, sn))
                     selected_rows.append(row)
+                    sn_to_row_map[sn] = row  # 保存SN到行号的映射
         
         if not selected_devices:
             self.show_warning("请先选择要唤醒的设备")
             return
+        
+        # 保存映射到实例变量，供回调使用
+        self._batch_wake_sn_to_row = sn_to_row_map
         
         # 禁用按钮
         self.main_buttons.disable()
@@ -1160,13 +1354,10 @@ class DeviceStatusPage(BasePage):
             if checkbox:
                 checkbox.setEnabled(False)
         
-        # 禁用唤醒按钮
+        # 在在线状态列显示"唤醒中..."
         for row in selected_rows:
-            btn_container = self.result_table.cellWidget(row, 10)
-            wake_btn = btn_container.findChild(QPushButton) if btn_container else None
-            if wake_btn:
-                wake_btn.setText("唤醒中...")
-                wake_btn.setEnabled(False)
+            status_item = self.create_status_item("唤醒中...", "#FFA500")
+            self.result_table.setItem(row, 8, status_item)
         
         # 启动唤醒线程
         try:
@@ -1183,18 +1374,15 @@ class DeviceStatusPage(BasePage):
                     checkbox = checkbox_widget.findChild(QCheckBox)
                     if checkbox:
                         checkbox.setEnabled(True)
-                # 恢复唤醒按钮
+                # 恢复状态显示
                 for row in selected_rows:
-                    btn_container = self.result_table.cellWidget(row, 10)
-                    wake_btn = btn_container.findChild(QPushButton) if btn_container else None
-                    if wake_btn:
-                        wake_btn.setText("唤醒")
-                        wake_btn.setEnabled(True)
+                    status_item = self.create_status_item("未知", QColor(Qt.gray))
+                    self.result_table.setItem(row, 8, status_item)
                 self.show_error(query.init_error)
                 return
             
             wake_thread = WakeThread(selected_devices, query, max_workers=self.thread_count)
-            wake_thread.wake_result.connect(lambda name, success: self.on_wake_result(name, success, selected_rows))
+            wake_thread.wake_result.connect(self.on_wake_result)
             wake_thread.all_done.connect(lambda: self.on_wake_complete(selected_rows))
             wake_thread.progress.connect(lambda msg: self.show_progress(msg))
             wake_thread.error.connect(lambda msg: self.on_batch_wake_error(msg, selected_rows))
@@ -1209,37 +1397,51 @@ class DeviceStatusPage(BasePage):
                 checkbox = checkbox_widget.findChild(QCheckBox)
                 if checkbox:
                     checkbox.setEnabled(True)
-            # 恢复唤醒按钮
+            # 恢复状态显示
             for row in selected_rows:
-                btn_container = self.result_table.cellWidget(row, 10)
-                wake_btn = btn_container.findChild(QPushButton) if btn_container else None
-                if wake_btn:
-                    wake_btn.setText("唤醒")
-                    wake_btn.setEnabled(True)
+                status_item = self.create_status_item("未知", QColor(Qt.gray))
+                self.result_table.setItem(row, 8, status_item)
             self.show_error(f"初始化失败: {str(e)}")
     
-    def on_wake_result(self, device_name, success, selected_rows):
+    def on_wake_result(self, device_name, success):
         """唤醒结果"""
-        if success and selected_rows:
-            for row in selected_rows:
-                # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳 | 操作
-                sn = self.result_table.item(row, 3).text()
-                if device_name.startswith(sn):
-                    try:
-                        env, username, password = get_account_config()
-                        # 使用缓存的 DeviceQuery 对象
-                        query = self.ensure_device_query(env, username, password)
-                        if not query.init_error:
-                            is_online = check_device_online(sn, query.token)
-                            status_text = "在线" if is_online else "离线"
-                            status_color = Qt.green if is_online else Qt.red
-                            
-                            status_item = QTableWidgetItem(status_text)
-                            status_item.setForeground(status_color)
-                            self.result_table.setItem(row, 8, status_item)
-                    except Exception as e:
-                        pass
+        # device_name 格式为 "SN(dev_id)"，提取SN
+        # 例如: "ABC123(12345)" -> "ABC123"
+        sn = device_name.split('(')[0] if '(' in device_name else device_name
+        
+        # 使用映射查找对应的行号
+        row = None
+        if hasattr(self, '_batch_wake_sn_to_row') and sn in self._batch_wake_sn_to_row:
+            row = self._batch_wake_sn_to_row[sn]
+        
+        if row is None:
+            # 如果映射不存在（单个唤醒的情况），遍历查找
+            for r in range(self.result_table.rowCount()):
+                item = self.result_table.item(r, 3)
+                if item and item.text() == sn:
+                    row = r
                     break
+        
+        if row is not None:
+            try:
+                env, username, password = get_account_config()
+                # 使用缓存的 DeviceQuery 对象
+                query = self.ensure_device_query(env, username, password)
+                if not query.init_error:
+                    is_online = check_device_online(sn, query.token)
+                    status_text = "在线" if is_online else "离线"
+                    status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
+                    
+                    status_item = self.create_status_item(status_text, status_color)
+                    self.result_table.setItem(row, 8, status_item)
+                else:
+                    # 查询失败，显示未知状态
+                    status_item = self.create_status_item("未知", QColor(Qt.gray))
+                    self.result_table.setItem(row, 8, status_item)
+            except Exception as e:
+                # 查询失败，显示未知状态
+                status_item = self.create_status_item("未知", QColor(Qt.gray))
+                self.result_table.setItem(row, 8, status_item)
     
     def on_wake_complete(self, selected_rows):
         """唤醒完成"""
@@ -1252,13 +1454,9 @@ class DeviceStatusPage(BasePage):
             if checkbox:
                 checkbox.setEnabled(True)
         
-        # 恢复唤醒按钮
-        for row in selected_rows:
-            btn_container = self.result_table.cellWidget(row, 10)
-            wake_btn = btn_container.findChild(QPushButton) if btn_container else None
-            if wake_btn:
-                wake_btn.setText("唤醒")
-                wake_btn.setEnabled(True)
+        # 清理批量唤醒的映射
+        if hasattr(self, '_batch_wake_sn_to_row'):
+            delattr(self, '_batch_wake_sn_to_row')
         
         # 唤醒完成后，重新统计在线离线数量并显示
         self.update_device_status_summary()
@@ -1274,15 +1472,115 @@ class DeviceStatusPage(BasePage):
             if checkbox:
                 checkbox.setEnabled(True)
         
-        # 恢复唤醒按钮
-        for row in selected_rows:
-            btn_container = self.result_table.cellWidget(row, 10)
-            wake_btn = btn_container.findChild(QPushButton) if btn_container else None
-            if wake_btn:
-                wake_btn.setText("唤醒")
-                wake_btn.setEnabled(True)
-        
         self.show_error(f"唤醒失败: {error_msg}")
+    
+    def on_batch_reboot(self):
+        """批量重启"""
+        # 获取所有选中的设备
+        selected_devices = []
+        for row in range(self.result_table.rowCount()):
+            checkbox_widget = self.result_table.cellWidget(row, 0)
+            checkbox = checkbox_widget.findChild(QCheckBox)
+            if checkbox and checkbox.isChecked():
+                # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+                device_name = self.result_table.item(row, 1).text()
+                sn = self.result_table.item(row, 3).text()
+                dev_id = self.result_table.item(row, 4).text()
+                if sn and dev_id:
+                    selected_devices.append((sn, dev_id, device_name))
+        
+        if not selected_devices:
+            self.show_warning("请先选择要重启的设备")
+            return
+        
+        # 获取 DeviceQuery 对象
+        env, username, password = get_account_config()
+        device_query = self.ensure_device_query(env, username, password)
+        
+        if device_query.init_error:
+            self.show_error(device_query.init_error)
+            return
+        
+        # 显示批量重启对话框
+        from query_tool.widgets import BatchRebootDialog
+        dialog = BatchRebootDialog(selected_devices, device_query, self.thread_count, self)
+        if dialog.exec_():
+            # 对话框关闭后，刷新选中设备的在线状态
+            self.refresh_selected_devices_status(selected_devices)
+    
+    def refresh_selected_devices_status(self, devices):
+        """刷新选中设备的在线状态"""
+        # 使用线程池并发查询状态
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        def query_status(sn):
+            try:
+                env, username, password = get_account_config()
+                query = self.ensure_device_query(env, username, password)
+                if not query.init_error:
+                    is_online = check_device_online(sn, query.token)
+                    return sn, is_online
+            except:
+                pass
+            return sn, None
+        
+        with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
+            futures = {executor.submit(query_status, sn): sn for sn, _, _ in devices}
+            
+            for future in as_completed(futures):
+                sn, is_online = future.result()
+                if is_online is not None:
+                    # 更新表格中的状态
+                    for row in range(self.result_table.rowCount()):
+                        sn_item = self.result_table.item(row, 3)
+                        if sn_item and sn_item.text() == sn:
+                            status_text = "在线" if is_online else "离线"
+                            status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
+                            status_item = self.create_status_item(status_text, status_color)
+                            self.result_table.setItem(row, 8, status_item)
+                            break
+    
+    def on_batch_upgrade(self):
+        """批量升级"""
+        # 获取所有选中的设备
+        selected_devices = []
+        for row in range(self.result_table.rowCount()):
+            checkbox_widget = self.result_table.cellWidget(row, 0)
+            checkbox = checkbox_widget.findChild(QCheckBox)
+            if checkbox and checkbox.isChecked():
+                # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+                device_name = self.result_table.item(row, 1).text()
+                model = self.result_table.item(row, 2).text()
+                sn = self.result_table.item(row, 3).text()
+                dev_id = self.result_table.item(row, 4).text()
+                if sn and dev_id and model:
+                    selected_devices.append((sn, dev_id, device_name, model))
+        
+        if not selected_devices:
+            self.show_warning("请先选择要升级的设备")
+            return
+        
+        # 检查设备型号是否一致
+        models = set(model for _, _, _, model in selected_devices)
+        if len(models) > 1:
+            self.show_error("所选设备型号不一致，无法进行批量升级。请筛选相同型号的设备后再试。")
+            return
+        
+        # 获取 DeviceQuery 对象
+        env, username, password = get_account_config()
+        device_query = self.ensure_device_query(env, username, password)
+        
+        if device_query.init_error:
+            self.show_error(device_query.init_error)
+            return
+        
+        # 显示批量升级对话框
+        from query_tool.widgets import BatchUpgradeDialog
+        dialog = BatchUpgradeDialog(selected_devices, device_query, self.thread_count, self)
+        if dialog.exec_():
+            # 对话框关闭后，刷新选中设备的在线状态
+            self.refresh_selected_devices_status([(sn, dev_id, name) for sn, dev_id, name, _ in selected_devices])
+
 
     def on_export_csv(self):
         """导出CSV"""
@@ -1399,7 +1697,7 @@ class DeviceStatusPage(BasePage):
             version = item.get('version', '')
             last_heartbeat = item.get('last_heartbeat', '')
             
-            # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳 | 操作
+            # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
             self.result_table.setItem(display_row, 1, QTableWidgetItem(device_name))
             self.result_table.setItem(display_row, 2, QTableWidgetItem(model))
             self.result_table.setItem(display_row, 3, QTableWidgetItem(sn))
@@ -1412,40 +1710,22 @@ class DeviceStatusPage(BasePage):
             online_status = item.get('online', -1)
             if online_status == 1:
                 status_text = "在线"
-                status_color = Qt.green
+                status_color = QColor(Qt.green)
             elif online_status == 0:
                 status_text = "离线"
-                status_color = Qt.red
+                status_color = QColor(Qt.red)
             elif online_status == -1:
                 status_text = "未找到"
-                status_color = Qt.gray
+                status_color = QColor(Qt.gray)
             else:
                 status_text = "查询失败"
-                status_color = Qt.darkYellow
+                status_color = QColor(Qt.darkYellow)
             
-            status_item = QTableWidgetItem(status_text)
-            status_item.setForeground(status_color)
+            status_item = self.create_status_item(status_text, status_color)
             self.result_table.setItem(display_row, 8, status_item)
             
             # 最后心跳
             self.result_table.setItem(display_row, 9, QTableWidgetItem(last_heartbeat))
-            
-            # 唤醒按钮
-            wake_btn = QPushButton("唤醒")
-            wake_btn.setIcon(QIcon(":/icons/device/werk_up.png"))
-            wake_btn.setIconSize(QSize(16, 16))
-            wake_btn.setFocusPolicy(Qt.NoFocus)
-            wake_btn.clicked.connect(lambda checked, r=display_row: self.on_wake_single(r))
-            
-            btn_container = QWidget()
-            btn_container.setStyleSheet("background-color: transparent;")
-            btn_layout = QHBoxLayout(btn_container)
-            btn_layout.addStretch()
-            btn_layout.addWidget(wake_btn)
-            btn_layout.addStretch()
-            btn_layout.setContentsMargins(0, 0, 0, 0)
-            btn_layout.setSpacing(0)
-            self.result_table.setCellWidget(display_row, 10, btn_container)
         
         # 重新启用表格更新
         self.result_table.setUpdatesEnabled(True)
@@ -1457,7 +1737,7 @@ class DeviceStatusPage(BasePage):
         id_list = []
         
         for row in range(self.result_table.rowCount()):
-            # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳 | 操作
+            # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
             sn_item = self.result_table.item(row, 3)
             id_item = self.result_table.item(row, 4)
             
@@ -1826,6 +2106,11 @@ class DeviceStatusPage(BasePage):
                         continue
                 
                 self.filtered_results[row] = result
+        
+        # 清除全选框状态
+        self.select_all_checkbox.blockSignals(True)
+        self.select_all_checkbox.setChecked(False)
+        self.select_all_checkbox.blockSignals(False)
         
         # 更新表格显示
         self.refresh_table_display()

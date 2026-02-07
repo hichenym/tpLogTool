@@ -8,10 +8,23 @@
 	<file>icons/common/clean.png</file>
 	<file>icons/common/export.png</file>
 	<file>icons/common/save.png</file>
+	<file>icons/common/add.png</file>
+	<file>icons/common/delete.png</file>
+	<file>icons/common/edit.png</file>
+	<file>icons/common/link.png</file>
+	<file>icons/common/ssy.png</file>
+	<file>icons/common/xyy.png</file>
+	<file>icons/common/ok.png</file>
+	<file>icons/common/cancel.png</file>
 	
 	<!-- 设备操作 -->
 	<file>icons/device/werk_up.png</file>
 	<file>icons/device/werk_up_all.png</file>
+	<file>icons/device/reflash.png</file>
+	<file>icons/device/firmware.png</file>
+	<file>icons/device/nat.png</file>
+	<file>icons/device/reboot.png</file>
+	<file>icons/device/upgrade.png</file>
 	
 	<!-- 系统设置 -->
 	<file>icons/system/setting.png</file>

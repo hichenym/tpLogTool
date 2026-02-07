@@ -7,6 +7,7 @@ from .page_registry import PageRegistry, register_page
 
 # 导入所有页面（会自动注册）
 from .device_status_page import DeviceStatusPage
+from .firmware_page import FirmwarePage
 from .gitlab_log_page import GitLabLogPage
 
 __all__ = [
@@ -14,5 +15,6 @@ __all__ = [
     'PageRegistry',
     'register_page',
     'DeviceStatusPage',
+    'FirmwarePage',
     'GitLabLogPage',
 ]

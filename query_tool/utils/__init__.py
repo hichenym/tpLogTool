@@ -11,6 +11,15 @@ from .table_helper import TableHelper
 from .thread_manager import ThreadManager
 from .gitlab_api import GitLabAPI
 from .excel_helper import create_gitlab_xlsx
+from .firmware_api import (
+    login as firmware_login,
+    fetch_firmware_data,
+    delete_firmware,
+    get_firmware_detail,
+    update_firmware,
+    test_firmware_login,
+    clear_session_cache as clear_firmware_cache
+)
 
 __all__ = [
     'config_manager',
@@ -30,4 +39,11 @@ __all__ = [
     'ThreadManager',
     'GitLabAPI',
     'create_gitlab_xlsx',
+    'firmware_login',
+    'fetch_firmware_data',
+    'delete_firmware',
+    'get_firmware_detail',
+    'update_firmware',
+    'test_firmware_login',
+    'clear_firmware_cache',
 ]

@@ -20,6 +20,13 @@ class AccountConfig:
 
 
 @dataclass
+class FirmwareAccountConfig:
+    """固件账号配置"""
+    username: str = ''
+    password: str = ''
+
+
+@dataclass
 class AppConfig:
     """应用配置"""
     export_path: str = ''
@@ -79,6 +86,31 @@ class ConfigManager:
             return True
         except Exception as e:
             print(f"保存配置失败: {e}")
+            return False
+    
+    def load_firmware_account_config(self) -> FirmwareAccountConfig:
+        """加载固件账号配置"""
+        username = self._get_value('firmware_username', '')
+        password_encoded = self._get_value('firmware_password', '')
+        
+        password = ''
+        if password_encoded:
+            try:
+                password = base64.b64decode(password_encoded.encode()).decode()
+            except (ValueError, UnicodeDecodeError) as e:
+                print(f"密码解码失败: {e}")
+        
+        return FirmwareAccountConfig(username=username, password=password)
+    
+    def save_firmware_account_config(self, config: FirmwareAccountConfig) -> bool:
+        """保存固件账号配置"""
+        try:
+            self._set_value('firmware_username', config.username)
+            password_encoded = base64.b64encode(config.password.encode()).decode()
+            self._set_value('firmware_password', password_encoded)
+            return True
+        except Exception as e:
+            print(f"保存固件配置失败: {e}")
             return False
     
     def load_app_config(self) -> AppConfig:
@@ -154,6 +186,18 @@ def save_account_config(env, username, password):
     """保存账号配置（向后兼容）"""
     config = AccountConfig(env=env, username=username, password=password)
     return config_manager.save_account_config(config)
+
+
+def get_firmware_account_config():
+    """获取固件账号配置"""
+    config = config_manager.load_firmware_account_config()
+    return config.username, config.password
+
+
+def save_firmware_account_config(username, password):
+    """保存固件账号配置"""
+    config = FirmwareAccountConfig(username=username, password=password)
+    return config_manager.save_firmware_account_config(config)
 
 
 def get_registry_value(key_name, value_name, default=None):
