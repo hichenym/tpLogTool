@@ -1,9 +1,24 @@
 {
   "version": "3.1.0",
   "build_date": "20260224",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.0/查询工具.exe",
-  "file_size_mb": 173.06,
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.0/TPQueryTool.exe",
+  "file_size_mb": 168.06,
   "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.1.0",
   "min_version": "3.0.0",
-  "changelog": ["� GitHub Actions 自动发布","配置完整的 CI/CD 工作流","推送版本标签自动触发构建","自动打包 Windows 可执行文件","自动创建 GitHub Release","自动生成 version.json 供自动更新使用","从 version.py 自动提取更新日志到 Release 说明","📦 自动更新模块设计","完整的技术方案文档（三种主流方案对比）","静默更新实现指南（后台检测、下载、延迟替换）"]
+  "update_strategy": "prompt",
+  "changelog": [
+    "🚀 GitHub Actions 自动发布",
+    "配置完整的 CI/CD 工作流",
+    "推送版本标签自动触发构建",
+    "自动打包 Windows 可执行文件",
+    "自动创建 GitHub Release",
+    "自动生成 version.json 供自动更新使用",
+    "从 version.py 自动提取更新日志到 Release 说明",
+    "📦 自动更新模块设计",
+    "完整的技术方案文档（三种主流方案对比）",
+    "静默更新实现指南（后台检测、下载、延迟替换）",
+    "🔧 统一使用 TPQueryTool 作为程序名称",
+    "修复 PyInstaller 参数顺序问题",
+    "✨ 新增 update_strategy 字段控制更新策略"
+  ]
 }

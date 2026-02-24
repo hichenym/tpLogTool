@@ -186,6 +186,7 @@ jobs:
           $changelogJson = $changelogItems | ConvertTo-Json -Compress
           
           # 生成 version.json（使用英文文件名）
+          # update_strategy: manual(手动), prompt(提示), silent(静默)
           $versionJson = @"
           {
             "version": "$version",
@@ -194,6 +195,7 @@ jobs:
             "file_size_mb": $fileSize,
             "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
             "min_version": "3.0.0",
+            "update_strategy": "prompt",
             "changelog": $changelogJson
           }
           "@

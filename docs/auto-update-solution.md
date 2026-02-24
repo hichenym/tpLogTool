@@ -493,6 +493,65 @@ UPDATE_CONFIG = {
 
 ---
 
+## version.json 格式说明
+
+### 字段定义
+
+```json
+{
+  "version": "3.1.0",                    // 版本号（必需）
+  "build_date": "20260224",              // 编译日期（必需）
+  "download_url": "https://...",         // 下载链接（必需）
+  "file_size_mb": 168.06,                // 文件大小（MB）（必需）
+  "release_notes_url": "https://...",    // Release 说明链接（可选）
+  "min_version": "3.0.0",                // 最低兼容版本（可选）
+  "update_strategy": "prompt",           // 更新策略（必需）
+  "changelog": [                         // 更新日志（可选）
+    "新功能1",
+    "新功能2"
+  ]
+}
+```
+
+### update_strategy 更新策略
+
+| 值 | 说明 | 行为 |
+|---|---|---|
+| `manual` | 手动更新 | 不主动检测更新，用户需要手动检查 |
+| `prompt` | 提示更新 | 检测到新版本时弹窗提示，用户选择是否更新 |
+| `silent` | 静默更新 | 后台自动下载，程序关闭时自动替换 |
+
+### 使用示例
+
+**提示更新（推荐）**：
+```json
+{
+  "version": "3.1.0",
+  "update_strategy": "prompt",
+  ...
+}
+```
+
+**静默更新**：
+```json
+{
+  "version": "3.1.0",
+  "update_strategy": "silent",
+  ...
+}
+```
+
+**手动更新**：
+```json
+{
+  "version": "3.1.0",
+  "update_strategy": "manual",
+  ...
+}
+```
+
+---
+
 ## 安全考虑
 
 ### 1. 文件完整性
