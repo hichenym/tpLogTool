@@ -9,9 +9,11 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize
 from PyQt5.QtGui import QColor, QIcon
 from .custom_widgets import set_dark_title_bar
+from query_tool.utils.logger import logger
+from query_tool.utils.session_manager import SessionManager
+from query_tool.utils.thread_manager import ThreadManager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
-import requests
 
 
 class NoWheelComboBox(QComboBox):
@@ -234,6 +236,7 @@ class BatchUpgradeWorker(QObject):
         if self._stop:
             return sn, False
         try:
+            session = SessionManager().get_session()
             url = f"https://{self.host}/api/seetong-siot-device/console/device/operate/sendCommand"
             
             headers = {
@@ -255,7 +258,7 @@ class BatchUpgradeWorker(QObject):
                 "sourceType": "1"
             }
             
-            response = requests.post(url, json=data, headers=headers, verify=False, timeout=10)
+            response = session.post(url, json=data, headers=headers, verify=False, timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
@@ -266,6 +269,7 @@ class BatchUpgradeWorker(QObject):
             else:
                 return sn, False
         except Exception as e:
+            logger.error(f"升级设备 {sn} 出错: {e}")
             return sn, False
     
     def run(self):
@@ -347,11 +351,8 @@ class BatchUpgradeDialog(QDialog):
         self.total_pages = 1
         self.total_count = 0
         
-        # 线程
-        self.status_thread = None
-        self.wake_thread = None
-        self.firmware_query_thread = None
-        self.upgrade_thread = None
+        # 线程管理器
+        self.thread_mgr = ThreadManager()
         
         self.init_ui()
         self.start_initial_query()
@@ -692,14 +693,16 @@ class BatchUpgradeDialog(QDialog):
     
     def start_initial_query(self):
         """开始初始查询设备状态"""
-        self.status_thread = BatchStatusThread(
+        thread = BatchStatusThread(
             self.devices,
             self.device_query.token,
             self.thread_count
         )
-        self.status_thread.single_result.connect(self.on_status_result)
-        self.status_thread.all_done.connect(self.on_status_query_complete)
-        self.status_thread.start()
+        thread.single_result.connect(self.on_status_result)
+        thread.all_done.connect(self.on_status_query_complete)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("batch_status", thread)
+        thread.start()
     
     def on_status_result(self, sn, is_online):
         """单个设备状态查询结果"""
@@ -762,14 +765,16 @@ class BatchUpgradeDialog(QDialog):
                     break
         
         # 启动唤醒线程
-        self.wake_thread = BatchWakeThread(
+        thread = BatchWakeThread(
             offline_devices,
             self.device_query.token,
             self.device_query.host,
             self.thread_count
         )
-        self.wake_thread.all_done.connect(self.on_wake_complete)
-        self.wake_thread.start()
+        thread.all_done.connect(self.on_wake_complete)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("batch_wake", thread)
+        thread.start()
     
     def on_wake_complete(self):
         """唤醒完成，自动刷新状态"""
@@ -791,14 +796,16 @@ class BatchUpgradeDialog(QDialog):
         self.device_stats_label.setText("正在查询设备状态...")
         
         # 启动查询线程
-        self.status_thread = BatchStatusThread(
+        thread = BatchStatusThread(
             self.devices,
             self.device_query.token,
             self.thread_count
         )
-        self.status_thread.single_result.connect(self.on_status_result)
-        self.status_thread.all_done.connect(self.on_status_query_complete)
-        self.status_thread.start()
+        thread.single_result.connect(self.on_status_result)
+        thread.all_done.connect(self.on_status_query_complete)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("batch_status_refresh", thread)
+        thread.start()
     
     def query_firmware(self, page=None):
         """查询固件列表"""
@@ -814,16 +821,18 @@ class BatchUpgradeDialog(QDialog):
         if self.parent_window:
             self.parent_window.show_progress("正在查询固件数据...")
         
-        self.firmware_query_thread = FirmwareQueryThread(
+        thread = FirmwareQueryThread(
             create_user=create_user,
             device_identify=device_identify,
             audit_result=audit_result,
             page=page,
             per_page=100
         )
-        self.firmware_query_thread.finished_signal.connect(self.on_firmware_query_finished)
-        self.firmware_query_thread.error_signal.connect(self.on_firmware_query_error)
-        self.firmware_query_thread.start()
+        thread.finished_signal.connect(self.on_firmware_query_finished)
+        thread.error_signal.connect(self.on_firmware_query_error)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("firmware_query", thread)
+        thread.start()
     
     def on_firmware_query_finished(self, firmware_list, total_count, total_pages):
         """固件查询完成"""
@@ -980,14 +989,16 @@ class BatchUpgradeDialog(QDialog):
         self.cancel_btn.setEnabled(False)
         
         # 重新查询所有设备状态（后台查询，不更新界面）
-        self.status_thread = BatchStatusThread(
+        thread = BatchStatusThread(
             self.devices,
             self.device_query.token,
             self.thread_count
         )
-        self.status_thread.single_result.connect(self.on_status_result_silent)
-        self.status_thread.all_done.connect(self.on_final_query_complete)
-        self.status_thread.start()
+        thread.single_result.connect(self.on_status_result_silent)
+        thread.all_done.connect(self.on_final_query_complete)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("final_status_query", thread)
+        thread.start()
     
     def on_status_result_silent(self, sn, is_online):
         """静默更新设备状态（不更新表格显示）"""
@@ -1021,7 +1032,7 @@ class BatchUpgradeDialog(QDialog):
             return
         
         # 启动升级线程
-        self.upgrade_thread = BatchUpgradeThread(
+        thread = BatchUpgradeThread(
             online_devices,
             device_identify,
             file_url,
@@ -1029,10 +1040,12 @@ class BatchUpgradeDialog(QDialog):
             self.device_query.host,
             self.thread_count
         )
-        self.upgrade_thread.all_done.connect(
+        thread.all_done.connect(
             lambda: self.on_upgrade_complete(online_count, offline_count)
         )
-        self.upgrade_thread.start()
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("batch_upgrade", thread)
+        thread.start()
     
     def on_upgrade_complete(self, online_count, offline_count):
         """升级完成"""
@@ -1052,19 +1065,5 @@ class BatchUpgradeDialog(QDialog):
     def closeEvent(self, event):
         """关闭事件"""
         # 停止所有线程
-        if self.status_thread and self.status_thread.isRunning():
-            self.status_thread.stop()
-            self.status_thread.quit()
-            self.status_thread.wait(1000)
-        
-        if self.wake_thread and self.wake_thread.isRunning():
-            self.wake_thread.stop()
-            self.wake_thread.quit()
-            self.wake_thread.wait(1000)
-        
-        if self.upgrade_thread and self.upgrade_thread.isRunning():
-            self.upgrade_thread.stop()
-            self.upgrade_thread.quit()
-            self.upgrade_thread.wait(1000)
-        
+        self.thread_mgr.stop_all()
         event.accept()

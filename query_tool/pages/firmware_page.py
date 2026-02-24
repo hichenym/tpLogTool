@@ -23,6 +23,7 @@ from .page_registry import register_page
 from query_tool.utils import ButtonManager, ThreadManager, StyleManager, config_manager
 from query_tool.widgets.custom_widgets import set_dark_title_bar
 from query_tool.widgets import EditFirmwareDialog
+from query_tool.utils.logger import logger
 
 # 导入固件列表获取函数
 from query_tool.utils.firmware_api import login, fetch_firmware_data, parse_firmware_data, delete_firmware, get_firmware_detail, update_firmware
@@ -459,26 +460,26 @@ class FirmwarePage(BasePage):
             # 显示提示对话框
             from PyQt5.QtWidgets import QMessageBox
             msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('提示')
-            msg_box.setText('检测到固件系统账号信息未配置，点击OK前往配置。')
-            msg_box.setIcon(QMessageBox.Information)
-            msg_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            msg_box.setWindowTitle('需要配置固件账号')
+            msg_box.setText('检测到固件账号未配置，是否现在配置？')
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
             
             # 自定义按钮图标
-            ok_btn = msg_box.button(QMessageBox.Ok)
-            cancel_btn = msg_box.button(QMessageBox.Cancel)
+            yes_btn = msg_box.button(QMessageBox.Yes)
+            no_btn = msg_box.button(QMessageBox.No)
             
-            if ok_btn:
-                ok_btn.setText("")
-                ok_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                ok_btn.setIconSize(QSize(20, 20))
-                ok_btn.setFixedSize(60, 32)
+            if yes_btn:
+                yes_btn.setText("")
+                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
+                yes_btn.setIconSize(QSize(20, 20))
+                yes_btn.setFixedSize(60, 32)
             
-            if cancel_btn:
-                cancel_btn.setText("")
-                cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                cancel_btn.setIconSize(QSize(20, 20))
-                cancel_btn.setFixedSize(60, 32)
+            if no_btn:
+                no_btn.setText("")
+                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+                no_btn.setIconSize(QSize(20, 20))
+                no_btn.setFixedSize(60, 32)
             
             # 应用样式
             StyleManager.apply_to_widget(msg_box, "DIALOG")
@@ -488,11 +489,10 @@ class FirmwarePage(BasePage):
             
             reply = msg_box.exec_()
             
-            if reply == QMessageBox.Ok:
+            if reply == QMessageBox.Yes:
                 # 打开设置对话框
                 self.open_settings_dialog()
             
-            self.show_warning("请先配置固件账号")
             return
         
         self.show_progress("正在加载新增页面...")
@@ -637,6 +637,8 @@ class FirmwarePage(BasePage):
         
         create_thread = CreateThread(data)
         create_thread.finished_signal.connect(lambda success, msg: self.on_create_finished(success, msg, identifier))
+        create_thread.finished.connect(lambda: create_thread.deleteLater())
+        self.thread_mgr.add("create", create_thread)
         create_thread.start()
         
         # 保存线程引用
@@ -695,26 +697,26 @@ class FirmwarePage(BasePage):
             # 显示提示对话框
             from PyQt5.QtWidgets import QMessageBox
             msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('提示')
-            msg_box.setText('检测到固件系统账号信息未配置，点击OK前往配置。')
-            msg_box.setIcon(QMessageBox.Information)
-            msg_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            msg_box.setWindowTitle('需要配置固件账号')
+            msg_box.setText('检测到固件账号未配置，是否现在配置？')
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
             
             # 自定义按钮图标
-            ok_btn = msg_box.button(QMessageBox.Ok)
-            cancel_btn = msg_box.button(QMessageBox.Cancel)
+            yes_btn = msg_box.button(QMessageBox.Yes)
+            no_btn = msg_box.button(QMessageBox.No)
             
-            if ok_btn:
-                ok_btn.setText("")
-                ok_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                ok_btn.setIconSize(QSize(20, 20))
-                ok_btn.setFixedSize(60, 32)
+            if yes_btn:
+                yes_btn.setText("")
+                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
+                yes_btn.setIconSize(QSize(20, 20))
+                yes_btn.setFixedSize(60, 32)
             
-            if cancel_btn:
-                cancel_btn.setText("")
-                cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                cancel_btn.setIconSize(QSize(20, 20))
-                cancel_btn.setFixedSize(60, 32)
+            if no_btn:
+                no_btn.setText("")
+                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+                no_btn.setIconSize(QSize(20, 20))
+                no_btn.setFixedSize(60, 32)
             
             # 应用样式
             StyleManager.apply_to_widget(msg_box, "DIALOG")
@@ -724,11 +726,10 @@ class FirmwarePage(BasePage):
             
             reply = msg_box.exec_()
             
-            if reply == QMessageBox.Ok:
+            if reply == QMessageBox.Yes:
                 # 打开设置对话框
                 self.open_settings_dialog()
             
-            self.show_warning("请先配置固件账号")
             return
         
         # 更新当前页码
@@ -776,8 +777,9 @@ class FirmwarePage(BasePage):
             try:
                 self._query_thread.quit()
                 self._query_thread.wait(timeout=2000)
-            except:
-                pass
+            except Exception as e:
+                from query_tool.utils.logger import logger
+                logger.debug(f"清理查询线程失败: {e}")
         
         # 启动查询线程，传递create_user、device_identify、audit_result和page参数
         query_thread = FirmwareQueryThread(
@@ -790,9 +792,7 @@ class FirmwarePage(BasePage):
         query_thread.finished_signal.connect(self.on_query_success)
         query_thread.error_signal.connect(self.on_query_error)
         query_thread.progress_signal.connect(lambda msg: self.show_progress(msg))
-        
-        # 连接 finished 信号进行清理
-        query_thread.finished.connect(lambda: self.thread_mgr.cleanup("query"))
+        query_thread.finished.connect(lambda: query_thread.deleteLater())
         
         # 保存线程引用
         self._query_thread = query_thread
@@ -1112,6 +1112,8 @@ class FirmwarePage(BasePage):
         detail_thread = GetDetailThread(firmware_id)
         detail_thread.finished_signal.connect(lambda detail: self.show_edit_dialog(firmware_id, detail))
         detail_thread.error_signal.connect(lambda msg: self.show_error(msg))
+        detail_thread.finished.connect(lambda: detail_thread.deleteLater())
+        self.thread_mgr.add("detail", detail_thread)
         detail_thread.start()
         
         # 保存线程引用
@@ -1160,6 +1162,8 @@ class FirmwarePage(BasePage):
         update_thread.finished_signal.connect(
             lambda success, msg: self.on_update_finished(success, msg, firmware_id, data)
         )
+        update_thread.finished.connect(lambda: update_thread.deleteLater())
+        self.thread_mgr.add("update", update_thread)
         update_thread.start()
         
         # 保存线程引用
@@ -1300,6 +1304,8 @@ class FirmwarePage(BasePage):
             
             delete_thread = DeleteThread(firmware_id)
             delete_thread.finished_signal.connect(lambda success, msg: self.on_delete_finished(success, msg, identifier))
+            delete_thread.finished.connect(lambda: delete_thread.deleteLater())
+            self.thread_mgr.add("delete", delete_thread)
             delete_thread.start()
             
             # 保存线程引用，防止被垃圾回收

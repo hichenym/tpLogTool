@@ -20,6 +20,7 @@ def create_gitlab_xlsx(commits, output_path, keywords=None):
     """
     import os
     import shutil
+    from query_tool.utils.logger import logger
     
     try:
         # 检查输出目录是否存在
@@ -242,8 +243,9 @@ def create_gitlab_xlsx(commits, output_path, keywords=None):
             if os.path.exists(output_path):
                 try:
                     os.remove(output_path)
-                except:
-                    pass
+                except Exception as cleanup_error:
+                    logger.warning(f"清理临时文件失败: {cleanup_error}")
             raise Exception(f"Excel 导出失败: {str(e)}")
     except Exception as e:
+        logger.error(f"创建Excel文件失败: {e}")
         raise Exception(f"Excel 导出失败: {str(e)}")

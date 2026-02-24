@@ -19,7 +19,8 @@
 - 💾 记录最近使用的项目和分支
 
 ### 通用功能
-- ⚙️ 账号密码配置（支持自定义账号密码）
+- ⚙️ 账号密码配置（运维账号和固件账号独立配置）
+- 📝 日志记录系统（可配置调试信息输出）
 - 💾 配置信息保存到注册表
 - 🎨 友好的图形界面（深色主题）
 
@@ -271,7 +272,7 @@ python query_tool/main.py
 
 如果未配置账号密码，查询时会自动提示您配置。
 
-详细说明请参考：[md/account-config-guide.md](md/account-config-guide.md)
+详细说明请参考：[docs/account-config-guide.md](docs/account-config-guide.md)
 
 ### 2. 查询设备信息
 
@@ -313,19 +314,31 @@ python query_tool/main.py
 
 程序配置信息保存在 Windows 注册表中：
 - 路径: `HKEY_CURRENT_USER\Software\TPQueryTool`
-- 包含: 账号密码、Token缓存、导出路径等配置
+- 包含: 账号密码、Token缓存、导出路径、日志配置等
 
 ### 账号密码配置
 
 - 首次使用必须配置账号密码
 - 点击菜单栏右侧的"⚙️"图标按钮配置
+- 支持运维账号和固件账号独立配置
 - 配置会保存到注册表，下次自动使用
 - 支持测试连接功能，验证账号是否有效
 - 密码使用Base64编码存储，非明文
 - 固定使用生产环境
 - 未配置时查询会自动提示
 
-详细说明请参考：[md/account-config-guide.md](md/account-config-guide.md)
+详细说明请参考：[docs/account-config-guide.md](docs/account-config-guide.md)
+
+### 日志配置
+
+- 支持调试信息记录到文件
+- 日志文件路径：`C:\Users\<用户名>\.TPQueryTool\logs\`
+- 日志文件命名：`app_YYYYMMDD.log`（按日期自动分割）
+- 日志轮转：单文件最大10MB，保留3个备份
+- 控制台只显示WARNING及以上级别
+- 可在设置页面启用/禁用文件日志，实时生效
+
+详细说明请参考：[docs/settings-guide.md](docs/settings-guide.md)
 
 ## 技术栈
 
@@ -345,7 +358,7 @@ python query_tool/main.py
 ## 常见问题
 
 ### Q: 打包后体积过大？
-A: 参考 [md/build-guide.md](md/build-guide.md) 文档进行优化，可减小到30-60MB
+A: 参考 [docs/build-guide.md](docs/build-guide.md) 文档进行优化，可减小到30-60MB
 
 ### Q: 图标不显示？
 A: 修改icon_res.qrc后需要重新运行 `pyrcc5 icon_res.qrc -o icon_res.py`
@@ -357,6 +370,34 @@ A: 检查网络连接和账号密码是否正确
 A: PowerShell需要管理员权限或执行 `Set-ExecutionPolicy RemoteSigned`
 
 ## 更新日志
+
+### V3.0.0 (2026-02-07) - 账号配置与日志系统升级 🎉
+- 🔐 **账号配置系统全面升级**
+  - 运维账号和固件账号独立配置管理
+  - 使用标签页分离两个系统的账号配置
+  - 支持灵活配置：允许全部为空或只配置一个平台
+  - 单个平台的账号密码必须同时填写或同时为空
+  - 未配置时智能提示并可直接跳转到对应标签页
+  - 移除固件系统硬编码账号密码，提升安全性
+- 📝 **日志记录系统**
+  - 支持调试信息记录到文件
+  - 日志文件路径：`C:\Users\<用户名>\.TPQueryTool\logs\`
+  - 日志文件按日期命名：`app_YYYYMMDD.log`
+  - 日志轮转：单文件最大10MB，保留3个备份
+  - 控制台只显示WARNING及以上级别
+  - 可在设置页面启用/禁用，实时生效
+  - 完善核心模块日志记录（配置管理、设备查询、主窗口等）
+- 🎨 **界面优化**
+  - 设置对话框使用标签页设计（账号配置、日志配置）
+  - 标签页样式优化：选中时背景色高亮
+  - 账号配置使用滚动布局，支持多个账号分组
+  - 每个账号组独立的"显示密码"和"验证"按钮
+  - 验证按钮点击时显示"验证中..."并禁用
+- 🔧 **技术改进**
+  - 固件账号配置保存到独立注册表键
+  - Session缓存管理优化
+  - 全局异常处理和日志记录
+  - 代码结构优化，提升可维护性
 
 ### v2.0.0 (2026-01-22) - 重大重构版本 🎉
 - 🏗️ **项目结构完全重组（方案B）**
@@ -398,7 +439,7 @@ A: PowerShell需要管理员权限或执行 `Set-ExecutionPolicy RemoteSigned`
 - 📝 新增详细的重构文档（4个文档）
 - ⚡ 减少重复代码80%，提升可维护性
 - 🔧 统一接口管理，提升代码质量
-- 📚 详见：[md/features-summary.md](md/features-summary.md)
+- 📚 详见：[docs/features-summary.md](docs/features-summary.md)
 
 ### v1.1.1 (2026-01-17)
 - 🐛 修复重复定义save_account_config函数的问题

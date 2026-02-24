@@ -803,6 +803,56 @@ class DeviceStatusPage(BasePage):
             self.show_error(device_query.init_error)
             return
         
+        # 检查固件账号是否配置
+        from query_tool.utils.config import get_firmware_account_config
+        firmware_username, firmware_password = get_firmware_account_config()
+        
+        if not firmware_username or not firmware_password:
+            # 显示提示对话框
+            from PyQt5.QtWidgets import QMessageBox
+            from PyQt5.QtGui import QIcon
+            from PyQt5.QtCore import QSize, QTimer
+            from query_tool.utils.style_manager import StyleManager
+            from query_tool.widgets.custom_widgets import set_dark_title_bar
+            
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle('需要配置固件账号')
+            msg_box.setText('检测到固件账号未配置，是否现在配置？')
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            
+            # 自定义按钮图标
+            yes_btn = msg_box.button(QMessageBox.Yes)
+            no_btn = msg_box.button(QMessageBox.No)
+            
+            if yes_btn:
+                yes_btn.setText("")
+                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
+                yes_btn.setIconSize(QSize(20, 20))
+                yes_btn.setFixedSize(60, 32)
+            
+            if no_btn:
+                no_btn.setText("")
+                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+                no_btn.setIconSize(QSize(20, 20))
+                no_btn.setFixedSize(60, 32)
+            
+            # 应用样式
+            StyleManager.apply_to_widget(msg_box, "DIALOG")
+            
+            # 延迟设置深色标题栏
+            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
+            
+            reply = msg_box.exec_()
+            
+            if reply == QMessageBox.Yes:
+                # 打开设置对话框
+                from query_tool.widgets import SettingsDialog
+                dialog = SettingsDialog(self)
+                dialog.exec_()
+            
+            return
+        
         # 显示升级对话框
         from query_tool.widgets import UpgradeDialog
         dialog = UpgradeDialog(sn, dev_id, device_name, model, device_query, self)
@@ -949,8 +999,9 @@ class DeviceStatusPage(BasePage):
                 self._query_thread.stop()
                 self._query_thread.quit()
                 self._query_thread.wait(timeout=2000)
-            except:
-                pass
+            except Exception as e:
+                from query_tool.utils.logger import logger
+                logger.debug(f"清理查询线程失败: {e}")
         
         # 启动查询线程
         query_thread = QueryThread(sn_list, id_list, env, username, password, max_workers=self.thread_count)
@@ -1520,8 +1571,9 @@ class DeviceStatusPage(BasePage):
                 if not query.init_error:
                     is_online = check_device_online(sn, query.token)
                     return sn, is_online
-            except:
-                pass
+            except Exception as e:
+                from query_tool.utils.logger import logger
+                logger.warning(f"查询设备{sn}在线状态失败: {e}")
             return sn, None
         
         with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
@@ -1572,6 +1624,56 @@ class DeviceStatusPage(BasePage):
         
         if device_query.init_error:
             self.show_error(device_query.init_error)
+            return
+        
+        # 检查固件账号是否配置
+        from query_tool.utils.config import get_firmware_account_config
+        firmware_username, firmware_password = get_firmware_account_config()
+        
+        if not firmware_username or not firmware_password:
+            # 显示提示对话框
+            from PyQt5.QtWidgets import QMessageBox
+            from PyQt5.QtGui import QIcon
+            from PyQt5.QtCore import QSize, QTimer
+            from query_tool.utils.style_manager import StyleManager
+            from query_tool.widgets.custom_widgets import set_dark_title_bar
+            
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle('需要配置固件账号')
+            msg_box.setText('检测到固件账号未配置，是否现在配置？')
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            
+            # 自定义按钮图标
+            yes_btn = msg_box.button(QMessageBox.Yes)
+            no_btn = msg_box.button(QMessageBox.No)
+            
+            if yes_btn:
+                yes_btn.setText("")
+                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
+                yes_btn.setIconSize(QSize(20, 20))
+                yes_btn.setFixedSize(60, 32)
+            
+            if no_btn:
+                no_btn.setText("")
+                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+                no_btn.setIconSize(QSize(20, 20))
+                no_btn.setFixedSize(60, 32)
+            
+            # 应用样式
+            StyleManager.apply_to_widget(msg_box, "DIALOG")
+            
+            # 延迟设置深色标题栏
+            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
+            
+            reply = msg_box.exec_()
+            
+            if reply == QMessageBox.Yes:
+                # 打开设置对话框
+                from query_tool.widgets import SettingsDialog
+                dialog = SettingsDialog(self)
+                dialog.exec_()
+            
             return
         
         # 显示批量升级对话框
@@ -1830,10 +1932,43 @@ class DeviceStatusPage(BasePage):
         # 检查账号密码
         env, username, password = get_account_config()
         if not username or not password:
-            reply = show_question_box(
-                self, "需要配置账号密码",
-                "检测到账号密码未配置，是否现在配置？"
-            )
+            # 显示提示对话框
+            from PyQt5.QtWidgets import QMessageBox
+            from PyQt5.QtGui import QIcon
+            from PyQt5.QtCore import QSize, QTimer
+            from query_tool.utils.style_manager import StyleManager
+            from query_tool.widgets.custom_widgets import set_dark_title_bar
+            
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle('需要配置运维账号')
+            msg_box.setText('检测到运维账号未配置，是否现在配置？')
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            
+            # 自定义按钮图标
+            yes_btn = msg_box.button(QMessageBox.Yes)
+            no_btn = msg_box.button(QMessageBox.No)
+            
+            if yes_btn:
+                yes_btn.setText("")
+                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
+                yes_btn.setIconSize(QSize(20, 20))
+                yes_btn.setFixedSize(60, 32)
+            
+            if no_btn:
+                no_btn.setText("")
+                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+                no_btn.setIconSize(QSize(20, 20))
+                no_btn.setFixedSize(60, 32)
+            
+            # 应用样式
+            StyleManager.apply_to_widget(msg_box, "DIALOG")
+            
+            # 延迟设置深色标题栏
+            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
+            
+            reply = msg_box.exec_()
+            
             if reply == QMessageBox.Yes:
                 from query_tool.widgets import SettingsDialog
                 dialog = SettingsDialog(self)

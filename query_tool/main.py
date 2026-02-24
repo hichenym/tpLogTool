@@ -56,7 +56,8 @@ def set_dark_title_bar(window):
                 ctypes.byref(value),
                 ctypes.sizeof(value)
             )
-        except:
+        except Exception as e:
+            logger.debug(f"设置深色标题栏失败（Windows 11方式）: {e}")
             # 如果失败，尝试 Windows 10 的方式
             DWMWA_USE_IMMERSIVE_DARK_MODE = 19
             value = ctypes.c_int(1)
@@ -193,8 +194,14 @@ class MainWindow(QMainWindow):
     
     def switch_page(self, index):
         """切换页面"""
+        from query_tool.utils.logger import logger
+        
         if index < 0 or index >= len(self.pages):
             return
+        
+        page_names = ["设备状态", "固件管理", "GitLab日志"]
+        page_name = page_names[index] if index < len(page_names) else f"页面{index}"
+        logger.debug(f"切换到页面: {page_name}")
         
         self.stacked_widget.setCurrentIndex(index)
         
@@ -301,10 +308,23 @@ class MainWindow(QMainWindow):
 
 def main():
     """主函数入口"""
-    app = QApplication(sys.argv)
+    # 设置全局异常处理
+    from query_tool.utils.logger import logger, setup_exception_handler
+    from query_tool.version import get_version_string
+    import platform
     
-    # 设置全局深色主题
-    app.setStyleSheet("""
+    setup_exception_handler()
+    
+    # 记录程序启动信息
+    logger.info(f"程序启动: {get_version_string()}")
+    logger.info(f"Python版本: {sys.version.split()[0]}")
+    logger.info(f"操作系统: {platform.system()} {platform.release()}")
+    
+    try:
+        app = QApplication(sys.argv)
+        
+        # 设置全局深色主题
+        app.setStyleSheet("""
         /* 全局样式 */
         QWidget {
             background-color: #2b2b2b;
@@ -596,11 +616,35 @@ def main():
         QMessageBox QPushButton {
             min-width: 80px;
         }
-    """)
-    
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec_())
+        """)
+        
+        window = MainWindow()
+        window.show()
+        
+        exit_code = app.exec_()
+        
+        # 清理资源
+        from query_tool.utils.session_manager import session_manager
+        session_manager.close_all()
+        logger.info("应用程序正常退出")
+        
+        sys.exit(exit_code)
+        
+    except Exception as e:
+        logger.critical(f"应用程序崩溃: {e}", exc_info=True)
+        # 显示错误对话框
+        try:
+            from PyQt5.QtWidgets import QMessageBox
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Critical)
+            msg.setWindowTitle("程序错误")
+            msg.setText("程序遇到严重错误，即将退出")
+            msg.setInformativeText(f"错误信息：{str(e)}")
+            msg.setDetailedText(f"详细信息请查看日志文件")
+            msg.exec_()
+        except Exception:
+            pass
+        sys.exit(1)
 
 
 if __name__ == "__main__":

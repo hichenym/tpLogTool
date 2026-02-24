@@ -15,6 +15,7 @@ from PyQt5.QtGui import QIcon
 from .base_page import BasePage
 from .page_registry import register_page
 from query_tool.utils import ButtonManager, ThreadManager, config_manager
+from query_tool.utils.logger import logger
 from query_tool.utils.gitlab_api import GitLabAPI
 from query_tool.utils.excel_helper import create_gitlab_xlsx
 from query_tool.widgets import ClickableLineEdit
@@ -356,12 +357,12 @@ class GitLabLogPage(BasePage):
         self.token_input.setEnabled(False)
         
         self.api = GitLabAPI(server, token)
-        worker = GitLabWorkerThread(self.api.get_all_projects)
-        worker.finished_signal.connect(self.on_projects_loaded)
-        worker.error_signal.connect(self.on_connect_error)
-        
-        self.thread_mgr.add("connect", worker)
-        worker.start()
+        thread = GitLabWorkerThread(self.api.get_all_projects)
+        thread.finished_signal.connect(self.on_projects_loaded)
+        thread.error_signal.connect(self.on_connect_error)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("connect", thread)
+        thread.start()
     
     def disconnect_server(self):
         """断开服务器连接"""
@@ -499,12 +500,12 @@ class GitLabLogPage(BasePage):
         self.branch_combo.setEnabled(False)
         self.set_controls_enabled(False)
         
-        worker = GitLabWorkerThread(self.api.get_branches, project_path)
-        worker.finished_signal.connect(self.on_branches_loaded)
-        worker.error_signal.connect(self.on_branch_error)
-        
-        self.thread_mgr.add("branches", worker)
-        worker.start()
+        thread = GitLabWorkerThread(self.api.get_branches, project_path)
+        thread.finished_signal.connect(self.on_branches_loaded)
+        thread.error_signal.connect(self.on_branch_error)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("branches", thread)
+        thread.start()
     
     def on_branches_loaded(self, branches):
         """分支列表加载完成"""
@@ -576,12 +577,12 @@ class GitLabLogPage(BasePage):
         """加载提交者列表"""
         self.show_progress("正在获取提交者列表...")
         
-        worker = GitLabWorkerThread(self.get_authors)
-        worker.finished_signal.connect(self.on_authors_loaded)
-        worker.error_signal.connect(self.on_authors_error)
-        
-        self.thread_mgr.add("authors", worker)
-        worker.start()
+        thread = GitLabWorkerThread(self.get_authors)
+        thread.finished_signal.connect(self.on_authors_loaded)
+        thread.error_signal.connect(self.on_authors_error)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("authors", thread)
+        thread.start()
     
     def get_authors(self):
         """获取项目的所有提交者"""
@@ -710,16 +711,16 @@ class GitLabLogPage(BasePage):
         self.main_buttons.disable()
         self.export_btn.setText("导出中...")
         
-        worker = GitLabWorkerThread(
+        thread = GitLabWorkerThread(
             self.do_export, project_path, branch_name, since_date, 
             until_date, keyword, author_filter, save_path
         )
-        worker.finished_signal.connect(self.on_export_finished)
-        worker.error_signal.connect(self.on_export_error)
-        worker.progress_signal.connect(lambda msg: self.show_progress(msg))
-        
-        self.thread_mgr.add("export", worker)
-        worker.start()
+        thread.finished_signal.connect(self.on_export_finished)
+        thread.error_signal.connect(self.on_export_error)
+        thread.progress_signal.connect(lambda msg: self.show_progress(msg))
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("export", thread)
+        thread.start()
     
     def do_export(self, project_path, branch_name, since_date, until_date, keyword, author_filter, save_path):
         """执行导出操作"""
@@ -800,6 +801,7 @@ class GitLabLogPage(BasePage):
     
     def load_config(self):
         """加载配置"""
+        reg_key = None
         try:
             # 从注册表加载 GitLab 配置
             import winreg
@@ -844,16 +846,24 @@ class GitLabLogPage(BasePage):
             except (WindowsError, FileNotFoundError, json.JSONDecodeError):
                 pass
             
-            winreg.CloseKey(reg_key)
         except (WindowsError, FileNotFoundError, OSError):
             pass
+        finally:
+            if reg_key:
+                try:
+                    winreg.CloseKey(reg_key)
+                except Exception as e:
+                    from query_tool.utils.logger import logger
+                    logger.debug(f"关闭注册表键失败: {e}")
     
     def save_config(self):
         """保存配置"""
+        reg_key = None
         try:
             import winreg
             import base64
             import json
+            from query_tool.utils.logger import logger
             
             reg_key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\TPQueryTool\GitLab")
             
@@ -880,9 +890,16 @@ class GitLabLogPage(BasePage):
             recent_branches_str = json.dumps(self.recent_branches)
             winreg.SetValueEx(reg_key, "recent_branches", 0, winreg.REG_SZ, recent_branches_str)
             
-            winreg.CloseKey(reg_key)
         except (WindowsError, OSError) as e:
-            print(f"保存配置失败: {e}")
+            from query_tool.utils.logger import logger
+            logger.error(f"保存配置失败: {e}")
+        finally:
+            if reg_key:
+                try:
+                    winreg.CloseKey(reg_key)
+                except Exception as e:
+                    from query_tool.utils.logger import logger
+                    logger.debug(f"关闭注册表键失败: {e}")
     
     def cleanup(self):
         """清理资源"""

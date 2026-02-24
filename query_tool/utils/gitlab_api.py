@@ -2,8 +2,9 @@
 GitLab API 封装
 提供 GitLab 服务器交互功能
 """
-import requests
 import urllib.parse
+from query_tool.utils.logger import logger
+from query_tool.utils.session_manager import SessionManager
 
 
 class GitLabAPI:
@@ -13,6 +14,7 @@ class GitLabAPI:
         self.url = url.rstrip('/')
         self.token = token
         self.timeout = 10  # 请求超时时间（秒）
+        self.session = SessionManager().get_session('gitlab')
     
     def api_get(self, endpoint, params=None, retry=3):
         """
@@ -35,7 +37,7 @@ class GitLabAPI:
         last_error = None
         for attempt in range(retry):
             try:
-                response = requests.get(
+                response = self.session.get(
                     url, 
                     headers=headers, 
                     params=params or {}, 
@@ -57,24 +59,27 @@ class GitLabAPI:
                 
                 return response.json()
             
-            except requests.exceptions.Timeout:
-                last_error = "请求超时"
-                if attempt < retry - 1:
-                    import time
-                    time.sleep(2 ** attempt)
-            except requests.exceptions.ConnectionError:
-                last_error = "无法连接到服务器"
-                if attempt < retry - 1:
-                    import time
-                    time.sleep(2 ** attempt)
             except Exception as e:
-                # 如果是认证错误，不需要重试
-                if "认证失败" in str(e):
-                    raise
-                last_error = str(e)
-                if attempt < retry - 1:
-                    import time
-                    time.sleep(1)
+                # 检查是否是超时或连接错误
+                error_str = str(e)
+                if "timeout" in error_str.lower():
+                    last_error = "请求超时"
+                    if attempt < retry - 1:
+                        import time
+                        time.sleep(2 ** attempt)
+                elif "connection" in error_str.lower():
+                    last_error = "无法连接到服务器"
+                    if attempt < retry - 1:
+                        import time
+                        time.sleep(2 ** attempt)
+                else:
+                    # 如果是认证错误，不需要重试
+                    if "认证失败" in error_str:
+                        raise
+                    last_error = error_str
+                    if attempt < retry - 1:
+                        import time
+                        time.sleep(1)
         
         raise Exception(f"API 请求失败（重试{retry}次）: {last_error}")
     

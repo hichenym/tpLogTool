@@ -9,7 +9,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QDateTime, QEvent, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QIcon
 from .custom_widgets import set_dark_title_bar
-import requests
+from query_tool.utils.logger import logger
+from query_tool.utils.thread_manager import ThreadManager
 import os
 
 
@@ -83,17 +84,19 @@ class EditFirmwareDialog(QDialog):
         self.firmware_id = firmware_id  # None 表示新增模式
         self.firmware_data = firmware_data
         self.result_data = None
-        self.upload_thread = None
         self.session = None  # 将从父窗口获取session
         self.selected_file_name = None  # 保存选择的文件名
         self.is_create_mode = (firmware_id is None)  # 是否为新增模式
+        
+        # 线程管理器
+        self.thread_mgr = ThreadManager()
         
         # 获取session（从firmware_api模块）
         try:
             from query_tool.utils.firmware_api import login
             self.session = login()
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"获取固件session失败: {e}")
         
         self.init_ui()
         self.load_data()
@@ -204,7 +207,7 @@ class EditFirmwareDialog(QDialog):
         form_layout.addRow(file_label, file_widget)
         
         # 2. 固件标识（只读）
-        identifier_label = QLabel("固件标识:")
+        identifier_label = QLabel("<span style='color: red;'>*</span> 固件标识:")
         self.identifier_input = QLineEdit()
         self.identifier_input.setReadOnly(True)
         self.identifier_input.setFocusPolicy(Qt.NoFocus)  # 禁止获取焦点
@@ -213,7 +216,7 @@ class EditFirmwareDialog(QDialog):
         form_layout.addRow(identifier_label, self.identifier_input)
         
         # 3. 文件MD5（只读）
-        md5_label = QLabel("文件MD5:")
+        md5_label = QLabel("<span style='color: red;'>*</span> 文件MD5:")
         self.md5_input = QLineEdit()
         self.md5_input.setReadOnly(True)
         self.md5_input.setFocusPolicy(Qt.NoFocus)  # 禁止获取焦点
@@ -222,22 +225,28 @@ class EditFirmwareDialog(QDialog):
         form_layout.addRow(md5_label, self.md5_input)
         
         # 4. 发布备注
-        comment_label = QLabel("发布备注:")
+        comment_label = QLabel("<span style='color: red;'>*</span> 发布备注:")
         self.comment_text = QTextEdit()
         self.comment_text.setPlaceholderText("输入发布备注...")
         self.comment_text.setMinimumHeight(60)
         self.comment_text.setMaximumHeight(60)
         self.comment_text.setStyleSheet(editable_style)
+        # 连接文本变化信号，实时验证
+        self.comment_text.textChanged.connect(self.on_comment_text_changed)
+        self.comment_text.textChanged.connect(self.validate_form)
         form_layout.addRow(comment_label, self.comment_text)
         
         # 5. 支持升级的设备SN
-        sn_label = QLabel("升级设备SN:")
+        sn_label = QLabel("<span style='color: red;'>*</span> 升级设备SN:")
         sn_label.setToolTip("每行一个SN，支持多个设备")
         self.sn_text = QTextEdit()
         self.sn_text.setPlaceholderText("每行输入一个设备SN...")
         self.sn_text.setMinimumHeight(100)
         self.sn_text.setMaximumHeight(100)
         self.sn_text.setStyleSheet(editable_style)
+        # 连接文本变化信号，实时验证SN长度和是否为空
+        self.sn_text.textChanged.connect(self.on_sn_text_changed)
+        self.sn_text.textChanged.connect(self.validate_form)
         form_layout.addRow(sn_label, self.sn_text)
         
         # 6. 可升级时间段（两个时间控件水平排列）
@@ -412,7 +421,8 @@ class EditFirmwareDialog(QDialog):
                     self.start_time_edit.setDateTime(start_time)
                 else:
                     self.start_time_edit.setDateTime(QDateTime.currentDateTime())
-            except:
+            except Exception as e:
+                logger.warning(f"解析开始时间失败: {e}")
                 self.start_time_edit.setDateTime(QDateTime.currentDateTime())
         else:
             self.start_time_edit.setDateTime(QDateTime.currentDateTime())
@@ -426,10 +436,120 @@ class EditFirmwareDialog(QDialog):
                     self.end_time_edit.setDateTime(end_time)
                 else:
                     self.end_time_edit.setDateTime(QDateTime.currentDateTime())
-            except:
+            except Exception as e:
+                logger.warning(f"解析结束时间失败: {e}")
                 self.end_time_edit.setDateTime(QDateTime.currentDateTime())
         else:
             self.end_time_edit.setDateTime(QDateTime.currentDateTime())
+        
+        # 初始验证表单状态
+        self.validate_form()
+    
+    def validate_form(self):
+        """验证表单，控制确认按钮状态"""
+        # 必填字段验证
+        identifier = self.identifier_input.text().strip()
+        md5 = self.md5_input.text().strip()
+        comment = self.comment_text.toPlainText().strip()
+        sn_text = self.sn_text.toPlainText().strip()
+        
+        # 获取非空SN行
+        sn_lines = [line.strip() for line in sn_text.split('\n') if line.strip()]
+        
+        # 检查SN是否有效（每行长度必须为16）
+        sn_valid = True
+        if sn_lines:
+            for line in sn_lines:
+                if len(line) != 16:
+                    sn_valid = False
+                    break
+        else:
+            sn_valid = False  # 没有SN也是无效的
+        
+        # 所有必填字段都有值且SN有效时，启用确认按钮
+        if identifier and md5 and comment and sn_valid:
+            self.submit_btn.setEnabled(True)
+        else:
+            self.submit_btn.setEnabled(False)
+    
+    def on_sn_text_changed(self):
+        """SN文本变化时，验证每行SN长度是否为16，以及是否为空"""
+        text = self.sn_text.toPlainText()
+        lines = text.split('\n')
+        
+        # 获取非空行
+        non_empty_lines = [line.strip() for line in lines if line.strip()]
+        
+        # 如果有内容，检查长度是否正确
+        if non_empty_lines:
+            # 检查是否有长度不为16的SN
+            has_invalid = False
+            for line in non_empty_lines:
+                if len(line) != 16:
+                    has_invalid = True
+                    break
+            
+            # 根据验证结果设置边框颜色
+            if has_invalid:
+                # 红色边框（1px，参考端口穿透样式）
+                self.sn_text.setStyleSheet("""
+                    QTextEdit {
+                        background-color: #404040;
+                        color: #e0e0e0;
+                        border: 1px solid #FF0000;
+                        border-radius: 3px;
+                        padding: 4px;
+                    }
+                    QTextEdit:focus {
+                        border: 1px solid #FF0000;
+                    }
+                """)
+            else:
+                # 正常边框
+                self.sn_text.setStyleSheet("""
+                    QTextEdit {
+                        background-color: #404040;
+                        color: #e0e0e0;
+                        border: 1px solid #555555;
+                        border-radius: 3px;
+                        padding: 4px;
+                    }
+                    QTextEdit:focus {
+                        border: 1px solid #6a6a6a;
+                    }
+                """)
+        else:
+            # 如果为空，恢复正常边框
+            self.sn_text.setStyleSheet("""
+                QTextEdit {
+                    background-color: #404040;
+                    color: #e0e0e0;
+                    border: 1px solid #555555;
+                    border-radius: 3px;
+                    padding: 4px;
+                }
+                QTextEdit:focus {
+                    border: 1px solid #6a6a6a;
+                }
+            """)
+    
+    def on_comment_text_changed(self):
+        """发布备注文本变化时，如果有内容则取消红框"""
+        text = self.comment_text.toPlainText().strip()
+        if text:
+            # 有内容时恢复正常边框
+            self.comment_text.setStyleSheet("""
+                QTextEdit {
+                    background-color: #404040;
+                    color: #e0e0e0;
+                    border: 1px solid #555555;
+                    border-radius: 3px;
+                    padding: 4px;
+                }
+                QTextEdit:focus {
+                    border: 1px solid #6a6a6a;
+                }
+            """)
     
     def on_select_file(self):
         """选择文件"""
@@ -487,9 +607,11 @@ class EditFirmwareDialog(QDialog):
         
         # 创建上传线程（新增模式传 0 作为 firmware_id）
         upload_id = self.firmware_id if self.firmware_id else 0
-        self.upload_thread = FileUploadThread(file_path, upload_id, self.session, csrf_token)
-        self.upload_thread.finished_signal.connect(self.on_upload_finished)
-        self.upload_thread.start()
+        thread = FileUploadThread(file_path, upload_id, self.session, csrf_token)
+        thread.finished_signal.connect(self.on_upload_finished)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("file_upload", thread)
+        thread.start()
     
     def on_upload_finished(self, success, data, message):
         """上传完成回调"""
@@ -530,6 +652,9 @@ class EditFirmwareDialog(QDialog):
             # 在主窗口显示成功提示
             if self.parent():
                 self.parent().show_success("文件上传成功！")
+            
+            # 触发表单验证，更新确认按钮状态
+            self.validate_form()
         else:
             # 显示错误
             self.file_status_label.setText(f"上传失败")
@@ -538,6 +663,9 @@ class EditFirmwareDialog(QDialog):
             # 在主窗口显示错误提示
             if self.parent():
                 self.parent().show_error(f"上传失败: {message}")
+            
+            # 触发表单验证，更新确认按钮状态
+            self.validate_form()
         
         # 强制清除焦点，让对话框本身获取焦点
         self.setFocus()
@@ -551,7 +679,8 @@ class EditFirmwareDialog(QDialog):
                     self.start_time_edit.setDateTime(start_time)
                 else:
                     self.start_time_edit.setDateTime(QDateTime.currentDateTime())
-            except:
+            except Exception as e:
+                logger.warning(f"on_upload_finished解析开始时间失败: {e}")
                 self.start_time_edit.setDateTime(QDateTime.currentDateTime())
         else:
             self.start_time_edit.setDateTime(QDateTime.currentDateTime())
@@ -565,7 +694,8 @@ class EditFirmwareDialog(QDialog):
                     self.end_time_edit.setDateTime(end_time)
                 else:
                     self.end_time_edit.setDateTime(QDateTime.currentDateTime())
-            except:
+            except Exception as e:
+                logger.warning(f"on_upload_finished解析结束时间失败: {e}")
                 self.end_time_edit.setDateTime(QDateTime.currentDateTime())
         else:
             self.end_time_edit.setDateTime(QDateTime.currentDateTime())
@@ -575,31 +705,33 @@ class EditFirmwareDialog(QDialog):
         from PyQt5.QtWidgets import QMessageBox
         from PyQt5.QtCore import QTimer
         
-        # 新增模式必须先上传文件
-        if self.is_create_mode:
-            # 检查是否已上传文件
-            if not self.firmware_data.get('file_temp_path'):
-                msg_box = QMessageBox(self)
-                msg_box.setIcon(QMessageBox.Warning)
-                msg_box.setWindowTitle("提示")
-                msg_box.setText("请先上传固件文件！")
-                msg_box.setStandardButtons(QMessageBox.Ok)
-                QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-                msg_box.exec_()
+        # 由于按钮已经通过validate_form控制启用/禁用
+        # 这里只需要做最终的数据收集和提交
+        
+        # 收集表单数据
+        identifier = self.identifier_input.text().strip()
+        md5 = self.md5_input.text().strip()
+        comment = self.comment_text.toPlainText().strip()
+        sn_text = self.sn_text.toPlainText().strip()
+        
+        # 获取非空SN行
+        sn_lines = [line.strip() for line in sn_text.split('\n') if line.strip()]
+        
+        # 再次验证（防御性编程）
+        if not identifier or not md5 or not comment or not sn_lines:
+            logger.warning("提交时发现必填字段为空，这不应该发生")
+            return
+        
+        # 验证SN长度
+        for line in sn_lines:
+            if len(line) != 16:
+                logger.warning(f"提交时发现无效SN: {line}")
                 return
         
-        # 获取修改后的数据
-        support_sn_raw = self.sn_text.toPlainText()
-        
-        # 处理 SN：去掉每行首尾空格，但保留换行符
-        sn_lines = [line.strip() for line in support_sn_raw.split('\n') if line.strip()]
         support_sn = '\n'.join(sn_lines)
         
         start_time = self.start_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
         end_time = self.end_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
-        
-        # 获取备注
-        comment = self.comment_text.toPlainText().strip()
         
         # 验证时间
         if self.start_time_edit.dateTime() >= self.end_time_edit.dateTime():

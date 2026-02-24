@@ -5,6 +5,8 @@
 from PyQt5.QtCore import QObject, QThread, pyqtSignal
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .device_query import DeviceQuery, wake_device_smart
+from .logger import logger
+from threading import Lock, Event
 
 
 class QueryWorker(QObject):
@@ -24,14 +26,21 @@ class QueryWorker(QObject):
         self.password = password
         self.query = None  # 将在run中初始化
         self.max_workers = max_workers
-        self._stop = False
+        self._stop_event = Event()  # 使用Event代替简单的标志
+        self._lock = Lock()  # 保护共享状态
         
     def stop(self):
-        self._stop = True
+        """停止工作器"""
+        self._stop_event.set()
+        logger.debug("QueryWorker停止信号已设置")
+        
+    def is_stopped(self):
+        """检查是否已停止"""
+        return self._stop_event.is_set()
         
     def query_single_device(self, row, query_type, value):
         """查询单个设备"""
-        if self._stop:
+        if self.is_stopped():
             return row, None
         try:
             if query_type == 'sn':
@@ -83,6 +92,7 @@ class QueryWorker(QObject):
                     'password': '', 'node': '', 'model': '', 'version': '', 'online': -1, 'last_heartbeat': ''
                 }
         except Exception as e:
+            logger.error(f"查询设备失败 {value}: {e}")
             return row, {
                 'device_name': '',
                 'sn': value if query_type == 'sn' else '',
@@ -128,7 +138,7 @@ class QueryWorker(QObject):
                 }
                 
                 for future in as_completed(futures):
-                    if self._stop:
+                    if self.is_stopped():
                         break
                     row, result = future.result()
                     if result:
@@ -161,7 +171,16 @@ class QueryThread(QThread):
         self.worker.init_success.connect(self.init_success)
         
     def run(self):
-        self.worker.run()
+        try:
+            self.worker.run()
+        except KeyboardInterrupt:
+            # 用户按Ctrl+C，静默处理
+            logger.debug("QueryThread被用户中断")
+            pass
+        except Exception as e:
+            # 其他异常记录日志
+            logger.error(f"QueryThread异常: {e}")
+            self.error.emit(str(e))
         
     def stop(self):
         self.worker.stop()
@@ -179,14 +198,20 @@ class WakeWorker(QObject):
         self.devices = devices  # [(dev_id, sn), ...]
         self.query = query  # 已初始化的DeviceQuery对象
         self.max_workers = max_workers
-        self._stop = False
+        self._stop_event = Event()  # 使用Event代替简单的标志
         
     def stop(self):
-        self._stop = True
+        """停止工作器"""
+        self._stop_event.set()
+        logger.debug("WakeWorker停止信号已设置")
+        
+    def is_stopped(self):
+        """检查是否已停止"""
+        return self._stop_event.is_set()
         
     def wake_single_device(self, dev_id, sn):
         """唤醒单个设备"""
-        if self._stop:
+        if self.is_stopped():
             return dev_id, sn, False
         try:
             # 获取token
@@ -195,6 +220,7 @@ class WakeWorker(QObject):
             success = wake_device_smart(dev_id, sn, token, max_times=3)
             return dev_id, sn, success
         except Exception as e:
+            logger.error(f"唤醒设备失败 {sn}({dev_id}): {e}")
             return dev_id, sn, False
     
     def run(self):
@@ -214,7 +240,7 @@ class WakeWorker(QObject):
                 }
                 
                 for future in as_completed(futures):
-                    if self._stop:
+                    if self.is_stopped():
                         break
                     dev_id, sn, success = future.result()
                     self.wake_result.emit(f"{sn}({dev_id})", success)
@@ -225,6 +251,7 @@ class WakeWorker(QObject):
             
             self.all_done.emit()
         except Exception as e:
+            logger.error(f"唤醒任务失败: {e}")
             self.error.emit(str(e))
             self.all_done.emit()
 
@@ -245,7 +272,16 @@ class WakeThread(QThread):
         self.worker.error.connect(self.error)
         
     def run(self):
-        self.worker.run()
+        try:
+            self.worker.run()
+        except KeyboardInterrupt:
+            # 用户按Ctrl+C，静默处理
+            logger.debug("WakeThread被用户中断")
+            pass
+        except Exception as e:
+            # 其他异常记录日志
+            logger.error(f"WakeThread异常: {e}")
+            self.error.emit(str(e))
         
     def stop(self):
         self.worker.stop()
@@ -264,6 +300,16 @@ class PhoneQueryWorker(QObject):
         self.username = username
         self.password = password
         self.max_workers = max_workers  # 使用可配置的线程数
+        self._stop_event = Event()  # 添加停止事件
+        
+    def stop(self):
+        """停止工作器"""
+        self._stop_event.set()
+        logger.debug("PhoneQueryWorker停止信号已设置")
+        
+    def is_stopped(self):
+        """检查是否已停止"""
+        return self._stop_event.is_set()
         
     def run(self):
         try:
@@ -309,6 +355,10 @@ class PhoneQueryWorker(QObject):
             
             def get_device_complete_info(device):
                 """查询单个设备的完整信息"""
+                # 检查是否已停止
+                if self.is_stopped():
+                    return None
+                    
                 device_sn = device.get('deviceSn', '')
                 device_name = device.get('deviceName', '')
                 
@@ -432,8 +482,14 @@ class PhoneQueryWorker(QObject):
                 futures = [executor.submit(get_device_complete_info, device) for device in devices]
                 completed = 0
                 for future in as_completed(futures):
+                    # 检查是否已停止
+                    if self.is_stopped():
+                        logger.debug("PhoneQueryWorker已停止，取消剩余任务")
+                        break
+                    
                     result = future.result()
-                    results.append(result)
+                    if result:  # 过滤掉None结果（已停止的任务）
+                        results.append(result)
                     completed += 1
                     # 每 5 个任务或最后一个任务时更新进度
                     if completed % 5 == 0 or completed == len(devices):
@@ -464,6 +520,20 @@ class PhoneQueryThread(QThread):
         self.worker.progress.connect(self.progress)
         self.worker.error.connect(self.error)
         self.worker.success.connect(self.success)
+    
+    def stop(self):
+        """停止线程"""
+        if self.worker:
+            self.worker.stop()
         
     def run(self):
-        self.worker.run()
+        try:
+            self.worker.run()
+        except KeyboardInterrupt:
+            # 用户按Ctrl+C，静默处理
+            logger.debug("PhoneQueryThread被用户中断")
+            pass
+        except Exception as e:
+            # 其他异常记录日志
+            logger.error(f"PhoneQueryThread异常: {e}")
+            self.error.emit(str(e))

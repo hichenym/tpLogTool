@@ -2,7 +2,7 @@
 
 ## 版本信息
 
-当前版本：**v2.0.0 (20260122)**
+当前版本：**V3.0.0 (20260207)**
 
 ## 快速打包
 
@@ -57,10 +57,10 @@ pyinstaller -F -w -i ./resources/icons/app/logo.ico --name "查询工具" run.py
 
 ```python
 # query_tool/version.py
-VERSION_MAJOR = 2  # 主版本号
+VERSION_MAJOR = 3  # 主版本号
 VERSION_MINOR = 0  # 次版本号
 VERSION_PATCH = 0  # 修订号
-BUILD_DATE = "20260122"  # 编译日期
+BUILD_DATE = "20260207"  # 编译日期
 ```
 
 ### 版本号规则
@@ -214,11 +214,15 @@ excludes = ['matplotlib', 'scipy', 'pandas', 'PIL']
 - [ ] 程序能正常启动
 - [ ] 界面显示正常
 - [ ] 图标显示正常
-- [ ] 版本号显示正确
+- [ ] 版本号显示正确（V3.0.0）
 - [ ] 配置读写正常
+- [ ] 运维账号配置正常
+- [ ] 固件账号配置正常
+- [ ] 日志配置正常
 - [ ] 查询功能正常
 - [ ] 唤醒功能正常
 - [ ] 导出功能正常
+- [ ] 固件管理功能正常
 
 ### 3. 兼容性测试
 
@@ -240,12 +244,12 @@ excludes = ['matplotlib', 'scipy', 'pandas', 'PIL']
 
 # 3. 提交代码
 git add .
-git commit -m "Release v2.0.0"
+git commit -m "Release V3.0.0"
 git push
 
 # 4. 创建标签
-git tag -a v2.0.0 -m "Release v2.0.0"
-git push origin v2.0.0
+git tag -a V3.0.0 -m "Release V3.0.0"
+git push origin V3.0.0
 ```
 
 ### 2. 打包发布
@@ -272,6 +276,27 @@ python scripts/build.py
 4. 发布 Release
 
 ## 版本历史
+
+### V3.0.0 (2026-02-07)
+- 🔐 账号配置系统全面升级
+  * 运维账号和固件账号独立配置管理
+  * 使用标签页分离两个系统的账号配置
+  * 支持灵活配置：允许全部为空或只配置一个平台
+  * 未配置时智能提示并可直接跳转到对应标签页
+  * 移除固件系统硬编码账号密码
+- 📝 日志记录系统
+  * 支持调试信息记录到文件
+  * 日志文件按日期命名，自动轮转
+  * 可在设置页面启用/禁用，实时生效
+  * 完善核心模块日志记录
+- 🎨 界面优化
+  * 设置对话框使用标签页设计
+  * 账号配置使用滚动布局
+  * 每个账号组独立的验证按钮
+- 🔧 技术改进
+  * 固件账号配置保存到独立注册表键
+  * Session缓存管理优化
+  * 全局异常处理和日志记录
 
 ### v2.0.0 (2026-01-22)
 - 🏗️ 重大重构：项目结构完全重组
@@ -325,11 +350,12 @@ python scripts/build.py
 
 ## 相关文档
 
-- [README.md](README.md) - 项目说明
-- [版本管理指南.md](版本管理指南.md) - 版本管理详细说明
-- [Bug修复说明_v1.1.1.md](Bug修复说明_v1.1.1.md) - Bug修复详情
+- [README.md](../README.md) - 项目说明
+- [version-guide.md](version-guide.md) - 版本管理详细说明
+- [account-config-guide.md](account-config-guide.md) - 账号配置指南
+- [settings-guide.md](settings-guide.md) - 设置功能使用指南
 
 ---
 
-**最后更新**: 2026-01-22  
+**最后更新**: 2026-02-07  
 **维护者**: Kiro AI Assistant

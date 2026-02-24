@@ -12,6 +12,8 @@ from PyQt5.QtGui import QColor, QIcon
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from query_tool.utils import StyleManager, check_device_online, wake_device_smart
+from query_tool.utils.logger import logger
+from query_tool.utils.thread_manager import ThreadManager
 from query_tool.widgets.custom_widgets import set_dark_title_bar
 
 
@@ -251,10 +253,8 @@ class BatchRebootDialog(QDialog):
         # 设备状态映射 {sn: is_online}
         self.device_status = {}
         
-        # 线程
-        self.status_thread = None
-        self.wake_thread = None
-        self.reboot_thread = None
+        # 线程管理器
+        self.thread_mgr = ThreadManager()
         
         self.init_ui()
         self.start_initial_query()
@@ -386,14 +386,16 @@ class BatchRebootDialog(QDialog):
     
     def start_initial_query(self):
         """开始初始查询"""
-        self.status_thread = BatchStatusThread(
+        thread = BatchStatusThread(
             self.devices,
             self.device_query.token,
             self.thread_count
         )
-        self.status_thread.single_result.connect(self.on_status_result)
-        self.status_thread.all_done.connect(self.on_query_complete)
-        self.status_thread.start()
+        thread.single_result.connect(self.on_status_result)
+        thread.all_done.connect(self.on_query_complete)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("batch_status", thread)
+        thread.start()
     
     def on_status_result(self, sn, is_online):
         """单个设备状态查询结果"""
@@ -457,14 +459,15 @@ class BatchRebootDialog(QDialog):
                     break
         
         # 启动唤醒线程
-        self.wake_thread = BatchWakeThread(
+        thread = BatchWakeThread(
             offline_devices,
             self.device_query.token,
             self.thread_count
         )
-        self.wake_thread.all_done.connect(self.on_wake_complete)
-        self.wake_thread.start()  # 启动线程
-        self.wake_thread.start()
+        thread.all_done.connect(self.on_wake_complete)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("batch_wake", thread)
+        thread.start()
     
     def on_wake_complete(self):
         """唤醒完成，自动刷新状态"""
@@ -486,14 +489,16 @@ class BatchRebootDialog(QDialog):
         self.stats_label.setText("正在查询设备状态...")
         
         # 启动查询线程
-        self.status_thread = BatchStatusThread(
+        thread = BatchStatusThread(
             self.devices,
             self.device_query.token,
             self.thread_count
         )
-        self.status_thread.single_result.connect(self.on_status_result)
-        self.status_thread.all_done.connect(self.on_query_complete)
-        self.status_thread.start()
+        thread.single_result.connect(self.on_status_result)
+        thread.all_done.connect(self.on_query_complete)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("batch_status_refresh", thread)
+        thread.start()
     
     def on_confirm(self):
         """确认重启"""
@@ -504,15 +509,17 @@ class BatchRebootDialog(QDialog):
         self.cancel_btn.setEnabled(False)
         
         # 重新查询所有设备状态（后台查询，不更新界面）
-        self.status_thread = BatchStatusThread(
+        thread = BatchStatusThread(
             self.devices,
             self.device_query.token,
             self.thread_count
         )
         # 连接到后台更新方法（只更新状态字典，不更新表格）
-        self.status_thread.single_result.connect(self.on_status_result_silent)
-        self.status_thread.all_done.connect(self.on_final_query_complete)
-        self.status_thread.start()
+        thread.single_result.connect(self.on_status_result_silent)
+        thread.all_done.connect(self.on_final_query_complete)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("final_status_query", thread)
+        thread.start()
     
     def on_status_result_silent(self, sn, is_online):
         """静默更新设备状态（不更新表格显示）"""
@@ -539,16 +546,18 @@ class BatchRebootDialog(QDialog):
         reboot_time = "now" if self.now_radio.isChecked() else "after_five_minute"
         
         # 启动重启线程
-        self.reboot_thread = BatchRebootThread(
+        thread = BatchRebootThread(
             online_devices,
             reboot_time,
             self.device_query,
             self.thread_count
         )
-        self.reboot_thread.all_done.connect(
+        thread.all_done.connect(
             lambda: self.on_reboot_complete(online_count, offline_count)
         )
-        self.reboot_thread.start()
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("batch_reboot", thread)
+        thread.start()
     
     def on_reboot_complete(self, online_count, offline_count):
         """重启完成"""
@@ -568,19 +577,5 @@ class BatchRebootDialog(QDialog):
     def closeEvent(self, event):
         """关闭事件"""
         # 停止所有线程
-        if self.status_thread and self.status_thread.isRunning():
-            self.status_thread.stop()
-            self.status_thread.quit()
-            self.status_thread.wait(1000)
-        
-        if self.wake_thread and self.wake_thread.isRunning():
-            self.wake_thread.stop()
-            self.wake_thread.quit()
-            self.wake_thread.wait(1000)
-        
-        if self.reboot_thread and self.reboot_thread.isRunning():
-            self.reboot_thread.stop()
-            self.reboot_thread.quit()
-            self.reboot_thread.wait(1000)
-        
+        self.thread_mgr.stop_all()
         event.accept()

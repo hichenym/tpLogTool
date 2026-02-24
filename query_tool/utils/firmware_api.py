@@ -1,9 +1,10 @@
-import requests
 from bs4 import BeautifulSoup
 import json
 import pickle
 import base64
 import time
+from query_tool.utils.logger import logger
+from query_tool.utils.session_manager import SessionManager
 
 # 登录配置
 LOGIN_PAGE_URL = "https://update.seetong.com/admin/auth/login"
@@ -38,10 +39,14 @@ def get_firmware_credentials():
 
 def save_session_to_registry(session):
     """保存 session cookies 到注册表"""
+    reg_key = None
     try:
         import winreg
-        # 序列化 cookies
-        cookies_dict = requests.utils.dict_from_cookiejar(session.cookies)
+        # 序列化 cookies - 使用 session_manager 的方法
+        cookies_dict = {}
+        for cookie in session.cookies:
+            cookies_dict[cookie.name] = cookie.value
+        
         cookies_str = json.dumps(cookies_dict)
         cookies_encoded = base64.b64encode(cookies_str.encode()).decode()
         
@@ -49,14 +54,21 @@ def save_session_to_registry(session):
         reg_key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\TPQueryTool\Firmware")
         winreg.SetValueEx(reg_key, "session_cookies", 0, winreg.REG_SZ, cookies_encoded)
         winreg.SetValueEx(reg_key, "timestamp", 0, winreg.REG_SZ, str(time.time()))
-        winreg.CloseKey(reg_key)
         return True
     except Exception as e:
+        logger.warning(f"保存session到注册表失败: {e}")
         return False
+    finally:
+        if reg_key:
+            try:
+                winreg.CloseKey(reg_key)
+            except Exception as e:
+                logger.debug(f"关闭注册表键失败: {e}")
 
 
 def load_session_from_registry():
     """从注册表加载 session cookies"""
+    reg_key = None
     try:
         import winreg
         reg_key = winreg.OpenKey(
@@ -68,7 +80,6 @@ def load_session_from_registry():
         
         cookies_encoded, _ = winreg.QueryValueEx(reg_key, "session_cookies")
         timestamp_str, _ = winreg.QueryValueEx(reg_key, "timestamp")
-        winreg.CloseKey(reg_key)
         
         # 检查是否过期
         timestamp = float(timestamp_str)
@@ -80,10 +91,7 @@ def load_session_from_registry():
         cookies_dict = json.loads(cookies_str)
         
         # 创建新 session 并设置 cookies
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
+        session = SessionManager().get_session('firmware')
         
         # 将字典转换为 cookies
         for name, value in cookies_dict.items():
@@ -92,20 +100,35 @@ def load_session_from_registry():
         return session
         
     except (WindowsError, FileNotFoundError, OSError, ValueError, KeyError) as e:
-        # 注册表中没有缓存或解析失败
+        logger.debug(f"从注册表加载session失败: {e}")
         return None
+    finally:
+        if reg_key:
+            try:
+                winreg.CloseKey(reg_key)
+            except Exception as e:
+                logger.debug(f"关闭注册表键失败: {e}")
 
 def get_csrf_token(session):
     """获取登录页面的 CSRF token"""
     try:
-        response = session.get(LOGIN_PAGE_URL)
+        response = session.get(LOGIN_PAGE_URL, timeout=10)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
             token_input = soup.find('input', {'name': '_token'})
             if token_input:
-                return token_input.get('value')
+                token = token_input.get('value')
+                if token:
+                    return token
+                else:
+                    logger.warning("找到_token输入框但值为空")
+            else:
+                logger.warning("页面中未找到_token输入框")
+        else:
+            logger.warning(f"获取登录页面失败: HTTP {response.status_code}")
         return None
     except Exception as e:
+        logger.error(f"获取CSRF token异常: {e}")
         return None
 
 def is_session_valid(session):
@@ -118,7 +141,8 @@ def is_session_valid(session):
         response = session.get(FIRMWARE_BASE_URL, timeout=5)
         # 如果返回200且不是登录页面，说明session有效
         return response.status_code == 200 and 'login' not in response.url.lower()
-    except:
+    except Exception as e:
+        logger.debug(f"检查session有效性失败: {e}")
         return False
 
 def login(force_new=False):
@@ -158,10 +182,7 @@ def login(force_new=False):
             return session
     
     # 创建新session
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    })
+    session = SessionManager().get_session('firmware')
     
     token = get_csrf_token(session)
     if not token:
@@ -188,6 +209,8 @@ def login(force_new=False):
 
 def clear_session_cache():
     """清除 session 缓存（内存和注册表）"""
+    from query_tool.utils.logger import logger
+    
     global _cached_session, _session_timestamp
     
     # 清除内存缓存
@@ -195,6 +218,7 @@ def clear_session_cache():
     _session_timestamp = None
     
     # 清除注册表缓存
+    reg_key = None
     try:
         import winreg
         reg_key = winreg.OpenKey(
@@ -205,16 +229,24 @@ def clear_session_cache():
         )
         try:
             winreg.DeleteValue(reg_key, "session_cookies")
-        except:
+        except Exception:
             pass
         try:
             winreg.DeleteValue(reg_key, "timestamp")
-        except:
+        except Exception:
             pass
-        winreg.CloseKey(reg_key)
-        print("已清除固件 session 缓存")
+        logger.info("已清除固件 session 缓存")
+    except FileNotFoundError:
+        # 注册表键不存在是正常情况（首次使用或已清除），不需要警告
+        logger.debug("固件 session 缓存不存在，无需清除")
     except Exception as e:
-        print(f"清除缓存失败: {e}")
+        logger.warning(f"清除缓存失败: {e}")
+    finally:
+        if reg_key:
+            try:
+                winreg.CloseKey(reg_key)
+            except Exception as e:
+                logger.debug(f"关闭注册表键失败: {e}")
 
 
 def test_firmware_login(username, password):
@@ -227,38 +259,50 @@ def test_firmware_login(username, password):
     Returns:
         tuple: (success: bool, message: str)
     """
+    import time
+    
     try:
-        # 创建新session
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
+        # 使用时间戳创建唯一的session key，避免复用旧session
+        session_key = f'firmware_test_{int(time.time() * 1000)}'
+        session = SessionManager().get_session(session_key)
         
-        # 获取CSRF token
-        token = get_csrf_token(session)
-        if not token:
-            return False, "无法获取CSRF token"
-        
-        # 尝试登录
-        payload = {
-            "username": username,
-            "password": password,
-            "_token": token
-        }
-        
-        response = session.post(LOGIN_URL, data=payload, allow_redirects=False)
-        
-        if response.status_code in [200, 302]:
-            # 验证session是否有效
-            if is_session_valid(session):
-                return True, "登录成功"
+        try:
+            # 获取CSRF token
+            logger.debug("正在获取CSRF token...")
+            token = get_csrf_token(session)
+            if not token:
+                return False, "无法获取CSRF token，请检查网络连接"
+            
+            logger.debug(f"获取到CSRF token: {token[:20]}...")
+            
+            # 尝试登录
+            payload = {
+                "username": username,
+                "password": password,
+                "_token": token
+            }
+            
+            logger.debug("正在尝试登录...")
+            response = session.post(LOGIN_URL, data=payload, allow_redirects=False, timeout=10)
+            
+            logger.debug(f"登录响应状态码: {response.status_code}")
+            
+            if response.status_code in [200, 302]:
+                # 验证session是否有效
+                logger.debug("正在验证session...")
+                if is_session_valid(session):
+                    return True, "登录成功"
+                else:
+                    return False, "登录失败，请检查账号密码"
             else:
-                return False, "登录失败，请检查账号密码"
-        else:
-            return False, f"登录失败: HTTP {response.status_code}"
+                return False, f"登录失败: HTTP {response.status_code}"
+        finally:
+            # 测试完成后关闭session，释放资源
+            SessionManager().close_session(session_key)
     
     except Exception as e:
-        return False, f"登录出错: {str(e)}"
+        logger.error(f"测试登录异常: {e}")
+        return False, f"连接失败: {str(e)}"
 
 def parse_pagination_info(html_content):
     """解析分页信息，返回总条数和总页数"""
@@ -513,7 +557,8 @@ def delete_firmware(firmware_id):
                     return True, result.get('message', '删除成功')
                 else:
                     return False, result.get('message', '删除失败')
-            except:
+            except Exception as e:
+                logger.debug(f"解析JSON响应失败: {e}")
                 # 如果不是JSON响应，检查是否重定向成功
                 if 'debug-firmware' in response.url:
                     return True, "删除成功"

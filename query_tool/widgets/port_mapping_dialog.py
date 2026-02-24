@@ -8,8 +8,10 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QColor, QIcon
 from .custom_widgets import set_dark_title_bar
+from query_tool.utils.logger import logger
+from query_tool.utils.session_manager import SessionManager
+from query_tool.utils.thread_manager import ThreadManager
 import json
-import requests
 
 
 class StatusQueryThread(QThread):
@@ -75,6 +77,7 @@ class PortMappingThread(QThread):
     
     def run(self):
         try:
+            session = SessionManager().get_session()
             url = f"https://{self.host}/api/seetong-siot-device/console/device/operate/sendCommand"
             
             headers = {
@@ -96,7 +99,7 @@ class PortMappingThread(QThread):
                 "sourceType": "1"
             }
             
-            response = requests.post(url, json=data, headers=headers, verify=False, timeout=10)
+            response = session.post(url, json=data, headers=headers, verify=False, timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
@@ -111,6 +114,7 @@ class PortMappingThread(QThread):
             else:
                 self.finished_signal.emit(False, f"HTTP {response.status_code}", "")
         except Exception as e:
+            logger.error(f"端口穿透出错: {e}")
             self.finished_signal.emit(False, f"端口穿透出错: {str(e)}", "")
 
 
@@ -128,10 +132,8 @@ class PortMappingDialog(QDialog):
         # 状态
         self.is_online = False
         
-        # 线程
-        self.status_query_thread = None
-        self.wake_thread = None
-        self.port_mapping_thread = None
+        # 线程管理器
+        self.thread_mgr = ThreadManager()
         
         self.init_ui()
         
@@ -324,9 +326,11 @@ class PortMappingDialog(QDialog):
         self.refresh_btn.setEnabled(False)
         
         if self.device_query and not self.device_query.init_error:
-            self.status_query_thread = StatusQueryThread(self.sn, self.device_query.token)
-            self.status_query_thread.finished_signal.connect(self.on_status_query_finished)
-            self.status_query_thread.start()
+            thread = StatusQueryThread(self.sn, self.device_query.token)
+            thread.finished_signal.connect(self.on_status_query_finished)
+            thread.finished.connect(lambda: thread.deleteLater())
+            self.thread_mgr.add("status_query", thread)
+            thread.start()
         else:
             self.status_label.setText("● 查询失败")
             self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
@@ -359,9 +363,11 @@ class PortMappingDialog(QDialog):
         self.wake_btn.setEnabled(False)
         self.refresh_btn.setEnabled(False)
         
-        self.wake_thread = WakeDeviceThread(self.dev_id, self.sn, self.device_query)
-        self.wake_thread.finished_signal.connect(self.on_wake_finished)
-        self.wake_thread.start()
+        thread = WakeDeviceThread(self.dev_id, self.sn, self.device_query)
+        thread.finished_signal.connect(self.on_wake_finished)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("wake_device", thread)
+        thread.start()
     
     def on_wake_finished(self, success, message):
         """唤醒完成"""
@@ -481,11 +487,13 @@ class PortMappingDialog(QDialog):
         
         # 重新查询状态
         if self.device_query and not self.device_query.init_error:
-            self.status_query_thread = StatusQueryThread(self.sn, self.device_query.token)
-            self.status_query_thread.finished_signal.connect(
+            thread = StatusQueryThread(self.sn, self.device_query.token)
+            thread.finished_signal.connect(
                 lambda is_online, msg: self.on_confirm_status_checked(is_online, msg, ip, port)
             )
-            self.status_query_thread.start()
+            thread.finished.connect(lambda: thread.deleteLater())
+            self.thread_mgr.add("confirm_status_query", thread)
+            thread.start()
         else:
             if self.parent_window:
                 self.parent_window.show_error("查询状态失败，操作取消")
@@ -512,15 +520,17 @@ class PortMappingDialog(QDialog):
     def send_port_mapping_command(self, ip, port):
         """发送端口穿透命令"""
         if self.device_query and self.device_query.token:
-            self.port_mapping_thread = PortMappingThread(
+            thread = PortMappingThread(
                 self.sn,
                 ip,
                 port,
                 self.device_query.token,
                 self.device_query.host
             )
-            self.port_mapping_thread.finished_signal.connect(self.on_port_mapping_finished)
-            self.port_mapping_thread.start()
+            thread.finished_signal.connect(self.on_port_mapping_finished)
+            thread.finished.connect(lambda: thread.deleteLater())
+            self.thread_mgr.add("port_mapping", thread)
+            thread.start()
         else:
             if self.parent_window:
                 self.parent_window.show_error("无法获取访问令牌，操作失败")
