@@ -64,7 +64,7 @@ GitHub Releases API
 # 策略1：使用条件请求（If-Modified-Since）
 headers = {
     'If-Modified-Since': last_check_time,
-    'User-Agent': 'QueryTool/3.0.0'
+    'User-Agent': 'TPQueryTool/3.0.0'
 }
 
 # 策略2：本地缓存
@@ -74,7 +74,7 @@ cache_duration = 24 hours
 # 策略3：使用Personal Access Token（可选）
 headers = {
     'Authorization': f'token {GITHUB_TOKEN}',
-    'User-Agent': 'QueryTool/3.0.0'
+    'User-Agent': 'TPQueryTool/3.0.0'
 }
 
 # 策略4：检查Rate Limit

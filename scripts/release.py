@@ -84,7 +84,7 @@ def create_and_push_tag(version):
 def main():
     """主函数"""
     print("=" * 60)
-    print("查询工具 - 快速发布脚本")
+    print("TPQueryTool - 快速发布脚本")
     print("=" * 60)
     
     # 检查 Git 状态

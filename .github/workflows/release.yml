@@ -64,26 +64,40 @@ jobs:
       - name: Build executable
         shell: pwsh
         run: |
-          # 使用英文名称打包，避免中文问题
-          pyinstaller -F -w `
-            -i ./resources/icons/app/logo.ico `
-            --name "tpQueryTool" `
-            run.py `
-            --noconsole `
-            --hidden-import=ddddocr `
-            --hidden-import=onnxruntime `
-            --hidden-import=cv2 `
-            --hidden-import=numpy `
-            --collect-all=ddddocr `
-            --collect-binaries=onnxruntime `
-            --collect-data=onnxruntime
+          # 删除可能存在的旧 spec 文件，避免干扰
+          if (Test-Path "*.spec") {
+              Remove-Item "*.spec" -Force
+              Write-Host "✓ 已删除旧的 spec 文件"
+          }
           
-          # 打包完成后重命名为中文名称
-          if (Test-Path "dist/tpQueryTool.exe") {
-              Rename-Item "dist/tpQueryTool.exe" "查询工具.exe"
-              Write-Host "✓ 已重命名为: 查询工具.exe"
+          Write-Host "开始打包..."
+          
+          # 使用英文名称打包
+          # 注意：参数顺序很重要，所有参数必须在 run.py 之前
+          pyinstaller --onefile --noconsole `
+            --name TPQueryTool `
+            --icon ./resources/icons/app/logo.ico `
+            --hidden-import ddddocr `
+            --hidden-import onnxruntime `
+            --hidden-import cv2 `
+            --hidden-import numpy `
+            --collect-all ddddocr `
+            --collect-binaries onnxruntime `
+            --collect-data onnxruntime `
+            run.py
+          
+          Write-Host "`n打包完成，检查生成的文件..."
+          Get-ChildItem dist
+          
+          # 验证文件
+          if (Test-Path "dist/TPQueryTool.exe") {
+              $file = Get-Item "dist/TPQueryTool.exe"
+              Write-Host "`n✓ 打包成功: TPQueryTool.exe"
+              Write-Host "文件大小: $([math]::Round($file.Length / 1MB, 2)) MB"
           } else {
-              Write-Host "✗ 错误: 找不到 tpQueryTool.exe"
+              Write-Host "`n✗ 错误: 找不到 TPQueryTool.exe"
+              Write-Host "dist 目录内容:"
+              Get-ChildItem dist -Recurse
               exit 1
           }
       
@@ -91,7 +105,7 @@ jobs:
         id: filesize
         shell: pwsh
         run: |
-          $file = "dist/查询工具.exe"
+          $file = "dist/TPQueryTool.exe"
           $sizeBytes = (Get-Item $file).Length
           $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
           echo "size_mb=$sizeMB" >> $env:GITHUB_OUTPUT
@@ -171,12 +185,12 @@ jobs:
           # 转换为 JSON
           $changelogJson = $changelogItems | ConvertTo-Json -Compress
           
-          # 生成 version.json
+          # 生成 version.json（使用英文文件名）
           $versionJson = @"
           {
             "version": "$version",
             "build_date": "$buildDate",
-            "download_url": "https://github.com/$repo/releases/download/$tag/查询工具.exe",
+            "download_url": "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe",
             "file_size_mb": $fileSize,
             "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
             "min_version": "3.0.0",
@@ -206,8 +220,11 @@ jobs:
           **文件大小**: $fileSize MB
           
           ### 📦 下载
-          - [查询工具.exe](https://github.com/$repo/releases/download/$tag/查询工具.exe)
-          - [version.json](https://github.com/$repo/releases/download/$tag/version.json)
+          
+          > **注意**：由于 GitHub Release 对中文文件名支持有限，上传的文件名为 ``TPQueryTool.exe``，下载后请根据需要重命名为 ``查询工具.exe``
+          
+          - [**下载 TPQueryTool.exe**](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe) （下载后可重命名为 ``查询工具.exe``）
+          - [version.json](https://github.com/$repo/releases/download/$tag/version.json) （自动更新配置文件）
           
           ### 📝 更新说明
           
@@ -226,15 +243,19 @@ jobs:
           
           
           ### 🚀 使用方法
-          1. 下载 ``查询工具.exe``
-          2. 直接运行（无需安装）
-          3. 首次运行请配置账号信息
+          
+          1. 下载 ``TPQueryTool.exe``
+          2. （可选）重命名为 ``查询工具.exe``
+          3. 直接运行（无需安装）
+          4. 首次运行请配置账号信息
           
           ### 📚 文档
+          
           - [快速开始指南](https://github.com/$repo/blob/main/docs/quick-start.md)
           - [完整文档](https://github.com/$repo/blob/main/docs/README.md)
           
           ---
+          
           *此版本由 GitHub Actions 自动构建和发布*
           "@
           
@@ -248,7 +269,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/查询工具.exe
+            dist/TPQueryTool.exe
             version.json
           body_path: RELEASE_NOTES.md
           draft: false

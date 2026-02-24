@@ -50,18 +50,17 @@ def build_exe():
     # 执行打包
     # 使用 run.py 作为入口点，图标路径更新为新位置
     cmd = (
-        'pyinstaller -F -w '
-        '-i ./resources/icons/app/logo.ico '
-        '--name "查询工具" '
-        'run.py '
-        '--noconsole '
-        '--hidden-import=ddddocr '
-        '--hidden-import=onnxruntime '
-        '--hidden-import=cv2 '
-        '--hidden-import=numpy '
-        '--collect-all=ddddocr '
-        '--collect-binaries=onnxruntime '
-        '--collect-data=onnxruntime'
+        'pyinstaller --onefile --noconsole '
+        '--name TPQueryTool '
+        '--icon ./resources/icons/app/logo.ico '
+        '--hidden-import ddddocr '
+        '--hidden-import onnxruntime '
+        '--hidden-import cv2 '
+        '--hidden-import numpy '
+        '--collect-all ddddocr '
+        '--collect-binaries onnxruntime '
+        '--collect-data onnxruntime '
+        'run.py'
     )
     print(f"\n执行命令: {cmd}")
     
@@ -69,7 +68,7 @@ def build_exe():
     
     if result.returncode == 0:
         print("\n✓ 打包成功!")
-        print(f"✓ 可执行文件位置: dist/查询工具.exe")
+        print(f"✓ 可执行文件位置: dist/TPQueryTool.exe")
         return True
     else:
         print("\n✗ 打包失败!")
@@ -79,7 +78,7 @@ def build_exe():
 def main():
     """主函数"""
     print("=" * 50)
-    print("查询工具 - 自动打包脚本")
+    print("TPQueryTool - 自动打包脚本")
     print("=" * 50)
     
     # 更新编译日期

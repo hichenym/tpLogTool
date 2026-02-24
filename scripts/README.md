@@ -157,7 +157,7 @@ dist/run.exe
 
 **修改输出名称**:
 ```python
-'--name=QueryTool'  # 改为你的应用名称
+'--name=TPQueryTool'  # 改为你的应用名称
 ```
 
 **添加隐藏导入**:
