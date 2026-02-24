@@ -1,0 +1,16 @@
+{
+  "version": "3.0.0",
+  "build_date": "20260224",
+  "download_url": "https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/v3.0.0/查询工具.exe",
+  "file_size_mb": 168.06,
+  "release_notes_url": "https://github.com/YOUR_USERNAME/YOUR_REPO/releases/tag/v3.0.0",
+  "min_version": "3.0.0",
+  "changelog": [
+    "🔐 账号配置系统全面升级",
+    "✨ 智能提示系统",
+    "🏗️ 代码结构优化",
+    "🎨 界面优化",
+    "📚 文档完善",
+    "🔧 技术改进"
+  ]
+}

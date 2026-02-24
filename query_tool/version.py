@@ -5,11 +5,11 @@ from datetime import datetime
 
 # 版本号配置
 VERSION_MAJOR = 3  # 主版本号：重大功能更新或架构变更
-VERSION_MINOR = 0  # 次版本号：新增功能或较大改进
+VERSION_MINOR = 1  # 次版本号：新增功能或较大改进
 VERSION_PATCH = 0  # 修订号：Bug修复或小改进
 
 # 自动获取编译日期
-BUILD_DATE = "20260207"
+BUILD_DATE = "20260224"
 
 def get_version():
     """获取版本号元组"""
@@ -36,6 +36,31 @@ def get_build_date_formatted():
 
 # 版本历史
 VERSION_HISTORY = """
+V3.1.0 (20260224)
+- � GitHub Actions 自动发布
+  * 配置完整的 CI/CD 工作流
+  * 推送版本标签自动触发构建
+  * 自动打包 Windows 可执行文件
+  * 自动创建 GitHub Release
+  * 自动生成 version.json 供自动更新使用
+  * 从 version.py 自动提取更新日志到 Release 说明
+- 📦 自动更新模块设计
+  * 完整的技术方案文档（三种主流方案对比）
+  * 静默更新实现指南（后台检测、下载、延迟替换）
+  * 绿色版程序替换策略（批处理脚本方案）
+  * 支持多源下载和容错机制
+- 🛠️ 开发工具优化
+  * 新增快速发布脚本 scripts/release.py
+  * 自动检查 Git 状态
+  * 自动创建和推送版本标签
+  * 友好的交互式发布流程
+- 📚 文档体系完善
+  * GitHub Actions 完整使用指南
+  * 自动更新技术方案分析
+  * 静默更新实现指南
+  * 更新策略对比文档
+  * 精简文档结构，提升可读性
+
 V3.0.0 (20260207)
 - 🔐 账号配置系统全面升级
   * 运维账号和固件账号独立配置管理

@@ -1,0 +1,227 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 当推送 v3.0.0, v3.0.1 等标签时触发
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          # 从 tag 提取版本号 (v3.0.0 -> 3.0.0)
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+      
+      - name: Update version.py
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          BUILD_DATE=$(date +%Y%m%d)
+          
+          # 更新 version.py
+          sed -i "s/VERSION_MAJOR = .*/VERSION_MAJOR = $MAJOR/" query_tool/version.py
+          sed -i "s/VERSION_MINOR = .*/VERSION_MINOR = $MINOR/" query_tool/version.py
+          sed -i "s/VERSION_PATCH = .*/VERSION_PATCH = $PATCH/" query_tool/version.py
+          sed -i "s/BUILD_DATE = \".*\"/BUILD_DATE = \"$BUILD_DATE\"/" query_tool/version.py
+          
+          echo "Updated version.py to V$VERSION ($BUILD_DATE)"
+      
+      - name: Build executable
+        run: |
+          pyinstaller -F -w `
+            -i ./resources/icons/app/logo.ico `
+            --name "查询工具" `
+            run.py `
+            --noconsole `
+            --hidden-import=ddddocr `
+            --hidden-import=onnxruntime `
+            --hidden-import=cv2 `
+            --hidden-import=numpy `
+            --collect-all=ddddocr `
+            --collect-binaries=onnxruntime `
+            --collect-data=onnxruntime
+      
+      - name: Get file size
+        id: filesize
+        shell: bash
+        run: |
+          SIZE=$(stat -c%s "dist/查询工具.exe" 2>/dev/null || stat -f%z "dist/查询工具.exe")
+          SIZE_MB=$(echo "scale=2; $SIZE / 1048576" | bc)
+          echo "size_mb=$SIZE_MB" >> $GITHUB_OUTPUT
+          echo "File size: ${SIZE_MB} MB"
+      
+      - name: Extract changelog from version.py
+        id: changelog
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # 从 version.py 提取对应版本的更新日志
+          python << 'PYTHON_SCRIPT'
+          import re
+          import sys
+          
+          version = "${{ steps.version.outputs.version }}"
+          
+          # 读取 version.py
+          with open('query_tool/version.py', 'r', encoding='utf-8') as f:
+              content = f.read()
+          
+          # 提取 VERSION_HISTORY
+          match = re.search(r'VERSION_HISTORY = """(.*?)"""', content, re.DOTALL)
+          if not match:
+              print("ERROR: Could not find VERSION_HISTORY", file=sys.stderr)
+              sys.exit(1)
+          
+          history = match.group(1)
+          
+          # 提取当前版本的更新日志
+          # 匹配格式: V3.0.0 (20260207) 或 v3.0.0 (20260207)
+          version_pattern = rf'[Vv]{re.escape(version)}\s*\([^)]+\)(.*?)(?=[Vv]\d+\.\d+\.\d+|\Z)'
+          version_match = re.search(version_pattern, history, re.DOTALL)
+          
+          if version_match:
+              changelog = version_match.group(1).strip()
+              # 移除开头的换行和空白
+              changelog = changelog.strip()
+              print(f"Found changelog for version {version}")
+          else:
+              changelog = f"V{version} 版本更新\n\n请查看 query_tool/version.py 中的 VERSION_HISTORY 获取详细信息。"
+              print(f"WARNING: Could not find changelog for version {version}, using default", file=sys.stderr)
+          
+          # 保存到文件（用于后续步骤）
+          with open('CHANGELOG.txt', 'w', encoding='utf-8') as f:
+              f.write(changelog)
+          
+          print("Changelog extracted successfully")
+          PYTHON_SCRIPT
+          
+          # 读取提取的更新日志
+          if [ -f CHANGELOG.txt ]; then
+            echo "changelog_found=true" >> $GITHUB_OUTPUT
+          else
+            echo "changelog_found=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Generate version.json
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD_DATE=$(date +%Y%m%d)
+          FILE_SIZE="${{ steps.filesize.outputs.size_mb }}"
+          
+          # 从 CHANGELOG.txt 读取更新日志并转换为 JSON 数组
+          if [ -f CHANGELOG.txt ]; then
+            # 读取更新日志，提取主要功能点（以 - 或 * 开头的行）
+            CHANGELOG_ITEMS=$(grep -E '^\s*[-*]' CHANGELOG.txt | sed 's/^\s*[-*]\s*//' | head -10 | python -c "import sys, json; print(json.dumps([line.strip() for line in sys.stdin if line.strip()]))")
+          else
+            CHANGELOG_ITEMS='["请查看 Release 页面获取完整更新日志"]'
+          fi
+          
+          cat > version.json << EOF
+          {
+            "version": "$VERSION",
+            "build_date": "$BUILD_DATE",
+            "download_url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/查询工具.exe",
+            "file_size_mb": $FILE_SIZE,
+            "release_notes_url": "https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}",
+            "min_version": "3.0.0",
+            "changelog": $CHANGELOG_ITEMS
+          }
+          EOF
+          
+          echo "Generated version.json:"
+          cat version.json
+      
+      - name: Generate Release Notes
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD_DATE=$(date +%Y-%m-%d)
+          FILE_SIZE="${{ steps.filesize.outputs.size_mb }}"
+          
+          # 创建 Release 说明文件
+          cat > RELEASE_NOTES.md << EOF
+          ## 🎉 查询工具 V${VERSION}
+          
+          **编译日期**: ${BUILD_DATE}
+          **文件大小**: ${FILE_SIZE} MB
+          
+          ### 📦 下载
+          - [查询工具.exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/查询工具.exe)
+          - [version.json](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/version.json)
+          
+          ### 📝 更新说明
+          
+          EOF
+          
+          # 添加从 version.py 提取的更新日志
+          if [ -f CHANGELOG.txt ]; then
+            cat CHANGELOG.txt >> RELEASE_NOTES.md
+          else
+            echo "请查看项目 README 或 query_tool/version.py 中的版本历史。" >> RELEASE_NOTES.md
+          fi
+          
+          # 添加使用说明
+          cat >> RELEASE_NOTES.md << 'EOF'
+          
+          ### 🚀 使用方法
+          1. 下载 `查询工具.exe`
+          2. 直接运行（无需安装）
+          3. 首次运行请配置账号信息
+          
+          ### 📚 文档
+          - [快速开始指南](https://github.com/${{ github.repository }}/blob/main/docs/quick-start.md)
+          - [完整文档](https://github.com/${{ github.repository }}/blob/main/docs/README.md)
+          
+          ---
+          *此版本由 GitHub Actions 自动构建和发布*
+          EOF
+          
+          echo "Generated Release Notes:"
+          cat RELEASE_NOTES.md
+      
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/查询工具.exe
+            version.json
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Commit version.json to repository
+        shell: bash
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add version.json
+          git commit -m "chore: update version.json for ${{ steps.version.outputs.tag }}" || echo "No changes to commit"
+          git push origin HEAD:main || echo "Failed to push, but release is created"

@@ -44,6 +44,18 @@ Application packaging and deployment guide.
 ### [version-guide.md](./version-guide.md)
 Version number management and release process guide.
 
+### [github-actions-guide.md](./github-actions-guide.md) ⭐
+GitHub Actions automated release complete guide - includes release notes generation.
+
+### [auto-update-solution.md](./auto-update-solution.md)
+Auto-update module technical solution analysis (three mainstream approaches).
+
+### [auto-update-replacement-strategy.md](./auto-update-replacement-strategy.md)
+Portable program replacement update strategy (batch script implementation).
+
+### [silent-update-guide.md](./silent-update-guide.md) ⭐
+Complete silent update implementation guide with strategy comparison.
+
 ---
 
 ## 🎯 Quick Navigation
@@ -56,7 +68,9 @@ Version number management and release process guide.
 | Learn about settings | [settings-guide.md](./settings-guide.md) |
 | Develop new features | [modules-guide.md](./modules-guide.md) |
 | Package and deploy | [build-guide.md](./build-guide.md) |
+| Publish new version | [github-actions-guide.md](./github-actions-guide.md) ⭐ |
+| Implement auto-update | [auto-update-solution.md](./auto-update-solution.md) |
 
 ---
 
-*Last Updated: 2026-02-07*
+*Last Updated: 2026-02-24*

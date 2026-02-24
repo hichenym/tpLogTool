@@ -94,25 +94,101 @@ python scripts/clean.py
 
 ## 打包发布
 
-### 版本管理
+### 🚀 快速发布新版本（推荐）
+
+#### 方法一：使用快速发布脚本 ⭐
+
+```bash
+# 最简单的方式 - 一键发布
+python scripts/release.py
+```
+
+脚本会自动引导你完成：
+1. ✅ 检查 Git 状态
+2. ✅ 显示当前版本和现有标签
+3. ✅ 输入新版本号
+4. ✅ 创建并推送标签
+5. ✅ 触发 GitHub Actions 自动构建
+
+#### 方法二：手动创建标签
+
+```bash
+# 1. 确保所有更改已提交
+git add .
+git commit -m "feat: 新功能描述"
+
+# 2. 创建并推送标签
+git tag v3.0.1
+git push origin v3.0.1
+
+# 3. 等待 GitHub Actions 自动构建（约 6-9 分钟）
+```
+
+GitHub Actions 会自动：
+- ✅ 更新版本号和编译日期
+- ✅ 打包 Windows 可执行文件
+- ✅ 创建 GitHub Release
+- ✅ 上传 exe 和 version.json
+- ✅ 从 version.py 提取更新日志生成发布说明
+
+构建完成后可在 [Releases](../../releases) 页面下载。
+
+#### 发布前检查清单
+
+- [ ] 本地测试通过
+- [ ] 更新 `query_tool/version.py` 中的 `VERSION_HISTORY`
+- [ ] 更新 `README.md`（如有必要）
+- [ ] 更新相关文档
+- [ ] 提交所有更改
+- [ ] 运行 `python scripts/release.py`
+
+#### 版本号规范
+
+- **主版本号（Major）**: 重大功能更新或架构变更（如 `v3.0.0` → `v4.0.0`）
+- **次版本号（Minor）**: 新增功能或较大改进（如 `v3.0.0` → `v3.1.0`）
+- **修订号（Patch）**: Bug 修复或小改进（如 `v3.0.0` → `v3.0.1`）
+
+#### 常见问题
+
+**Q: 如何删除错误的标签？**
+```bash
+git tag -d v3.0.1              # 删除本地标签
+git push origin :refs/tags/v3.0.1  # 删除远程标签
+```
+
+**Q: 构建失败怎么办？**
+1. 查看 Actions 页面的详细日志
+2. 修复问题后提交代码
+3. 删除失败的标签并重新创建
+
+**Q: 如何修改已发布的 Release？**
+进入 Releases 页面，点击 Release 右侧的编辑按钮。
+
+详细说明请参考：[docs/github-actions-guide.md](docs/github-actions-guide.md)
+
+---
+
+### 本地打包（开发测试用）
+
+#### 版本管理
 
 项目使用 `query_tool/version.py` 统一管理版本信息：
 
 ```python
-VERSION_MAJOR = 2  # 主版本号：重大功能更新或架构变更
+VERSION_MAJOR = 3  # 主版本号：重大功能更新或架构变更
 VERSION_MINOR = 0  # 次版本号：新增功能或较大改进
 VERSION_PATCH = 0  # 修订号：Bug修复或小改进
-BUILD_DATE = "20260122"  # 编译日期（自动生成）
+BUILD_DATE = "20260224"  # 编译日期（自动生成）
 ```
 
 版本号格式：`V主版本.次版本.修订号 (编译日期)`
-例如：`V1.0.0 (20260115)`
+例如：`V3.0.0 (20260224)`
 
-### 方式一：使用自动打包脚本（推荐）
+#### 方法一：使用自动打包脚本
 
 ```bash
 # 自动更新编译日期并打包
-python build.py
+python scripts/build.py
 ```
 
 脚本会自动：
@@ -121,17 +197,17 @@ python build.py
 3. 执行 PyInstaller 打包
 4. 清理临时文件
 
-### 方式二：使用 spec 文件
+#### 方法二：使用 spec 文件
 
 ```bash
 # 清理之前的打包文件
-pyinstaller 设备查询工具.spec --clean
+pyinstaller 查询工具.spec --clean
 ```
 
-### 方式三：使用命令行参数
+#### 方法三：使用命令行参数
 
 ```bash
-pyinstaller -F -w -i ./icon/logo.ico --name "设备查询工具" main.py --noconsole
+pyinstaller -F -w -i ./resources/icons/app/logo.ico --name "查询工具" run.py --noconsole
 ```
 
 ### 打包参数说明
