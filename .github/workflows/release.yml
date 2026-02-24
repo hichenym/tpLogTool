@@ -28,28 +28,38 @@ jobs:
       
       - name: Extract version from tag
         id: version
-        shell: bash
+        shell: pwsh
         run: |
           # 从 tag 提取版本号 (v3.0.0 -> 3.0.0)
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
+          $tag = "${{ github.ref }}"
+          $version = $tag -replace 'refs/tags/v', ''
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "tag=$($tag -replace 'refs/tags/', '')" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $version"
       
       - name: Update version.py
-        shell: bash
+        shell: pwsh
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          BUILD_DATE=$(date +%Y%m%d)
+          $version = "${{ steps.version.outputs.version }}"
+          $parts = $version -split '\.'
+          $major = $parts[0]
+          $minor = $parts[1]
+          $patch = $parts[2]
+          $buildDate = Get-Date -Format "yyyyMMdd"
           
-          # 更新 version.py
-          sed -i "s/VERSION_MAJOR = .*/VERSION_MAJOR = $MAJOR/" query_tool/version.py
-          sed -i "s/VERSION_MINOR = .*/VERSION_MINOR = $MINOR/" query_tool/version.py
-          sed -i "s/VERSION_PATCH = .*/VERSION_PATCH = $PATCH/" query_tool/version.py
-          sed -i "s/BUILD_DATE = \".*\"/BUILD_DATE = \"$BUILD_DATE\"/" query_tool/version.py
+          # 读取文件
+          $content = Get-Content "query_tool/version.py" -Raw -Encoding UTF8
           
-          echo "Updated version.py to V$VERSION ($BUILD_DATE)"
+          # 更新版本号
+          $content = $content -replace 'VERSION_MAJOR = \d+', "VERSION_MAJOR = $major"
+          $content = $content -replace 'VERSION_MINOR = \d+', "VERSION_MINOR = $minor"
+          $content = $content -replace 'VERSION_PATCH = \d+', "VERSION_PATCH = $patch"
+          $content = $content -replace 'BUILD_DATE = "\d+"', "BUILD_DATE = `"$buildDate`""
+          
+          # 写回文件
+          $content | Set-Content "query_tool/version.py" -Encoding UTF8 -NoNewline
+          
+          Write-Host "Updated version.py to V$version ($buildDate)"
       
       - name: Build executable
         run: |
@@ -68,143 +78,159 @@ jobs:
       
       - name: Get file size
         id: filesize
-        shell: bash
+        shell: pwsh
         run: |
-          SIZE=$(stat -c%s "dist/查询工具.exe" 2>/dev/null || stat -f%z "dist/查询工具.exe")
-          SIZE_MB=$(echo "scale=2; $SIZE / 1048576" | bc)
-          echo "size_mb=$SIZE_MB" >> $GITHUB_OUTPUT
-          echo "File size: ${SIZE_MB} MB"
+          $file = "dist/查询工具.exe"
+          $sizeBytes = (Get-Item $file).Length
+          $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
+          echo "size_mb=$sizeMB" >> $env:GITHUB_OUTPUT
+          Write-Host "File size: $sizeMB MB"
       
       - name: Extract changelog from version.py
         id: changelog
-        shell: bash
+        shell: pwsh
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          $version = "${{ steps.version.outputs.version }}"
           
-          # 从 version.py 提取对应版本的更新日志
-          python << 'PYTHON_SCRIPT'
+          # 使用 Python 提取更新日志
+          python -c @"
           import re
           import sys
           
-          version = "${{ steps.version.outputs.version }}"
+          version = '$version'
           
           # 读取 version.py
           with open('query_tool/version.py', 'r', encoding='utf-8') as f:
               content = f.read()
           
           # 提取 VERSION_HISTORY
-          match = re.search(r'VERSION_HISTORY = """(.*?)"""', content, re.DOTALL)
+          match = re.search(r'VERSION_HISTORY = \"\"\"(.*?)\"\"\"', content, re.DOTALL)
           if not match:
-              print("ERROR: Could not find VERSION_HISTORY", file=sys.stderr)
+              print('ERROR: Could not find VERSION_HISTORY', file=sys.stderr)
               sys.exit(1)
           
           history = match.group(1)
           
           # 提取当前版本的更新日志
-          # 匹配格式: V3.0.0 (20260207) 或 v3.0.0 (20260207)
           version_pattern = rf'[Vv]{re.escape(version)}\s*\([^)]+\)(.*?)(?=[Vv]\d+\.\d+\.\d+|\Z)'
           version_match = re.search(version_pattern, history, re.DOTALL)
           
           if version_match:
               changelog = version_match.group(1).strip()
-              # 移除开头的换行和空白
-              changelog = changelog.strip()
-              print(f"Found changelog for version {version}")
+              print(f'Found changelog for version {version}')
           else:
-              changelog = f"V{version} 版本更新\n\n请查看 query_tool/version.py 中的 VERSION_HISTORY 获取详细信息。"
-              print(f"WARNING: Could not find changelog for version {version}, using default", file=sys.stderr)
+              changelog = f'V{version} 版本更新\n\n请查看 query_tool/version.py 中的 VERSION_HISTORY 获取详细信息。'
+              print(f'WARNING: Could not find changelog for version {version}, using default', file=sys.stderr)
           
-          # 保存到文件（用于后续步骤）
+          # 保存到文件
           with open('CHANGELOG.txt', 'w', encoding='utf-8') as f:
               f.write(changelog)
           
-          print("Changelog extracted successfully")
-          PYTHON_SCRIPT
+          print('Changelog extracted successfully')
+          "@
           
-          # 读取提取的更新日志
-          if [ -f CHANGELOG.txt ]; then
-            echo "changelog_found=true" >> $GITHUB_OUTPUT
-          else
-            echo "changelog_found=false" >> $GITHUB_OUTPUT
-          fi
+          if (Test-Path "CHANGELOG.txt") {
+              echo "changelog_found=true" >> $env:GITHUB_OUTPUT
+          } else {
+              echo "changelog_found=false" >> $env:GITHUB_OUTPUT
+          }
       
       - name: Generate version.json
-        shell: bash
+        shell: pwsh
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          BUILD_DATE=$(date +%Y%m%d)
-          FILE_SIZE="${{ steps.filesize.outputs.size_mb }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $buildDate = Get-Date -Format "yyyyMMdd"
+          $fileSize = "${{ steps.filesize.outputs.size_mb }}"
+          $tag = "${{ steps.version.outputs.tag }}"
+          $repo = "${{ github.repository }}"
           
           # 从 CHANGELOG.txt 读取更新日志并转换为 JSON 数组
-          if [ -f CHANGELOG.txt ]; then
-            # 读取更新日志，提取主要功能点（以 - 或 * 开头的行）
-            CHANGELOG_ITEMS=$(grep -E '^\s*[-*]' CHANGELOG.txt | sed 's/^\s*[-*]\s*//' | head -10 | python -c "import sys, json; print(json.dumps([line.strip() for line in sys.stdin if line.strip()]))")
-          else
-            CHANGELOG_ITEMS='["请查看 Release 页面获取完整更新日志"]'
-          fi
-          
-          cat > version.json << EOF
-          {
-            "version": "$VERSION",
-            "build_date": "$BUILD_DATE",
-            "download_url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/查询工具.exe",
-            "file_size_mb": $FILE_SIZE,
-            "release_notes_url": "https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}",
-            "min_version": "3.0.0",
-            "changelog": $CHANGELOG_ITEMS
+          $changelogItems = @()
+          if (Test-Path "CHANGELOG.txt") {
+              $changelog = Get-Content "CHANGELOG.txt" -Encoding UTF8
+              $changelogItems = $changelog | Where-Object { $_ -match '^\s*[-*]' } | ForEach-Object {
+                  $_ -replace '^\s*[-*]\s*', ''
+              } | Select-Object -First 10
           }
-          EOF
           
-          echo "Generated version.json:"
-          cat version.json
+          if ($changelogItems.Count -eq 0) {
+              $changelogItems = @("请查看 Release 页面获取完整更新日志")
+          }
+          
+          # 转换为 JSON
+          $changelogJson = $changelogItems | ConvertTo-Json -Compress
+          
+          # 生成 version.json
+          $versionJson = @"
+          {
+            "version": "$version",
+            "build_date": "$buildDate",
+            "download_url": "https://github.com/$repo/releases/download/$tag/查询工具.exe",
+            "file_size_mb": $fileSize,
+            "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
+            "min_version": "3.0.0",
+            "changelog": $changelogJson
+          }
+          "@
+          
+          $versionJson | Set-Content "version.json" -Encoding UTF8
+          
+          Write-Host "Generated version.json:"
+          Get-Content "version.json"
       
       - name: Generate Release Notes
-        shell: bash
+        shell: pwsh
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          BUILD_DATE=$(date +%Y-%m-%d)
-          FILE_SIZE="${{ steps.filesize.outputs.size_mb }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $buildDate = Get-Date -Format "yyyy-MM-dd"
+          $fileSize = "${{ steps.filesize.outputs.size_mb }}"
+          $tag = "${{ steps.version.outputs.tag }}"
+          $repo = "${{ github.repository }}"
           
           # 创建 Release 说明文件
-          cat > RELEASE_NOTES.md << EOF
-          ## 🎉 查询工具 V${VERSION}
+          $releaseNotes = @"
+          ## 🎉 查询工具 V$version
           
-          **编译日期**: ${BUILD_DATE}
-          **文件大小**: ${FILE_SIZE} MB
+          **编译日期**: $buildDate
+          **文件大小**: $fileSize MB
           
           ### 📦 下载
-          - [查询工具.exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/查询工具.exe)
-          - [version.json](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/version.json)
+          - [查询工具.exe](https://github.com/$repo/releases/download/$tag/查询工具.exe)
+          - [version.json](https://github.com/$repo/releases/download/$tag/version.json)
           
           ### 📝 更新说明
           
-          EOF
+          "@
           
           # 添加从 version.py 提取的更新日志
-          if [ -f CHANGELOG.txt ]; then
-            cat CHANGELOG.txt >> RELEASE_NOTES.md
-          else
-            echo "请查看项目 README 或 query_tool/version.py 中的版本历史。" >> RELEASE_NOTES.md
-          fi
+          if (Test-Path "CHANGELOG.txt") {
+              $changelog = Get-Content "CHANGELOG.txt" -Raw -Encoding UTF8
+              $releaseNotes += $changelog
+          } else {
+              $releaseNotes += "请查看项目 README 或 query_tool/version.py 中的版本历史。"
+          }
           
           # 添加使用说明
-          cat >> RELEASE_NOTES.md << 'EOF'
+          $releaseNotes += @"
+          
           
           ### 🚀 使用方法
-          1. 下载 `查询工具.exe`
+          1. 下载 ``查询工具.exe``
           2. 直接运行（无需安装）
           3. 首次运行请配置账号信息
           
           ### 📚 文档
-          - [快速开始指南](https://github.com/${{ github.repository }}/blob/main/docs/quick-start.md)
-          - [完整文档](https://github.com/${{ github.repository }}/blob/main/docs/README.md)
+          - [快速开始指南](https://github.com/$repo/blob/main/docs/quick-start.md)
+          - [完整文档](https://github.com/$repo/blob/main/docs/README.md)
           
           ---
           *此版本由 GitHub Actions 自动构建和发布*
-          EOF
+          "@
           
-          echo "Generated Release Notes:"
-          cat RELEASE_NOTES.md
+          $releaseNotes | Set-Content "RELEASE_NOTES.md" -Encoding UTF8
+          
+          Write-Host "Generated Release Notes:"
+          Get-Content "RELEASE_NOTES.md"
       
       - name: Create Release
         id: create_release
