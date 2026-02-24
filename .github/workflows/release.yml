@@ -21,8 +21,10 @@ jobs:
       
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip setuptools wheel
+          echo "Installing dependencies from requirements.txt..."
+          pip install -r requirements.txt --no-cache-dir -v
+        continue-on-error: false
       
       - name: Extract version from tag
         id: version
