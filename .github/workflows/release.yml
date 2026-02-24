@@ -62,10 +62,12 @@ jobs:
           Write-Host "Updated version.py to V$version ($buildDate)"
       
       - name: Build executable
+        shell: pwsh
         run: |
+          # 使用英文名称打包，避免中文问题
           pyinstaller -F -w `
             -i ./resources/icons/app/logo.ico `
-            --name "查询工具" `
+            --name "tpQueryTool" `
             run.py `
             --noconsole `
             --hidden-import=ddddocr `
@@ -75,6 +77,15 @@ jobs:
             --collect-all=ddddocr `
             --collect-binaries=onnxruntime `
             --collect-data=onnxruntime
+          
+          # 打包完成后重命名为中文名称
+          if (Test-Path "dist/tpQueryTool.exe") {
+              Rename-Item "dist/tpQueryTool.exe" "查询工具.exe"
+              Write-Host "✓ 已重命名为: 查询工具.exe"
+          } else {
+              Write-Host "✗ 错误: 找不到 tpQueryTool.exe"
+              exit 1
+          }
       
       - name: Get file size
         id: filesize
