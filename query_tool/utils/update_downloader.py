@@ -380,7 +380,12 @@ class UpdateDownloader:
         """取消下载"""
         if self.download_thread and self.download_thread.isRunning():
             self.download_thread.cancel()
-            self.download_thread.wait()
+            # 不等待线程完成，避免阻塞主线程
+            # 线程会在下一次检查 _is_cancelled 时自动停止
+            # 使用 wait(timeout) 设置超时，避免无限等待
+            if not self.download_thread.wait(timeout=1000):  # 最多等待1秒
+                logger.warning("下载线程未能在1秒内停止，强制分离")
+                self.download_thread.quit()
         
         self._is_downloading = False
         self._current_download_url = None

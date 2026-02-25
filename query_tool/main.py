@@ -300,7 +300,8 @@ class MainWindow(QMainWindow):
             if self.update_manager.downloader.download_thread and \
                self.update_manager.downloader.download_thread.isRunning():
                 logger.info("检测到正在下载更新，取消下载...")
-                self.update_manager.cancel_download()
+                # 设置取消标志，但不等待线程完成
+                self.update_manager.downloader.download_thread.cancel()
                 # 隐藏下载进度标签
                 self.download_progress_label.setVisible(False)
                 self.breathing_label.setVisible(False)
@@ -317,6 +318,10 @@ class MainWindow(QMainWindow):
         if self.pending_update_file:
             try:
                 from query_tool.utils.update_downloader import UpdateInstaller
+                import os
+                import sys
+                import subprocess
+                import tempfile
                 
                 logger.info("检测到待安装的更新，准备安装...")
                 
@@ -324,8 +329,72 @@ class MainWindow(QMainWindow):
                 restart = self._restart_after_update
                 logger.info(f"安装后是否重启程序: {restart}")
                 
-                UpdateInstaller.apply_update(self.pending_update_file, restart=restart)
-                # 如果执行到这里说明更新失败，继续正常关闭
+                # 检查是否是打包后的程序
+                if not getattr(sys, 'frozen', False):
+                    logger.warning("开发环境，跳过更新安装")
+                    event.accept()
+                    return
+                
+                # 创建更新脚本
+                new_exe_path = self.pending_update_file
+                current_exe_path = sys.executable
+                
+                script_content = f"""@echo off
+chcp 65001 >nul
+echo 正在更新程序...
+
+:: 等待主程序退出
+timeout /t 2 /nobreak >nul
+
+:: 备份当前版本
+if exist "{current_exe_path}.bak" del "{current_exe_path}.bak"
+move "{current_exe_path}" "{current_exe_path}.bak"
+
+:: 复制新版本
+copy "{new_exe_path}" "{current_exe_path}"
+
+:: 检查是否成功
+if exist "{current_exe_path}" (
+    echo 更新成功！
+    :: 删除备份
+    del "{current_exe_path}.bak"
+    :: 删除下载的文件
+    del "{new_exe_path}"
+) else (
+    echo 更新失败，恢复备份...
+    move "{current_exe_path}.bak" "{current_exe_path}"
+)
+
+"""
+                
+                if restart:
+                    script_content += f"""
+:: 重启程序
+start "" "{current_exe_path}"
+"""
+                
+                script_content += """
+:: 删除脚本自身
+del "%~f0"
+"""
+                
+                # 保存脚本
+                script_path = os.path.join(tempfile.gettempdir(), 'tpquerytool_update.bat')
+                
+                with open(script_path, 'w', encoding='utf-8') as f:
+                    f.write(script_content)
+                
+                logger.info(f"更新脚本已创建: {script_path}")
+                logger.info("启动更新脚本...")
+                
+                # 启动脚本（不等待）
+                subprocess.Popen(
+                    ['cmd', '/c', script_path],
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                
+                logger.info("更新脚本已启动，程序即将退出")
+                
             except Exception as e:
                 logger.error(f"安装更新失败: {e}")
         
