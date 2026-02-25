@@ -58,7 +58,11 @@ class UpdatePromptDialog(QDialog):
         self.setMinimumHeight(400)
         
         self._init_ui()
-        self._apply_style()
+    
+    def showEvent(self, event):
+        """对话框显示时设置深色标题栏"""
+        super().showEvent(event)
+        set_dark_title_bar(self)
     
     def _init_ui(self):
         """初始化UI"""
@@ -132,10 +136,6 @@ class UpdatePromptDialog(QDialog):
         except:
             return date_str
     
-    def _apply_style(self):
-        """应用样式"""
-        set_dark_title_bar(self)
-    
     def _on_update_now(self):
         """立即更新"""
         self.update_now.emit()
@@ -169,7 +169,11 @@ class UpdateDownloadDialog(QDialog):
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
         
         self._init_ui()
-        self._apply_style()
+    
+    def showEvent(self, event):
+        """对话框显示时设置深色标题栏"""
+        super().showEvent(event)
+        set_dark_title_bar(self)
     
     def _init_ui(self):
         """初始化UI"""
@@ -227,10 +231,6 @@ class UpdateDownloadDialog(QDialog):
                 f"已下载 {downloaded_mb:.2f} MB / {total_mb:.2f} MB"
             )
     
-    def _apply_style(self):
-        """应用样式"""
-        set_dark_title_bar(self)
-    
     def _on_cancel(self):
         """取消下载"""
         self.cancel_download.emit()
@@ -254,7 +254,11 @@ class UpdateCompleteDialog(QDialog):
         self.setMinimumHeight(200)
         
         self._init_ui()
-        self._apply_style()
+    
+    def showEvent(self, event):
+        """对话框显示时设置深色标题栏"""
+        super().showEvent(event)
+        set_dark_title_bar(self)
     
     def _init_ui(self):
         """初始化UI"""
@@ -296,10 +300,6 @@ class UpdateCompleteDialog(QDialog):
         button_layout.addWidget(later_btn)
         
         layout.addLayout(button_layout)
-    
-    def _apply_style(self):
-        """应用样式"""
-        set_dark_title_bar(self)
     
     def _on_restart_now(self):
         """立即重启"""

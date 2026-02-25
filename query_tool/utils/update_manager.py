@@ -54,13 +54,19 @@ class UpdateManager(QObject):
         """
         下载更新
         
+        如果已有下载在进行中，则不重复下载。
+        
         Args:
             version_info: 版本信息
         """
+        # 检查是否已有下载在进行中
+        if self.downloader.is_downloading():
+            logger.warning(f"已有下载在进行中，忽略重复下载请求")
+            return
+        
         filename = f"TPQueryTool_{version_info.version}.exe"
         
         logger.info(f"开始下载更新: {filename}")
-        logger.info(f"下载地址: {version_info.download_url}")
         
         # 获取期望的哈希值
         expected_hash = version_info.file_hash if hasattr(version_info, 'file_hash') else None

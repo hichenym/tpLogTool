@@ -107,7 +107,7 @@ class UpdateChecker:
         url = self.VERSION_URL
         
         try:
-            logger.info(f"正在从远程获取版本信息: {url}")
+            logger.info(f"正在从远程获取版本信息...")
             
             response = requests.get(
                 url,
@@ -127,7 +127,7 @@ class UpdateChecker:
             return version_info
             
         except requests.RequestException as e:
-            logger.warning(f"从 {url} 获取版本信息失败: {e}")
+            logger.warning(f"获取版本信息失败: {e}")
         except Exception as e:
             logger.error(f"解析版本信息失败: {e}")
         

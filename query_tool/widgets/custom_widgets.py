@@ -106,6 +106,91 @@ class VersionLabel(QLabel):
         super().mouseDoubleClickEvent(event)
 
 
+class BreathingLabel(QLabel):
+    """呼吸闪烁标签（用于静默更新提示）"""
+    def __init__(self, parent=None):
+        super().__init__("●", parent)
+        self.setStyleSheet("color: #888888; font-weight: bold; padding-right: 5px; font-size: 14px;")
+        self._opacity = 1.0
+        self._direction = -1  # -1 表示变暗，1 表示变亮
+        self._timer = QTimer()
+        self._timer.timeout.connect(self._update_opacity)
+        self._is_running = False
+        self._current_color = "#888888"  # 当前颜色
+        self._is_breathing = True  # 是否呼吸
+    
+    def setVisible(self, visible):
+        """重写setVisible以控制定时器"""
+        super().setVisible(visible)
+        if visible and not self._is_running and self._is_breathing:
+            # 显示时启动定时器，降低频率到 100ms
+            self._timer.start(100)
+            self._is_running = True
+        elif not visible and self._is_running:
+            # 隐藏时停止定时器
+            self._timer.stop()
+            self._is_running = False
+    
+    def _update_opacity(self):
+        """更新透明度实现呼吸效果"""
+        self._opacity += self._direction * 0.03  # 降低步长，使呼吸更慢
+        
+        # 反向改变方向
+        if self._opacity >= 1.0:
+            self._opacity = 1.0
+            self._direction = -1
+        elif self._opacity <= 0.4:
+            self._opacity = 0.4
+            self._direction = 1
+        
+        # 使用当前颜色，通过改变透明度来实现呼吸效果
+        # 从十六进制颜色提取 RGB
+        color_hex = self._current_color.lstrip('#')
+        r = int(color_hex[0:2], 16)
+        g = int(color_hex[2:4], 16)
+        b = int(color_hex[4:6], 16)
+        
+        # 应用透明度
+        r_new = int(r * self._opacity)
+        g_new = int(g * self._opacity)
+        b_new = int(b * self._opacity)
+        
+        color_new = f"#{r_new:02x}{g_new:02x}{b_new:02x}"
+        self.setStyleSheet(f"color: {color_new}; font-weight: bold; padding-right: 5px; font-size: 14px;")
+    
+    def set_color(self, color_hex: str, breathing: bool = True):
+        """
+        设置颜色并控制是否呼吸
+        
+        Args:
+            color_hex: 颜色代码，如 "#888888"
+            breathing: 是否呼吸闪烁
+        """
+        self._current_color = color_hex
+        self._is_breathing = breathing
+        
+        if not breathing:
+            # 停止呼吸，显示固定颜色
+            if self._is_running:
+                self._timer.stop()
+                self._is_running = False
+            self._opacity = 1.0
+            self.setStyleSheet(f"color: {color_hex}; font-weight: bold; padding-right: 5px; font-size: 14px;")
+        else:
+            # 开始呼吸
+            if self.isVisible() and not self._is_running:
+                self._timer.start(100)
+                self._is_running = True
+    
+    def stop(self):
+        """停止呼吸动画"""
+        if self._is_running:
+            self._timer.stop()
+            self._is_running = False
+        self._is_breathing = False
+        self.setStyleSheet(f"color: {self._current_color}; font-weight: bold; padding-right: 5px; font-size: 14px;")
+
+
 class UpdateCheckSignals(QWidget):
     """更新检查信号发射器"""
     update_check_result = pyqtSignal(bool, object, str)  # (has_update, version_info, message)
@@ -433,6 +518,7 @@ class SettingsDialog(QDialog):
     def create_about_tab(self):
         """创建关于/更新标签页"""
         from query_tool.version import get_short_version, get_build_date_formatted
+        from query_tool.utils.update_checker import UpdateChecker
 
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
@@ -479,39 +565,56 @@ class SettingsDialog(QDialog):
 
         tab_layout.addWidget(version_group)
 
-        # 更新检测组
-        update_group = QGroupBox("更新检测")
-        update_group.setStyleSheet("""
-            QGroupBox {
-                color: #e0e0e0;
-                font-size: 12px;
-                font-weight: bold;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                margin-top: 10px;
-                margin-bottom: 15px;
-                padding-top: 15px;
-                background-color: transparent;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0 5px;
-            }
-        """)
+        # 检查更新策略，决定是否显示更新检测组
+        current_version = get_short_version().replace('V', '')
+        checker = UpdateChecker(current_version)
+        update_strategy = checker.should_auto_check()  # 获取更新策略
+        
+        # 从缓存加载版本信息以获取更新策略
+        cached_info = checker._load_cache()
+        if cached_info:
+            update_strategy_str = cached_info.update_strategy
+        else:
+            update_strategy_str = 'prompt'  # 默认策略
+        
+        # 只有当更新策略不是 'silent' 时才显示更新检测组
+        if update_strategy_str != 'silent':
+            # 更新检测组
+            update_group = QGroupBox("更新检测")
+            update_group.setStyleSheet("""
+                QGroupBox {
+                    color: #e0e0e0;
+                    font-size: 12px;
+                    font-weight: bold;
+                    border: 1px solid #555555;
+                    border-radius: 4px;
+                    margin-top: 10px;
+                    margin-bottom: 15px;
+                    padding-top: 15px;
+                    background-color: transparent;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    subcontrol-position: top left;
+                    left: 10px;
+                    padding: 0 5px;
+                }
+            """)
 
-        update_layout = QVBoxLayout(update_group)
-        update_layout.setSpacing(12)
-        update_layout.setContentsMargins(15, 15, 15, 15)
+            update_layout = QVBoxLayout(update_group)
+            update_layout.setSpacing(12)
+            update_layout.setContentsMargins(15, 15, 15, 15)
 
-        # 检查更新按钮
-        self.check_update_btn_widget = QPushButton("检查更新")
-        self.check_update_btn_widget.setFixedSize(120, 32)
-        self.check_update_btn_widget.clicked.connect(self.on_check_update)
-        update_layout.addWidget(self.check_update_btn_widget)
+            # 检查更新按钮
+            self.check_update_btn_widget = QPushButton("检查更新")
+            self.check_update_btn_widget.setFixedSize(120, 32)
+            self.check_update_btn_widget.clicked.connect(self.on_check_update)
+            update_layout.addWidget(self.check_update_btn_widget)
 
-        tab_layout.addWidget(update_group)
+            tab_layout.addWidget(update_group)
+        else:
+            # 静默更新模式，不显示检查更新按钮
+            self.check_update_btn_widget = None
 
         tab_layout.addStretch()
 
@@ -539,11 +642,15 @@ class SettingsDialog(QDialog):
 
         logger.info("用户点击检查更新按钮")
 
+        # 检查按钮是否存在（静默更新模式下不存在）
+        if not hasattr(self, 'check_update_btn_widget') or self.check_update_btn_widget is None:
+            logger.warning("检查更新按钮不存在（可能是静默更新模式）")
+            return
+
         # 禁用按钮
-        if hasattr(self, 'check_update_btn_widget'):
-            self.check_update_btn_widget.setEnabled(False)
-            self.check_update_btn_widget.setText("检查中...")
-            logger.info("按钮已禁用，显示'检查中...'")
+        self.check_update_btn_widget.setEnabled(False)
+        self.check_update_btn_widget.setText("检查中...")
+        logger.info("按钮已禁用，显示'检查中...'")
 
         # 禁用保存和取消按钮
         self.save_btn.setEnabled(False)
@@ -621,7 +728,7 @@ class SettingsDialog(QDialog):
     
     def _restore_buttons(self):
         """恢复按钮状态"""
-        if hasattr(self, 'check_update_btn_widget'):
+        if hasattr(self, 'check_update_btn_widget') and self.check_update_btn_widget is not None:
             self.check_update_btn_widget.setEnabled(True)
             self.check_update_btn_widget.setText("检查更新")
         

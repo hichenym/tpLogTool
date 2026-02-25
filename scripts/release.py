@@ -91,12 +91,12 @@ def main():
     print("\n检查 Git 状态...")
     success, message = check_git_status()
     if not success:
-        print(f"✗ {message}")
+        print(f"[ERROR] {message}")
         print("\n请先提交所有更改：")
         print("  git add .")
         print('  git commit -m "your message"')
         sys.exit(1)
-    print(f"✓ {message}")
+    print(f"[OK] {message}")
     
     # 获取当前版本
     current_version = get_current_version()
@@ -127,7 +127,7 @@ def main():
         
         # 验证版本号格式
         if not validate_version(version_input):
-            print("✗ 版本号格式错误，请使用 x.y.z 格式（如 3.0.1）")
+            print("[ERROR] 版本号格式错误，请使用 x.y.z 格式（如 3.0.1）")
             continue
         
         version = version_input
@@ -137,7 +137,7 @@ def main():
     
     # 检查标签是否已存在
     if tag in existing_tags:
-        print(f"\n✗ 标签 {tag} 已存在")
+        print(f"\n[ERROR] 标签 {tag} 已存在")
         response = input("是否删除现有标签并重新创建? (y/n): ").strip().lower()
         if response != 'y':
             print("已取消发布")
@@ -173,7 +173,7 @@ def main():
     
     if success:
         print("\n" + "=" * 60)
-        print("✓ 发布成功!")
+        print("[OK] 发布成功!")
         print("=" * 60)
         print(f"\n{message}")
         print("\nGitHub Actions 构建已触发，请访问以下链接查看进度：")
@@ -195,7 +195,7 @@ def main():
         print("  - 如需修改 Release 说明，可在 Release 页面编辑")
     else:
         print("\n" + "=" * 60)
-        print("✗ 发布失败")
+        print("[ERROR] 发布失败")
         print("=" * 60)
         print(f"\n{message}")
         sys.exit(1)
@@ -208,5 +208,5 @@ if __name__ == "__main__":
         print("\n\n已取消发布")
         sys.exit(0)
     except Exception as e:
-        print(f"\n✗ 发生错误: {e}")
+        print(f"\n[ERROR] 发生错误: {e}")
         sys.exit(1)

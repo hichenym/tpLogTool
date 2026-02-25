@@ -123,8 +123,8 @@ class DownloadThread(QThread):
     
     def run(self):
         """执行下载（带重试机制、断点续传和哈希验证）"""
-        max_retries = 3
-        retry_delay = 2  # 秒
+        max_retries = 10
+        retry_delay = 5  # 秒
         
         for attempt in range(max_retries):
             try:
@@ -147,7 +147,7 @@ class DownloadThread(QThread):
                         downloaded = os.path.getsize(temp_path)
                         logger.info(f"发现未完成的下载，已下载 {downloaded / 1024 / 1024:.2f} MB，尝试断点续传")
                     else:
-                        logger.info(f"开始下载: {self.url}")
+                        logger.info(f"开始下载...")
                 
                 # 设置请求头支持断点续传
                 headers = {
@@ -280,6 +280,8 @@ class UpdateDownloader:
         self._ensure_download_dir()
         self._clean_temp_files()  # 清理残留的临时文件
         self.download_thread: Optional[DownloadThread] = None
+        self._is_downloading = False  # 标记是否正在下载
+        self._current_download_url = None  # 当前下载的 URL
     
     def _ensure_download_dir(self):
         """确保下载目录存在"""
@@ -321,6 +323,8 @@ class UpdateDownloader:
         """
         下载文件
         
+        如果已有相同 URL 的下载在进行中，则复用现有下载线程。
+        
         Args:
             url: 下载链接
             filename: 保存的文件名
@@ -332,15 +336,41 @@ class UpdateDownloader:
         Returns:
             DownloadThread: 下载线程
         """
+        # 检查是否已有相同 URL 的下载在进行中
+        if self._is_downloading and self._current_download_url == url:
+            logger.info(f"相同 URL 的下载已在进行中，复用现有下载线程")
+            
+            # 连接新的回调
+            if progress_callback:
+                self.download_thread.progress.connect(progress_callback)
+            
+            if finished_callback:
+                self.download_thread.finished.connect(finished_callback)
+            
+            return self.download_thread
+        
+        # 如果有其他下载在进行中，先取消
+        if self._is_downloading and self.download_thread:
+            logger.warning(f"取消之前的下载，开始新的下载")
+            self.cancel_download()
+        
         save_path = str(self.DOWNLOAD_DIR / filename)
         
         self.download_thread = DownloadThread(url, save_path, expected_hash, hash_algorithm)
+        self._is_downloading = True
+        self._current_download_url = url
+        
+        # 连接完成信号以更新下载状态
+        def on_finished(success, result):
+            self._is_downloading = False
+            self._current_download_url = None
+            if finished_callback:
+                finished_callback(success, result)
         
         if progress_callback:
             self.download_thread.progress.connect(progress_callback)
         
-        if finished_callback:
-            self.download_thread.finished.connect(finished_callback)
+        self.download_thread.finished.connect(on_finished)
         
         self.download_thread.start()
         
@@ -351,6 +381,18 @@ class UpdateDownloader:
         if self.download_thread and self.download_thread.isRunning():
             self.download_thread.cancel()
             self.download_thread.wait()
+        
+        self._is_downloading = False
+        self._current_download_url = None
+    
+    def is_downloading(self) -> bool:
+        """
+        检查是否正在下载
+        
+        Returns:
+            bool: True 表示正在下载，False 表示没有下载
+        """
+        return self._is_downloading and self.download_thread and self.download_thread.isRunning()
     
     def get_downloaded_file(self, filename: str) -> Optional[Path]:
         """

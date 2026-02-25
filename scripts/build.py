@@ -33,7 +33,7 @@ def update_build_date():
     with open(version_file, 'w', encoding='utf-8') as f:
         f.write(content)
     
-    print(f"✓ 已更新编译日期: {current_date}")
+    print(f"[OK] 已更新编译日期: {current_date}")
     return current_date
 
 
@@ -43,9 +43,9 @@ def build_exe():
     
     # 清理旧文件
     if os.path.exists("build"):
-        print("✓ 清理build目录")
+        print("[OK] 清理build目录")
     if os.path.exists("dist"):
-        print("✓ 清理dist目录")
+        print("[OK] 清理dist目录")
     
     # 执行打包
     # 使用 run.py 作为入口点，图标路径更新为新位置
@@ -67,11 +67,11 @@ def build_exe():
     result = subprocess.run(cmd, shell=True, cwd=project_root)
     
     if result.returncode == 0:
-        print("\n✓ 打包成功!")
-        print(f"✓ 可执行文件位置: dist/TPQueryTool.exe")
+        print("\n[OK] 打包成功!")
+        print(f"[OK] 可执行文件位置: dist/TPQueryTool.exe")
         return True
     else:
-        print("\n✗ 打包失败!")
+        print("\n[ERROR] 打包失败!")
         return False
 
 
@@ -86,14 +86,8 @@ def main():
     
     # 导入版本信息
     from query_tool.version import get_version_string
-    print(f"✓ 当前版本: {get_version_string()}")
-    
-    # 询问是否继续
-    response = input("\n是否继续打包? (y/n): ")
-    if response.lower() != 'y':
-        print("已取消打包")
-        return
-    
+    print(f"[OK] 当前版本: {get_version_string()}")
+      
     # 执行打包
     success = build_exe()
     

@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
         # 更新管理器
         self.update_manager = None
         self.pending_update_file = None  # 待安装的更新文件
+        self._restart_after_update = False  # 是否在更新后重启程序
         
         self.init_ui()
         self.load_config()
@@ -183,6 +184,12 @@ class MainWindow(QMainWindow):
         self.download_progress_label.setStyleSheet("color: #4a9eff; padding-right: 10px;")
         self.download_progress_label.setVisible(False)  # 默认隐藏
         self.status_bar.addPermanentWidget(self.download_progress_label)
+        
+        # 呼吸闪烁标签（用于静默更新） - 右侧
+        from query_tool.widgets.custom_widgets import BreathingLabel
+        self.breathing_label = BreathingLabel()
+        self.breathing_label.setVisible(False)  # 默认隐藏
+        self.status_bar.addPermanentWidget(self.breathing_label)
         
         self.status_bar.showMessage("就绪")
         self.show_info("就绪")
@@ -284,6 +291,10 @@ class MainWindow(QMainWindow):
         """窗口关闭事件"""
         from query_tool.utils.logger import logger
         
+        # 停止呼吸动画
+        if hasattr(self, 'breathing_label'):
+            self.breathing_label.stop()
+        
         # 检查是否正在下载
         if self.update_manager and hasattr(self.update_manager, 'downloader'):
             if self.update_manager.downloader.download_thread and \
@@ -292,6 +303,7 @@ class MainWindow(QMainWindow):
                 self.update_manager.cancel_download()
                 # 隐藏下载进度标签
                 self.download_progress_label.setVisible(False)
+                self.breathing_label.setVisible(False)
         
         # 保存配置
         self.save_config()
@@ -301,16 +313,21 @@ class MainWindow(QMainWindow):
             if hasattr(page, 'cleanup'):
                 page.cleanup()
         
-        # 如果有待安装的更新（silent 策略），在关闭时安装
+        # 如果有待安装的更新，在关闭时安装
         if self.pending_update_file:
             try:
                 from query_tool.utils.update_downloader import UpdateInstaller
                 
-                logger.info("检测到待安装的更新，准备静默安装...")
-                UpdateInstaller.apply_update(self.pending_update_file, restart=True)
+                logger.info("检测到待安装的更新，准备安装...")
+                
+                # 根据标志决定是否在安装后重启程序
+                restart = self._restart_after_update
+                logger.info(f"安装后是否重启程序: {restart}")
+                
+                UpdateInstaller.apply_update(self.pending_update_file, restart=restart)
                 # 如果执行到这里说明更新失败，继续正常关闭
             except Exception as e:
-                logger.error(f"静默更新失败: {e}")
+                logger.error(f"安装更新失败: {e}")
         
         event.accept()
     
@@ -320,12 +337,79 @@ class MainWindow(QMainWindow):
             from query_tool.utils.update_manager import UpdateManager
             from query_tool.version import get_short_version
             from query_tool.utils.logger import logger
+            from pathlib import Path
+            import hashlib
             
             # 获取当前版本号（去掉 V 前缀）
             current_version = get_short_version().replace('V', '')
             
             # 创建更新管理器
             self.update_manager = UpdateManager(current_version, self)
+            
+            # 检查下载目录中是否有已下载的文件（用于恢复中断的更新）
+            download_dir = Path.home() / '.TPQueryTool' / 'downloads'
+            if download_dir.exists():
+                exe_files = list(download_dir.glob('TPQueryTool_*.exe'))
+                if exe_files:
+                    # 找到最新的文件
+                    latest_file = max(exe_files, key=lambda x: x.stat().st_mtime)
+                    logger.info(f"发现已下载的文件: {latest_file}")
+                    
+                    # 获取 version.json 中的哈希值进行校验
+                    cached_info = self.update_manager.checker._load_cache()
+                    if cached_info and cached_info.file_hash:
+                        logger.info(f"开始验证文件哈希...")
+                        
+                        # 计算文件哈希
+                        try:
+                            hash_obj = hashlib.sha256()
+                            with open(latest_file, 'rb') as f:
+                                while True:
+                                    chunk = f.read(8192)
+                                    if not chunk:
+                                        break
+                                    hash_obj.update(chunk)
+                            
+                            actual_hash = hash_obj.hexdigest()
+                            expected_hash = cached_info.file_hash
+                            
+                            logger.info(f"期望哈希: {expected_hash}")
+                            logger.info(f"实际哈希: {actual_hash}")
+                            
+                            if actual_hash.lower() != expected_hash.lower():
+                                logger.error("文件哈希校验失败，文件可能已损坏或不匹配")
+                                logger.info("删除损坏的文件，将重新检查更新")
+                                try:
+                                    latest_file.unlink()
+                                except Exception as e:
+                                    logger.error(f"删除文件失败: {e}")
+                                # 继续正常的更新检查流程
+                            else:
+                                logger.info("✓ 文件哈希校验通过")
+                                
+                                # 检查更新策略
+                                strategy = self.update_manager.get_update_strategy()
+                                
+                                if strategy == 'silent':
+                                    # 静默模式：直接安装
+                                    logger.info("静默模式，直接安装已下载的文件")
+                                    self.pending_update_file = str(latest_file)
+                                    # 设置标志为 True，表示安装后需要重新打开程序
+                                    self._restart_after_update = True
+                                    # 立即关闭程序并安装
+                                    self.close()
+                                    return
+                                elif strategy == 'prompt':
+                                    # 提示模式：弹窗询问用户是否立即重启
+                                    logger.info("提示模式，弹窗询问用户是否立即重启")
+                                    self._show_update_ready_dialog(str(latest_file))
+                                    return
+                        except Exception as e:
+                            logger.error(f"计算文件哈希失败: {e}")
+                            logger.info("无法验证文件，将重新检查更新")
+                    else:
+                        logger.warning("未找到缓存的版本信息或哈希值，无法验证文件")
+                        logger.info("将重新检查更新")
             
             # 检查是否应该自动检查更新
             if not self.update_manager.should_auto_check():
@@ -360,10 +444,9 @@ class MainWindow(QMainWindow):
             self.show_update_prompt_dialog(version_info, current_version)
         
         elif strategy == 'silent':
-            # 静默更新：后台下载
+            # 静默更新：后台下载，不显示任何提示
             logger.info("静默更新模式，开始后台下载...")
-            self.show_info("正在后台下载更新...", 3000)
-            self.update_manager.download_update(version_info)
+            self.start_download_update(version_info)
     
     def show_update_prompt_dialog(self, version_info, current_version):
         """显示更新提示对话框"""
@@ -396,25 +479,46 @@ class MainWindow(QMainWindow):
         
         logger.info(f"开始下载更新: {version_info.version}")
         
-        # 在右下角显示下载开始
-        self.download_progress_label.setText(f"正在下载更新 V{version_info.version}...")
-        self.download_progress_label.setVisible(True)
+        strategy = self.update_manager.get_update_strategy()
+        logger.info(f"更新策略: {strategy}")
+        
+        if strategy == 'silent':
+            # 静默模式：只显示绿色呼吸闪烁提示
+            logger.info("静默更新模式，显示呼吸闪烁提示")
+            logger.info(f"breathing_label 存在: {hasattr(self, 'breathing_label')}")
+            logger.info(f"breathing_label 对象: {self.breathing_label}")
+            self.breathing_label.setVisible(True)
+            self.download_progress_label.setVisible(False)
+            logger.info("已设置 breathing_label 可见")
+        else:
+            # 提示模式：显示下载进度
+            logger.info("提示更新模式，显示下载进度")
+            self.download_progress_label.setText(f"正在下载更新 V{version_info.version}...")
+            self.download_progress_label.setVisible(True)
+            self.breathing_label.setVisible(False)
         
         # 开始下载
         self.update_manager.download_update(version_info)
     
     def on_download_progress(self, downloaded, total):
         """下载进度更新"""
-        if total > 0:
-            progress = int((downloaded / total) * 100)
-            downloaded_mb = downloaded / (1024 * 1024)
-            total_mb = total / (1024 * 1024)
-            
-            # 在右下角显示下载进度
-            self.download_progress_label.setText(
-                f"下载更新: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress}%)"
-            )
-            self.download_progress_label.setVisible(True)
+        strategy = self.update_manager.get_update_strategy()
+        
+        if strategy == 'silent':
+            # 静默模式：不显示进度，只显示呼吸闪烁
+            pass
+        else:
+            # 提示模式：显示下载进度
+            if total > 0:
+                progress = int((downloaded / total) * 100)
+                downloaded_mb = downloaded / (1024 * 1024)
+                total_mb = total / (1024 * 1024)
+                
+                # 在右下角显示下载进度
+                self.download_progress_label.setText(
+                    f"下载更新: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress}%)"
+                )
+                self.download_progress_label.setVisible(True)
     
     def on_download_finished(self, success, result):
         """下载完成"""
@@ -429,7 +533,11 @@ class MainWindow(QMainWindow):
             strategy = self.update_manager.get_update_strategy()
             
             if strategy == 'prompt':
-                # 提示模式：显示下载完成消息，然后弹出重启对话框
+                # 提示模式：停止呼吸闪烁，隐藏呼吸标签
+                self.breathing_label.stop()
+                self.breathing_label.setVisible(False)
+                
+                # 显示下载完成消息，然后弹出重启对话框
                 self.show_success("更新下载完成", 2000)
                 
                 # 检查是否在开发环境
@@ -452,18 +560,25 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(500, self.show_update_complete_dialog)
             
             elif strategy == 'silent':
-                # 静默模式：保存文件路径，等待程序关闭时安装
+                # 静默模式：改为蓝色圆点，停止闪烁
+                self.breathing_label.set_color("#4a9eff", breathing=False)
+                # 保存文件路径，等待程序关闭时安装
                 self.pending_update_file = result
                 logger.info("静默更新已下载，将在程序关闭时安装")
-                self.show_success("更新已下载，将在下次启动时自动安装", 5000)
         
         else:
             logger.error(f"下载失败: {result}")
             
-            # 隐藏下载进度标签
+            # 隐藏下载进度标签和呼吸闪烁
             self.download_progress_label.setVisible(False)
+            self.breathing_label.stop()
+            self.breathing_label.setVisible(False)
             
-            self.show_error(f"下载更新失败: {result}", 5000)
+            strategy = self.update_manager.get_update_strategy()
+            
+            # 只在非 silent 模式下显示错误提示
+            if strategy != 'silent':
+                self.show_error(f"下载更新失败: {result}", 5000)
     
     def show_update_complete_dialog(self):
         """显示更新完成对话框"""
@@ -477,9 +592,47 @@ class MainWindow(QMainWindow):
         
         # 连接信号
         dialog.restart_now.connect(self.apply_update_and_restart)
-        dialog.restart_later.connect(lambda: logger.info("用户选择稍后重启"))
+        dialog.restart_later.connect(self._on_restart_later)
         
         dialog.exec_()
+    
+    def _on_restart_later(self):
+        """用户选择稍后重启"""
+        from query_tool.utils.logger import logger
+        
+        logger.info("用户选择稍后重启")
+        
+        # 保存下载的文件路径，等待程序关闭时安装
+        if self.update_manager and self.update_manager.downloaded_file_path:
+            self.pending_update_file = self.update_manager.downloaded_file_path
+            logger.info(f"已保存待安装文件: {self.pending_update_file}")
+    
+    def _show_update_ready_dialog(self, file_path):
+        """显示更新已准备好的对话框（启动时检测到已下载的文件）"""
+        from PyQt5.QtWidgets import QMessageBox
+        from query_tool.utils.logger import logger
+        
+        logger.info(f"显示更新已准备好对话框: {file_path}")
+        
+        # 设置更新管理器的下载文件路径
+        if self.update_manager:
+            self.update_manager.downloaded_file_path = file_path
+        
+        # 弹窗询问用户
+        reply = QMessageBox.question(
+            self,
+            "更新已准备好",
+            "检测到更新已下载完成，是否立即重启并安装？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        
+        if reply == QMessageBox.Yes:
+            logger.info("用户选择立即重启")
+            self.apply_update_and_restart()
+        else:
+            logger.info("用户选择稍后重启")
+            self._on_restart_later()
     
     def apply_update_and_restart(self):
         """应用更新并重启"""
@@ -506,11 +659,13 @@ class MainWindow(QMainWindow):
             
             logger.info(f"更新文件路径: {self.update_manager.downloaded_file_path}")
             
-            # 应用更新
-            self.update_manager.apply_update(restart=True)
+            # 设置标志，表示更新后需要重启程序
+            self._restart_after_update = True
+            self.pending_update_file = self.update_manager.downloaded_file_path
             
-            # 如果执行到这里，说明是开发环境或更新失败
-            logger.warning("更新未执行（可能是开发环境）")
+            # 关闭程序，触发 closeEvent 中的安装逻辑
+            logger.info("关闭程序以执行更新...")
+            self.close()
             
         except RuntimeError as e:
             # 开发环境错误（预期的）
