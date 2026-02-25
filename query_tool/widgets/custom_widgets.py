@@ -488,8 +488,6 @@ class SettingsDialog(QDialog):
     
     def create_log_tab(self):
         """创建日志配置标签页"""
-        from pathlib import Path
-        
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
         tab_layout.setSpacing(12)
@@ -500,16 +498,6 @@ class SettingsDialog(QDialog):
         self.file_log_checkbox.setChecked(self.enable_file_log)
         self.file_log_checkbox.stateChanged.connect(self.on_file_log_changed)
         tab_layout.addWidget(self.file_log_checkbox)
-        
-        # 获取实际的日志路径
-        user_home = Path.home()
-        log_dir = user_home / '.TPQueryTool' / 'logs'
-        
-        # 说明文本
-        desc_label = QLabel(f"启用后，所有调试信息将输出到 {log_dir} 下的日志文件中。")
-        desc_label.setStyleSheet("color: #909090; font-size: 11px;")
-        desc_label.setWordWrap(True)
-        tab_layout.addWidget(desc_label)
         
         tab_layout.addStretch()
         
