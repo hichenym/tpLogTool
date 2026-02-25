@@ -1,14 +1,14 @@
 {
-  "version": "3.1.0",
+  "version": "3.0.0",
   "build_date": "20260225",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.0/TPQueryTool.exe",
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.0.0/TPQueryTool.exe",
   "file_size_mb": 173.08,
-  "file_size_bytes": 181487439,
-  "file_hash": "7c57239ee29e8037568062be80fe7024c3073278a8779aea2ed1c46d33d8367d",
+  "file_size_bytes": 181489836,
+  "file_hash": "4a0dc761fde0eb1b4911a65db75b805a8383227f2841bb23102b7c741e3d7124",
   "hash_algorithm": "sha256",
-  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.0/TPQueryTool.exe.sha256",
-  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.1.0",
+  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.0.0/TPQueryTool.exe.sha256",
+  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.0.0",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": ["� GitHub Actions 自动发布","配置完整的 CI/CD 工作流","推送版本标签自动触发构建","自动打包 Windows 可执行文件","自动创建 GitHub Release","自动生成 version.json 供自动更新使用","从 version.py 自动提取更新日志到 Release 说明","📦 自动更新模块设计","完整的技术方案文档（三种主流方案对比）","静默更新实现指南（后台检测、下载、延迟替换）"]
+  "changelog": ["账号配置系统升级：运维账号和固件账号独立配置","自动更新功能：后台检测、下载、安装，支持静默/提示两种模式","文件哈希验证：确保下载文件完整性和安全性","固件查询Session超时优化：从2小时改为30分钟，提升稳定性","下载重试机制：10次重试，5秒间隔，提升网络不稳定环境下的成功率","界面优化：深色主题统一、状态栏实时显示、版本信息双击查看详情"]
 }
