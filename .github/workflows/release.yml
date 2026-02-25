@@ -111,6 +111,23 @@ jobs:
           echo "size_mb=$sizeMB" >> $env:GITHUB_OUTPUT
           Write-Host "File size: $sizeMB MB"
       
+      - name: Calculate file hash
+        id: filehash
+        shell: pwsh
+        run: |
+          $file = "dist/TPQueryTool.exe"
+          
+          # 计算 SHA256
+          $hash = Get-FileHash -Path $file -Algorithm SHA256
+          $sha256 = $hash.Hash.ToLower()
+          
+          echo "sha256=$sha256" >> $env:GITHUB_OUTPUT
+          Write-Host "SHA256: $sha256"
+          
+          # 生成校验和文件
+          "$sha256  TPQueryTool.exe" | Set-Content "dist/TPQueryTool.exe.sha256" -Encoding ASCII
+          Write-Host "Generated checksum file: TPQueryTool.exe.sha256"
+      
       - name: Extract changelog from version.py
         id: changelog
         shell: pwsh
@@ -166,6 +183,8 @@ jobs:
           $version = "${{ steps.version.outputs.version }}"
           $buildDate = Get-Date -Format "yyyyMMdd"
           $fileSize = "${{ steps.filesize.outputs.size_mb }}"
+          $fileSizeBytes = (Get-Item "dist/TPQueryTool.exe").Length
+          $sha256 = "${{ steps.filehash.outputs.sha256 }}"
           $tag = "${{ steps.version.outputs.tag }}"
           $repo = "${{ github.repository }}"
           
@@ -185,7 +204,7 @@ jobs:
           # 转换为 JSON
           $changelogJson = $changelogItems | ConvertTo-Json -Compress
           
-          # 生成 version.json（使用英文文件名）
+          # 生成 version.json（包含文件哈希）
           # update_strategy: manual(手动), prompt(提示), silent(静默)
           $versionJson = @"
           {
@@ -193,6 +212,10 @@ jobs:
             "build_date": "$buildDate",
             "download_url": "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe",
             "file_size_mb": $fileSize,
+            "file_size_bytes": $fileSizeBytes,
+            "file_hash": "$sha256",
+            "hash_algorithm": "sha256",
+            "checksum_url": "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256",
             "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
             "min_version": "3.0.0",
             "update_strategy": "prompt",
@@ -220,13 +243,29 @@ jobs:
           
           **编译日期**: $buildDate
           **文件大小**: $fileSize MB
+          **SHA256**: ``${{ steps.filehash.outputs.sha256 }}``
           
           ### 📦 下载
           
           > **注意**：由于 GitHub Release 对中文文件名支持有限，上传的文件名为 ``TPQueryTool.exe``，下载后请根据需要重命名为 ``查询工具.exe``
           
           - [**下载 TPQueryTool.exe**](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe) （下载后可重命名为 ``查询工具.exe``）
+          - [TPQueryTool.exe.sha256](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256) （SHA256 校验和文件）
           - [version.json](https://github.com/$repo/releases/download/$tag/version.json) （自动更新配置文件）
+          
+          ### 🔒 文件校验
+          
+          下载后可以验证文件完整性：
+          
+          ````powershell
+          # PowerShell
+          `$hash = (Get-FileHash -Algorithm SHA256 TPQueryTool.exe).Hash.ToLower()
+          if (`$hash -eq "${{ steps.filehash.outputs.sha256 }}") {
+              Write-Host "✓ 文件完整，校验通过"
+          } else {
+              Write-Host "✗ 文件可能已损坏或被篡改"
+          }
+          ````
           
           ### 📝 更新说明
           
@@ -272,6 +311,7 @@ jobs:
         with:
           files: |
             dist/TPQueryTool.exe
+            dist/TPQueryTool.exe.sha256
             version.json
           body_path: RELEASE_NOTES.md
           draft: false

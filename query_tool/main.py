@@ -31,7 +31,7 @@ from query_tool import pages
 
 # 导入工具和控件
 from query_tool.utils import config_manager
-from query_tool.widgets import ClickableLabel, SettingsDialog
+from query_tool.widgets import SettingsDialog
 
 # 禁用SSL警告
 requests.packages.urllib3.disable_warnings()
@@ -85,8 +85,9 @@ class MainWindow(QMainWindow):
         self.pages = []
         self.page_buttons = []
         
-        # 版本信息定时器
-        self.version_timer = None
+        # 更新管理器
+        self.update_manager = None
+        self.pending_update_file = None  # 待安装的更新文件
         
         self.init_ui()
         self.load_config()
@@ -94,6 +95,9 @@ class MainWindow(QMainWindow):
         
         # 设置深色标题栏（需要在窗口显示后调用）
         QTimer.singleShot(0, lambda: set_dark_title_bar(self))
+        
+        # 启动时检查更新
+        QTimer.singleShot(2000, self.check_update_on_startup)
     
     def init_ui(self):
         """初始化UI"""
@@ -167,19 +171,18 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         
-        # 状态消息标签（支持富文本）
+        # 状态消息标签（支持富文本）- 左侧
         from PyQt5.QtWidgets import QLabel
         self.status_label = QLabel("")
         self.status_label.setTextFormat(Qt.RichText)
         self.status_label.setStyleSheet("color: #e0e0e0; padding-left: 5px;")
         self.status_bar.addWidget(self.status_label, 1)
         
-        # 版本号标签
-        from query_tool.utils import StyleManager
-        self.version_label = ClickableLabel("  ")
-        self.version_label.setStyleSheet(StyleManager.VERSION_LABEL)
-        self.version_label.clicked = self.on_version_clicked
-        self.status_bar.addPermanentWidget(self.version_label)
+        # 下载进度标签 - 右侧
+        self.download_progress_label = QLabel("")
+        self.download_progress_label.setStyleSheet("color: #4a9eff; padding-right: 10px;")
+        self.download_progress_label.setVisible(False)  # 默认隐藏
+        self.status_bar.addPermanentWidget(self.download_progress_label)
         
         self.status_bar.showMessage("就绪")
         self.show_info("就绪")
@@ -257,22 +260,6 @@ class MainWindow(QMainWindow):
         msg_manager = MessageManager(self.status_label)
         msg_manager.show(message, MessageType.ERROR, duration)
     
-    def on_version_clicked(self):
-        """点击版本标签显示版本信息"""
-        self.version_label.setText(get_version_string())
-        
-        if self.version_timer:
-            self.version_timer.stop()
-        
-        self.version_timer = QTimer()
-        self.version_timer.setSingleShot(True)
-        self.version_timer.timeout.connect(self.hide_version)
-        self.version_timer.start(1000)
-    
-    def hide_version(self):
-        """隐藏版本信息"""
-        self.version_label.setText("  ")
-    
     def center_on_screen(self):
         """将窗口居中显示"""
         screen = QDesktopWidget().screenGeometry()
@@ -295,6 +282,17 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """窗口关闭事件"""
+        from query_tool.utils.logger import logger
+        
+        # 检查是否正在下载
+        if self.update_manager and hasattr(self.update_manager, 'downloader'):
+            if self.update_manager.downloader.download_thread and \
+               self.update_manager.downloader.download_thread.isRunning():
+                logger.info("检测到正在下载更新，取消下载...")
+                self.update_manager.cancel_download()
+                # 隐藏下载进度标签
+                self.download_progress_label.setVisible(False)
+        
         # 保存配置
         self.save_config()
         
@@ -303,7 +301,237 @@ class MainWindow(QMainWindow):
             if hasattr(page, 'cleanup'):
                 page.cleanup()
         
+        # 如果有待安装的更新（silent 策略），在关闭时安装
+        if self.pending_update_file:
+            try:
+                from query_tool.utils.update_downloader import UpdateInstaller
+                
+                logger.info("检测到待安装的更新，准备静默安装...")
+                UpdateInstaller.apply_update(self.pending_update_file, restart=True)
+                # 如果执行到这里说明更新失败，继续正常关闭
+            except Exception as e:
+                logger.error(f"静默更新失败: {e}")
+        
         event.accept()
+    
+    def check_update_on_startup(self):
+        """启动时检查更新"""
+        try:
+            from query_tool.utils.update_manager import UpdateManager
+            from query_tool.version import get_short_version
+            from query_tool.utils.logger import logger
+            
+            # 获取当前版本号（去掉 V 前缀）
+            current_version = get_short_version().replace('V', '')
+            
+            # 创建更新管理器
+            self.update_manager = UpdateManager(current_version, self)
+            
+            # 检查是否应该自动检查更新
+            if not self.update_manager.should_auto_check():
+                logger.info("更新策略为 manual，跳过自动检查")
+                return
+            
+            # 连接信号
+            self.update_manager.update_available.connect(self.on_update_available)
+            self.update_manager.download_progress.connect(self.on_download_progress)
+            self.update_manager.download_finished.connect(self.on_download_finished)
+            
+            # 异步检查更新
+            logger.info("开始检查更新...")
+            self.update_manager.check_update_async()
+            
+        except Exception as e:
+            from query_tool.utils.logger import logger
+            logger.error(f"检查更新失败: {e}")
+    
+    def on_update_available(self, version_info):
+        """发现新版本"""
+        from query_tool.utils.logger import logger
+        from query_tool.version import get_short_version
+        
+        logger.info(f"发现新版本: {version_info}")
+        
+        strategy = version_info.update_strategy
+        current_version = get_short_version().replace('V', '')
+        
+        if strategy == 'prompt':
+            # 提示更新：显示对话框
+            self.show_update_prompt_dialog(version_info, current_version)
+        
+        elif strategy == 'silent':
+            # 静默更新：后台下载
+            logger.info("静默更新模式，开始后台下载...")
+            self.show_info("正在后台下载更新...", 3000)
+            self.update_manager.download_update(version_info)
+    
+    def show_update_prompt_dialog(self, version_info, current_version):
+        """显示更新提示对话框"""
+        from query_tool.widgets.update_dialog import UpdatePromptDialog
+        from query_tool.utils.logger import logger
+        
+        dialog = UpdatePromptDialog(version_info, current_version, self)
+        
+        # 连接信号
+        dialog.update_now.connect(lambda: self.start_download_update(version_info))
+        dialog.remind_later.connect(lambda: logger.info("用户选择稍后提醒"))
+        dialog.skip_version.connect(lambda: self.on_skip_version(version_info))
+        
+        dialog.exec_()
+    
+    def on_skip_version(self, version_info):
+        """处理跳过版本"""
+        from query_tool.utils.logger import logger
+        
+        logger.info(f"用户跳过版本 {version_info.version}")
+        
+        # 记录跳过的版本
+        if self.update_manager:
+            self.update_manager.skip_version(version_info.version)
+            self.show_info(f"已跳过版本 V{version_info.version}，下次不再提示", 3000)
+    
+    def start_download_update(self, version_info):
+        """开始下载更新"""
+        from query_tool.utils.logger import logger
+        
+        logger.info(f"开始下载更新: {version_info.version}")
+        
+        # 在右下角显示下载开始
+        self.download_progress_label.setText(f"正在下载更新 V{version_info.version}...")
+        self.download_progress_label.setVisible(True)
+        
+        # 开始下载
+        self.update_manager.download_update(version_info)
+    
+    def on_download_progress(self, downloaded, total):
+        """下载进度更新"""
+        if total > 0:
+            progress = int((downloaded / total) * 100)
+            downloaded_mb = downloaded / (1024 * 1024)
+            total_mb = total / (1024 * 1024)
+            
+            # 在右下角显示下载进度
+            self.download_progress_label.setText(
+                f"下载更新: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress}%)"
+            )
+            self.download_progress_label.setVisible(True)
+    
+    def on_download_finished(self, success, result):
+        """下载完成"""
+        from query_tool.utils.logger import logger
+        
+        if success:
+            logger.info(f"下载完成: {result}")
+            
+            # 隐藏下载进度标签
+            self.download_progress_label.setVisible(False)
+            
+            strategy = self.update_manager.get_update_strategy()
+            
+            if strategy == 'prompt':
+                # 提示模式：显示下载完成消息，然后弹出重启对话框
+                self.show_success("更新下载完成", 2000)
+                
+                # 检查是否在开发环境
+                import sys
+                if not getattr(sys, 'frozen', False):
+                    # 开发环境，显示提示
+                    from PyQt5.QtWidgets import QMessageBox
+                    QMessageBox.information(
+                        self,
+                        "开发环境提示",
+                        "更新已下载完成。\n\n"
+                        "注意：自动更新功能仅在打包后的程序中可用。\n\n"
+                        "当前运行在开发环境，无法执行自动更新。\n"
+                        "如需测试更新功能，请使用以下命令打包：\n\n"
+                        "python scripts/build.py"
+                    )
+                    return
+                
+                # 延迟显示重启对话框，让用户看到成功消息
+                QTimer.singleShot(500, self.show_update_complete_dialog)
+            
+            elif strategy == 'silent':
+                # 静默模式：保存文件路径，等待程序关闭时安装
+                self.pending_update_file = result
+                logger.info("静默更新已下载，将在程序关闭时安装")
+                self.show_success("更新已下载，将在下次启动时自动安装", 5000)
+        
+        else:
+            logger.error(f"下载失败: {result}")
+            
+            # 隐藏下载进度标签
+            self.download_progress_label.setVisible(False)
+            
+            self.show_error(f"下载更新失败: {result}", 5000)
+    
+    def show_update_complete_dialog(self):
+        """显示更新完成对话框"""
+        from query_tool.widgets.update_dialog import UpdateCompleteDialog
+        from query_tool.utils.logger import logger
+        
+        if not self.update_manager.latest_version_info:
+            return
+        
+        dialog = UpdateCompleteDialog(self.update_manager.latest_version_info, self)
+        
+        # 连接信号
+        dialog.restart_now.connect(self.apply_update_and_restart)
+        dialog.restart_later.connect(lambda: logger.info("用户选择稍后重启"))
+        
+        dialog.exec_()
+    
+    def apply_update_and_restart(self):
+        """应用更新并重启"""
+        from query_tool.utils.logger import logger
+        from PyQt5.QtWidgets import QMessageBox
+        
+        try:
+            logger.info("用户选择立即重启，应用更新...")
+            
+            # 检查是否有下载的文件
+            if not self.update_manager.downloaded_file_path:
+                error_msg = "没有找到下载的更新文件"
+                logger.error(error_msg)
+                QMessageBox.warning(self, "更新失败", error_msg)
+                return
+            
+            # 检查文件是否存在
+            import os
+            if not os.path.exists(self.update_manager.downloaded_file_path):
+                error_msg = f"更新文件不存在: {self.update_manager.downloaded_file_path}"
+                logger.error(error_msg)
+                QMessageBox.warning(self, "更新失败", error_msg)
+                return
+            
+            logger.info(f"更新文件路径: {self.update_manager.downloaded_file_path}")
+            
+            # 应用更新
+            self.update_manager.apply_update(restart=True)
+            
+            # 如果执行到这里，说明是开发环境或更新失败
+            logger.warning("更新未执行（可能是开发环境）")
+            
+        except RuntimeError as e:
+            # 开发环境错误（预期的）
+            error_msg = str(e)
+            logger.warning(error_msg)
+            QMessageBox.information(
+                self,
+                "开发环境提示",
+                f"{error_msg}\n\n"
+                "自动更新功能仅在打包后的程序中可用。\n\n"
+                "如需测试更新功能，请使用以下命令打包：\n"
+                "python scripts/build.py"
+            )
+        except Exception as e:
+            logger.error(f"应用更新失败: {e}", exc_info=True)
+            QMessageBox.critical(
+                self, 
+                "更新失败", 
+                f"应用更新时发生错误：\n\n{str(e)}\n\n请查看日志文件获取详细信息。"
+            )
+            self.show_error(f"应用更新失败: {e}", 5000)
 
 
 def main():

@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QCheckBox, QFrame, QMessageBox, QTabWidget, QWidget,
     QScrollArea, QGroupBox
 )
-from PyQt5.QtCore import Qt, QTimer, QSize
+from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
 from PyQt5.QtGui import QCursor, QIcon
 from query_tool.utils.config import (
     get_account_config, save_account_config,
@@ -93,18 +93,22 @@ def show_question_box(parent, title, text):
     return msg_box.exec_()
 
 
-class ClickableLabel(QLabel):
-    """可点击的标签，用于显示版本信息"""
+class VersionLabel(QLabel):
+    """版本标签，支持双击显示详细信息"""
     def __init__(self, text, parent=None):
         super().__init__(text, parent)
-        self.setCursor(Qt.PointingHandCursor)  # 设置鼠标指针为手型
-        self.clicked = None  # 点击事件回调
+        self.double_clicked = None  # 双击事件回调
         
-    def mousePressEvent(self, event):
-        """鼠标点击事件"""
-        if event.button() == Qt.LeftButton and self.clicked:
-            self.clicked()
-        super().mousePressEvent(event)
+    def mouseDoubleClickEvent(self, event):
+        """鼠标双击事件"""
+        if event.button() == Qt.LeftButton and self.double_clicked:
+            self.double_clicked()
+        super().mouseDoubleClickEvent(event)
+
+
+class UpdateCheckSignals(QWidget):
+    """更新检查信号发射器"""
+    update_check_result = pyqtSignal(bool, object, str)  # (has_update, version_info, message)
 
 
 class PlainTextEdit(QTextEdit):
@@ -141,7 +145,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None, initial_tab=0):
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.setFixedSize(450, 400)
+        self.setFixedSize(500, 480)  # 增加宽度和高度
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         
         # 保存父窗口引用，用于显示消息
@@ -149,6 +153,10 @@ class SettingsDialog(QDialog):
         
         # 保存初始标签页索引
         self.initial_tab = initial_tab
+        
+        # 创建信号发射器
+        self.update_signals = UpdateCheckSignals()
+        self.update_signals.update_check_result.connect(self._on_update_check_result)
         
         # 加载设备账号配置
         self.env, self.device_username, self.device_password = get_account_config()
@@ -210,6 +218,10 @@ class SettingsDialog(QDialog):
         # 日志配置标签页
         log_tab = self.create_log_tab()
         self.tab_widget.addTab(log_tab, "日志配置")
+        
+        # 关于/更新标签页
+        about_tab = self.create_about_tab()
+        self.tab_widget.addTab(about_tab, "关于")
         
         layout.addWidget(self.tab_widget)
         
@@ -417,6 +429,215 @@ class SettingsDialog(QDialog):
         tab_layout.addStretch()
         
         return tab
+
+    def create_about_tab(self):
+        """创建关于/更新标签页"""
+        from query_tool.version import get_short_version, get_build_date_formatted
+
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setSpacing(15)
+        tab_layout.setContentsMargins(15, 15, 15, 10)
+
+        # 版本信息组
+        version_group = QGroupBox("版本信息")
+        version_group.setStyleSheet("""
+            QGroupBox {
+                color: #e0e0e0;
+                font-size: 12px;
+                font-weight: bold;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                margin-top: 10px;
+                margin-bottom: 15px;
+                padding-top: 15px;
+                background-color: transparent;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+
+        version_layout = QVBoxLayout(version_group)
+        version_layout.setSpacing(8)
+        version_layout.setContentsMargins(15, 15, 15, 15)
+
+        # 当前版本（双击显示详细信息）
+        self.current_version_label = VersionLabel(f"当前版本：{get_short_version()}")
+        self.current_version_label.setStyleSheet("color: #e0e0e0;")
+        self.current_version_label.double_clicked = self.on_version_double_click
+        
+        # 保存版本信息用于切换显示
+        self.short_version = get_short_version()
+        self.build_date = get_build_date_formatted()
+        self.show_detail = False
+        
+        version_layout.addWidget(self.current_version_label)
+
+        tab_layout.addWidget(version_group)
+
+        # 更新检测组
+        update_group = QGroupBox("更新检测")
+        update_group.setStyleSheet("""
+            QGroupBox {
+                color: #e0e0e0;
+                font-size: 12px;
+                font-weight: bold;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                margin-top: 10px;
+                margin-bottom: 15px;
+                padding-top: 15px;
+                background-color: transparent;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+
+        update_layout = QVBoxLayout(update_group)
+        update_layout.setSpacing(12)
+        update_layout.setContentsMargins(15, 15, 15, 15)
+
+        # 检查更新按钮
+        self.check_update_btn_widget = QPushButton("检查更新")
+        self.check_update_btn_widget.setFixedSize(120, 32)
+        self.check_update_btn_widget.clicked.connect(self.on_check_update)
+        update_layout.addWidget(self.check_update_btn_widget)
+
+        tab_layout.addWidget(update_group)
+
+        tab_layout.addStretch()
+
+        return tab
+    
+    def on_version_double_click(self):
+        """双击版本号切换显示详细信息"""
+        self.show_detail = not self.show_detail
+        
+        if self.show_detail:
+            # 显示详细信息：Vx.x.x (yyyyMMdd)
+            # 从 "2026-02-24" 格式转换为 "20260224" 格式
+            build_date_short = self.build_date.replace('-', '')
+            self.current_version_label.setText(f"当前版本：{self.short_version} ({build_date_short})")
+        else:
+            # 只显示版本号
+            self.current_version_label.setText(f"当前版本：{self.short_version}")
+
+    def on_check_update(self):
+        """检查更新"""
+        from PyQt5.QtWidgets import QApplication
+        from query_tool.version import get_short_version
+        from query_tool.utils.update_checker import UpdateChecker
+        from query_tool.utils.logger import logger
+
+        logger.info("用户点击检查更新按钮")
+
+        # 禁用按钮
+        if hasattr(self, 'check_update_btn_widget'):
+            self.check_update_btn_widget.setEnabled(False)
+            self.check_update_btn_widget.setText("检查中...")
+            logger.info("按钮已禁用，显示'检查中...'")
+
+        # 禁用保存和取消按钮
+        self.save_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
+
+        # 强制刷新UI
+        QApplication.processEvents()
+
+        try:
+            # 获取当前版本（去掉V前缀）
+            current_version = get_short_version().replace('V', '')
+            logger.info(f"当前版本: {current_version}")
+
+            # 创建更新检查器
+            self.update_checker_temp = UpdateChecker(current_version)
+            logger.info("更新检查器已创建")
+            
+            # 异步检查（强制刷新，忽略缓存）
+            def callback(has_update, version_info, message):
+                logger.info(f"检查更新回调: has_update={has_update}, message={message}")
+                # 使用信号在主线程中处理结果
+                self.update_signals.update_check_result.emit(has_update, version_info, message)
+            
+            logger.info("启动异步检查更新（强制刷新）")
+            self.update_checker_temp.check_update_async_force_refresh(callback)
+
+        except Exception as e:
+            # 检查失败
+            logger.error(f"检查更新失败: {e}", exc_info=True)
+
+            if self.main_window and hasattr(self.main_window, 'show_error'):
+                self.main_window.show_error(f"检查更新失败：{str(e)}")
+            else:
+                logger.error(f"无法显示错误消息: main_window={self.main_window}")
+            
+            self._restore_buttons()
+    
+    def _on_update_check_result(self, has_update, version_info, message):
+        """处理更新检查结果"""
+        from query_tool.version import get_short_version
+        from query_tool.utils.logger import logger
+        
+        logger.info(f"处理更新检查结果: has_update={has_update}, message={message}")
+        
+        try:
+            if has_update:
+                # 有新版本，显示更新提示对话框
+                current_version = get_short_version().replace('V', '')
+                logger.info(f"发现新版本: {version_info.version}")
+                
+                if self.main_window:
+                    if hasattr(self.main_window, 'show_update_prompt_dialog'):
+                        logger.info("调用 show_update_prompt_dialog")
+                        self.main_window.show_update_prompt_dialog(version_info, current_version)
+                    else:
+                        logger.error("main_window 没有 show_update_prompt_dialog 方法")
+                else:
+                    logger.error("main_window 为 None")
+            else:
+                # 已是最新版本
+                logger.info(f"检查结果: {message}")
+                
+                if self.main_window:
+                    if hasattr(self.main_window, 'show_success'):
+                        logger.info("调用 show_success")
+                        self.main_window.show_success("已是最新版本")
+                    else:
+                        logger.error("main_window 没有 show_success 方法")
+                else:
+                    logger.error("main_window 为 None")
+        except Exception as e:
+            logger.error(f"处理更新检查结果失败: {e}", exc_info=True)
+        finally:
+            self._restore_buttons()
+    
+    def _restore_buttons(self):
+        """恢复按钮状态"""
+        if hasattr(self, 'check_update_btn_widget'):
+            self.check_update_btn_widget.setEnabled(True)
+            self.check_update_btn_widget.setText("检查更新")
+        
+        self.save_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(True)
+
+
+    def _format_date(self, date_str: str) -> str:
+        """格式化日期"""
+        try:
+            if len(date_str) == 8:
+                return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+            return date_str
+        except:
+            return date_str
+
     
     def on_file_log_changed(self, state):
         """文件日志复选框状态改变"""

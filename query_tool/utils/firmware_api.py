@@ -13,8 +13,8 @@ LOGIN_URL = "https://update.seetong.com/admin/auth/login"
 # 固件列表页面基础URL
 FIRMWARE_BASE_URL = "https://update.seetong.com/admin/update/debug-firmware"
 
-# Session 有效期（秒）- 默认2小时
-SESSION_EXPIRE_TIME = 7200
+# Session 有效期（秒）- 缩短为 30 分钟，避免长时间使用导致失效
+SESSION_EXPIRE_TIME = 1800
 
 # 全局 session 缓存
 _cached_session = None
@@ -138,9 +138,31 @@ def is_session_valid(session):
     
     try:
         # 尝试访问一个需要登录的页面
-        response = session.get(FIRMWARE_BASE_URL, timeout=5)
-        # 如果返回200且不是登录页面，说明session有效
-        return response.status_code == 200 and 'login' not in response.url.lower()
+        response = session.get(FIRMWARE_BASE_URL, timeout=10)
+        
+        # 检查多种失效情况
+        if response.status_code != 200:
+            logger.debug(f"Session 验证失败: HTTP {response.status_code}")
+            return False
+        
+        # 检查是否重定向到登录页
+        if 'login' in response.url.lower():
+            logger.debug("Session 已失效: 重定向到登录页")
+            return False
+        
+        # 检查页面内容是否包含登录表单
+        if 'name="username"' in response.text or 'name="password"' in response.text:
+            logger.debug("Session 已失效: 页面包含登录表单")
+            return False
+        
+        # 检查是否包含固件列表的特征元素
+        if 'column-device_identify' not in response.text and 'table' not in response.text:
+            logger.debug("Session 可能已失效: 页面不包含预期内容")
+            return False
+        
+        logger.debug("Session 验证成功")
+        return True
+        
     except Exception as e:
         logger.debug(f"检查session有效性失败: {e}")
         return False
@@ -158,7 +180,7 @@ def login(force_new=False):
     
     # 检查账号密码是否配置
     if not USERNAME or not PASSWORD:
-        print("固件账号未配置，请在设置页面配置固件账号")
+        logger.warning("固件账号未配置，请在设置页面配置固件账号")
         # 清除缓存的 session
         _cached_session = None
         _session_timestamp = None
@@ -167,25 +189,39 @@ def login(force_new=False):
         return None
     
     # 如果不强制创建新session，先尝试使用内存缓存
-    if not force_new and _cached_session is not None:
+    if not force_new and _cached_session is not None and _session_timestamp is not None:
         # 检查内存缓存是否过期
-        if _session_timestamp and time.time() - _session_timestamp < SESSION_EXPIRE_TIME:
+        time_elapsed = time.time() - _session_timestamp
+        if time_elapsed < SESSION_EXPIRE_TIME:
+            logger.debug(f"尝试使用内存缓存的 session (已使用 {int(time_elapsed)} 秒)")
             if is_session_valid(_cached_session):
+                logger.debug("内存缓存的 session 有效")
                 return _cached_session
+            else:
+                logger.debug("内存缓存的 session 已失效")
+                # 清除失效的缓存
+                _cached_session = None
+                _session_timestamp = None
     
     # 内存缓存失效，尝试从注册表加载
     if not force_new:
+        logger.debug("尝试从注册表加载 session")
         session = load_session_from_registry()
         if session and is_session_valid(session):
+            logger.debug("注册表中的 session 有效")
             _cached_session = session
             _session_timestamp = time.time()
             return session
+        else:
+            logger.debug("注册表中的 session 无效或不存在")
     
     # 创建新session
+    logger.info("创建新的固件 session")
     session = SessionManager().get_session('firmware')
     
     token = get_csrf_token(session)
     if not token:
+        logger.error("无法获取 CSRF token")
         return None
     
     payload = {
@@ -194,16 +230,27 @@ def login(force_new=False):
         "_token": token
     }
     
-    response = session.post(LOGIN_URL, data=payload, allow_redirects=False)
-    
-    if response.status_code in [200, 302]:
-        # 缓存到内存
-        _cached_session = session
-        _session_timestamp = time.time()
-        # 保存到注册表
-        save_session_to_registry(session)
-        return session
-    else:
+    try:
+        response = session.post(LOGIN_URL, data=payload, allow_redirects=False, timeout=10)
+        
+        if response.status_code in [200, 302]:
+            # 验证登录是否成功
+            if is_session_valid(session):
+                logger.info("固件账号登录成功")
+                # 缓存到内存
+                _cached_session = session
+                _session_timestamp = time.time()
+                # 保存到注册表
+                save_session_to_registry(session)
+                return session
+            else:
+                logger.error("登录响应成功但 session 验证失败，可能是账号密码错误")
+                return None
+        else:
+            logger.error(f"登录失败: HTTP {response.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"登录请求异常: {e}")
         return None
 
 
@@ -461,47 +508,66 @@ def fetch_firmware_data(create_user='cur', device_identify='', audit_result='', 
     Returns:
         tuple: (firmware_list, total_count, total_pages)
     """
-    # 登录（会自动复用已有session）
-    session = login()
-    if not session:
-        return None, 0, 0
+    max_retries = 2  # 最多重试2次
     
-    # 构建URL参数（移除_pjax参数以获取完整HTML）
-    params = {
-        'device_identify': device_identify,
-        'device_sn': '',
-        'audit_result': audit_result,
-        'create_comment': '',
-        'create_user': create_user,
-        'per_page': per_page,
-        'page': page
-    }
-    
-    try:
-        response = session.get(FIRMWARE_BASE_URL, params=params)
+    for attempt in range(max_retries):
+        # 登录（会自动复用已有session）
+        force_new = (attempt > 0)  # 第一次尝试复用，失败后强制新建
+        session = login(force_new=force_new)
         
-        # 如果返回的是登录页面，说明session失效，需要重新登录
-        if 'login' in response.url.lower() or response.status_code == 401:
-            print("Session 失效，重新登录...")
-            session = login(force_new=True)
-            if not session:
+        if not session:
+            logger.error(f"登录失败 (尝试 {attempt + 1}/{max_retries})")
+            if attempt == max_retries - 1:
                 return None, 0, 0
-            response = session.get(FIRMWARE_BASE_URL, params=params)
+            continue
         
-        if response.status_code == 200:
+        # 构建URL参数（移除_pjax参数以获取完整HTML）
+        params = {
+            'device_identify': device_identify,
+            'device_sn': '',
+            'audit_result': audit_result,
+            'create_comment': '',
+            'create_user': create_user,
+            'per_page': per_page,
+            'page': page
+        }
+        
+        try:
+            response = session.get(FIRMWARE_BASE_URL, params=params, timeout=15)
+            
+            # 检查响应状态
+            if response.status_code != 200:
+                logger.warning(f"页面访问失败: HTTP {response.status_code} (尝试 {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    continue
+                return None, 0, 0
+            
+            # 检查是否被重定向到登录页
+            if 'login' in response.url.lower():
+                logger.warning(f"Session 失效，被重定向到登录页 (尝试 {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    # 清除缓存，下次循环会强制重新登录
+                    global _cached_session, _session_timestamp
+                    _cached_session = None
+                    _session_timestamp = None
+                    continue
+                return None, 0, 0
+            
             # 解析分页信息
             total_count, total_pages = parse_pagination_info(response.text)
             
             # 解析数据
             firmware_list = parse_firmware_data(response.text)
             
+            logger.info(f"成功获取固件数据: {len(firmware_list)} 条记录")
             return firmware_list, total_count, total_pages
-        else:
-            print(f"✗ 页面访问失败: {response.status_code}")
-            return None, 0, 0
-            
-    except Exception as e:
-        return None, 0, 0
+                
+        except Exception as e:
+            logger.error(f"获取固件数据异常 (尝试 {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                return None, 0, 0
+    
+    return None, 0, 0
 
 
 def delete_firmware(firmware_id):

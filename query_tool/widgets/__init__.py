@@ -3,7 +3,7 @@
 提供项目中使用的自定义Qt控件
 """
 from .custom_widgets import (
-    ClickableLabel,
+    VersionLabel,
     PlainTextEdit,
     ClickableLineEdit,
     SettingsDialog,
@@ -18,7 +18,7 @@ from .batch_upgrade_dialog import BatchUpgradeDialog
 from .port_mapping_dialog import PortMappingDialog
 
 __all__ = [
-    'ClickableLabel',
+    'VersionLabel',
     'PlainTextEdit',
     'ClickableLineEdit',
     'SettingsDialog',
