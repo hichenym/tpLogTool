@@ -218,7 +218,7 @@ jobs:
             "checksum_url": "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256",
             "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
             "min_version": "3.0.0",
-            "update_strategy": "prompt",
+            "update_strategy": "silent",
             "changelog": $changelogJson
           }
           "@
