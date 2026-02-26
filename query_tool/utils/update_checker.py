@@ -27,7 +27,32 @@ class VersionInfo:
         self.release_notes_url = data.get('release_notes_url', '')
         self.min_version = data.get('min_version')
         self.update_strategy = data.get('update_strategy', 'prompt')
-        self.changelog = data.get('changelog', [])
+        # 兼容远程返回的 changelog 可能为字符串或列表。
+        # 需要保证 self.changelog 为字符串列表，UI 侧按条目展示。
+        changelog = data.get('changelog', [])
+        if isinstance(changelog, str):
+            # 按行拆分，忽略空行并去除首尾空白
+            lines = [line.strip() for line in changelog.splitlines()]
+            self.changelog = [ln for ln in lines if ln]
+        elif isinstance(changelog, list):
+            # 确保每个元素为字符串，去除空元素并做 strip
+            processed = []
+            for item in changelog:
+                try:
+                    s = str(item).strip()
+                    if s:
+                        processed.append(s)
+                except Exception:
+                    continue
+            self.changelog = processed
+        else:
+            # 兜底：将其转换为字符串并按行拆分
+            try:
+                s = str(changelog)
+                lines = [line.strip() for line in s.splitlines()]
+                self.changelog = [ln for ln in lines if ln]
+            except Exception:
+                self.changelog = []
     
     def __str__(self):
         return f"V{self.version} ({self.build_date})"

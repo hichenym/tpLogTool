@@ -55,12 +55,12 @@ class SessionManager:
                     allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
                 )
                 
-                # 配置适配器
+                # 配置适配器 - 增加连接池大小以避免连接耗尽
                 adapter = HTTPAdapter(
                     max_retries=retry_strategy,
                     pool_connections=pool_connections,
                     pool_maxsize=pool_maxsize,
-                    pool_block=False
+                    pool_block=False  # 不阻塞，避免连接池满时的死锁
                 )
                 
                 session.mount("http://", adapter)
@@ -86,20 +86,31 @@ class SessionManager:
         """关闭指定Session"""
         with self._sessions_lock:
             if key in self._sessions:
-                self._sessions[key].close()
-                del self._sessions[key]
-                logger.debug(f"关闭Session: {key}")
+                try:
+                    self._sessions[key].close()
+                except Exception as e:
+                    logger.debug(f"关闭Session异常 {key}: {e}")
+                finally:
+                    del self._sessions[key]
+                    logger.debug(f"关闭Session: {key}")
     
     def close_all(self):
         """关闭所有Session"""
         with self._sessions_lock:
-            for key, session in self._sessions.items():
+            for key in list(self._sessions.keys()):
                 try:
-                    session.close()
+                    self._sessions[key].close()
                     logger.debug(f"关闭Session: {key}")
                 except Exception as e:
                     logger.error(f"关闭Session失败 {key}: {e}")
-            self._sessions.clear()
+                finally:
+                    del self._sessions[key]
+    
+    def reset_session(self, key='default'):
+        """重置指定Session（关闭并重新创建）"""
+        self.close_session(key)
+        # 下次调用 get_session 时会创建新的
+        logger.debug(f"已重置Session: {key}")
 
 
 # 全局Session管理器实例

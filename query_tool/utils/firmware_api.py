@@ -16,6 +16,10 @@ FIRMWARE_BASE_URL = "https://update.seetong.com/admin/update/debug-firmware"
 # Session 有效期（秒）- 缩短为 30 分钟，避免长时间使用导致失效
 SESSION_EXPIRE_TIME = 1800
 
+# Session 连接池重置周期（秒）- 每 2 小时重置一次，避免连接泄漏
+SESSION_RESET_INTERVAL = 7200
+_last_session_reset_time = None
+
 # 全局 session 缓存
 _cached_session = None
 _session_timestamp = None
@@ -112,20 +116,57 @@ def load_session_from_registry():
 def get_csrf_token(session):
     """获取登录页面的 CSRF token"""
     try:
-        response = session.get(LOGIN_PAGE_URL, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            token_input = soup.find('input', {'name': '_token'})
-            if token_input:
-                token = token_input.get('value')
-                if token:
-                    return token
-                else:
-                    logger.warning("找到_token输入框但值为空")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Referer": LOGIN_PAGE_URL
+        }
+        response = session.get(LOGIN_PAGE_URL, timeout=10, headers=headers)
+        # 日志响应摘要，避免日志过大
+        try:
+            logger.debug(f"GET {LOGIN_PAGE_URL} -> {response.status_code} {response.url}")
+            try:
+                body = response.text
+            except Exception:
+                body = "<无法解码响应正文>"
+
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                # 1) 优先查找隐藏 input[name="_token"]
+                token_input = soup.find('input', {'name': '_token'})
+                if token_input:
+                    token = token_input.get('value')
+                    if token:
+                        return token
+                    else:
+                        logger.warning("找到_token输入框但值为空")
+
+                # 2) 尝试从 meta[name="csrf-token"] 获取
+                token_meta = soup.find('meta', {'name': 'csrf-token'})
+                if token_meta:
+                    token = token_meta.get('content')
+                    if token:
+                        return token
+
+                # 3) 从脚本中提取常见的 JS 变量（如 LA.token, window.Laravel.csrfToken 等）
+                import re
+                m = re.search(r'LA\.token\s*=\s*["\']([^"\']+)["\']', response.text)
+                if not m:
+                    m = re.search(r'window\.Laravel\s*=\s*\{[^}]*["\']csrfToken["\']\s*:\s*["\']([^"\']+)["\']', response.text)
+                if not m:
+                    m = re.search(r'csrfToken\s*[:=]\s*["\']([^"\']+)["\']', response.text)
+                if m:
+                    return m.group(1)
+
+                logger.warning("页面中未找到_token输入框或其它可用的 CSRF token 来源")
             else:
-                logger.warning("页面中未找到_token输入框")
-        else:
-            logger.warning(f"获取登录页面失败: HTTP {response.status_code}")
+                logger.warning(f"获取登录页面失败: HTTP {response.status_code}")
+        finally:
+            # 确保响应被正确释放
+            try:
+                response.close()
+            except Exception:
+                pass
         return None
     except Exception as e:
         logger.error(f"获取CSRF token异常: {e}")
@@ -140,28 +181,32 @@ def is_session_valid(session):
         # 尝试访问一个需要登录的页面
         response = session.get(FIRMWARE_BASE_URL, timeout=10)
         
-        # 检查多种失效情况
-        if response.status_code != 200:
-            logger.debug(f"Session 验证失败: HTTP {response.status_code}")
-            return False
-        
-        # 检查是否重定向到登录页
-        if 'login' in response.url.lower():
-            logger.debug("Session 已失效: 重定向到登录页")
-            return False
-        
-        # 检查页面内容是否包含登录表单
-        if 'name="username"' in response.text or 'name="password"' in response.text:
-            logger.debug("Session 已失效: 页面包含登录表单")
-            return False
-        
-        # 检查是否包含固件列表的特征元素
-        if 'column-device_identify' not in response.text and 'table' not in response.text:
-            logger.debug("Session 可能已失效: 页面不包含预期内容")
-            return False
-        
-        logger.debug("Session 验证成功")
-        return True
+        try:
+            # 检查多种失效情况
+            if response.status_code != 200:
+                logger.debug(f"Session 验证失败: HTTP {response.status_code}")
+                return False
+            
+            # 检查是否重定向到登录页
+            if 'login' in response.url.lower():
+                logger.debug("Session 已失效: 重定向到登录页")
+                return False
+            
+            # 检查页面内容是否包含登录表单
+            if 'name="username"' in response.text or 'name="password"' in response.text:
+                logger.debug("Session 已失效: 页面包含登录表单")
+                return False
+            
+            # 检查是否包含固件列表的特征元素
+            if 'column-device_identify' not in response.text and 'table' not in response.text:
+                logger.debug("Session 可能已失效: 页面不包含预期内容")
+                return False
+            
+            logger.debug("Session 验证成功")
+            return True
+        finally:
+            # 确保响应被正确释放
+            response.close()
         
     except Exception as e:
         logger.debug(f"检查session有效性失败: {e}")
@@ -173,7 +218,15 @@ def login(force_new=False):
     Args:
         force_new: 是否强制创建新session（默认False，会尝试复用已有session）
     """
-    global _cached_session, _session_timestamp
+    global _cached_session, _session_timestamp, _last_session_reset_time
+    
+    # 定期重置 session 连接池，避免连接泄漏
+    current_time = time.time()
+    if _last_session_reset_time is None or (current_time - _last_session_reset_time) > SESSION_RESET_INTERVAL:
+        logger.debug("执行定期 session 连接池重置")
+        SessionManager().reset_session('firmware')
+        _last_session_reset_time = current_time
+        force_new = True  # 强制创建新 session
     
     # 获取账号密码
     USERNAME, PASSWORD = get_firmware_credentials()
@@ -230,6 +283,7 @@ def login(force_new=False):
         "_token": token
     }
     
+    response = None
     try:
         response = session.post(LOGIN_URL, data=payload, allow_redirects=False, timeout=10)
         
@@ -252,6 +306,13 @@ def login(force_new=False):
     except Exception as e:
         logger.error(f"登录请求异常: {e}")
         return None
+    finally:
+        # 确保响应被正确释放
+        if response is not None:
+            try:
+                response.close()
+            except Exception as e:
+                logger.debug(f"关闭响应失败: {e}")
 
 
 def clear_session_cache():
@@ -532,6 +593,7 @@ def fetch_firmware_data(create_user='cur', device_identify='', audit_result='', 
             'page': page
         }
         
+        response = None
         try:
             response = session.get(FIRMWARE_BASE_URL, params=params, timeout=15)
             
@@ -546,10 +608,11 @@ def fetch_firmware_data(create_user='cur', device_identify='', audit_result='', 
             if 'login' in response.url.lower():
                 logger.warning(f"Session 失效，被重定向到登录页 (尝试 {attempt + 1}/{max_retries})")
                 if attempt < max_retries - 1:
-                    # 清除缓存，下次循环会强制重新登录
+                    # 清除缓存（内存和注册表），下次循环会强制重新登录
                     global _cached_session, _session_timestamp
                     _cached_session = None
                     _session_timestamp = None
+                    clear_session_cache()  # 同时清除注册表缓存
                     continue
                 return None, 0, 0
             
@@ -566,6 +629,13 @@ def fetch_firmware_data(create_user='cur', device_identify='', audit_result='', 
             logger.error(f"获取固件数据异常 (尝试 {attempt + 1}/{max_retries}): {e}")
             if attempt == max_retries - 1:
                 return None, 0, 0
+        finally:
+            # 确保响应被正确释放
+            if response is not None:
+                try:
+                    response.close()
+                except Exception as e:
+                    logger.debug(f"关闭响应失败: {e}")
     
     return None, 0, 0
 

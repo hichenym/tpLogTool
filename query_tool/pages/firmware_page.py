@@ -772,14 +772,38 @@ class FirmwarePage(BasePage):
         # 清空当前数据
         self.result_table.setRowCount(0)
         
-        # 清理旧的查询线程
+        # 清理旧的查询线程（更健壮的检查，避免访问已被删除的 C++ 对象）
         if hasattr(self, '_query_thread') and self._query_thread:
             try:
-                self._query_thread.quit()
-                self._query_thread.wait(timeout=2000)
-            except Exception as e:
-                from query_tool.utils.logger import logger
-                logger.debug(f"清理查询线程失败: {e}")
+                # 有时底层 C++ 对象已被 deleteLater 删除，调用方法会抛出 RuntimeError
+                # 先检查 isRunning 并在 try/except 中安全调用 quit()/wait()
+                is_running = False
+                try:
+                    is_running = bool(self._query_thread.isRunning())
+                except RuntimeError:
+                    # 对象已被删除，直接清理引用
+                    from query_tool.utils.logger import logger
+                    logger.debug("清理查询线程时发现对象已被删除")
+                    self._query_thread = None
+                    is_running = False
+
+                if is_running:
+                    try:
+                        self._query_thread.quit()
+                        self._query_thread.wait(timeout=2000)
+                    except RuntimeError as e:
+                        from query_tool.utils.logger import logger
+                        logger.debug(f"清理查询线程失败（已删除）: {e}")
+                    except Exception as e:
+                        from query_tool.utils.logger import logger
+                        logger.debug(f"清理查询线程失败: {e}")
+
+            finally:
+                # 无论如何都不要保留对已删除或已停止线程的引用
+                try:
+                    self._query_thread = None
+                except Exception:
+                    self._query_thread = None
         
         # 启动查询线程，传递create_user、device_identify、audit_result和page参数
         query_thread = FirmwareQueryThread(
