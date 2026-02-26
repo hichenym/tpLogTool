@@ -1,14 +1,14 @@
 {
-  "version": "3.0.1",
-  "build_date": "20260225",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.0.1/TPQueryTool.exe",
+  "version": "3.0.2",
+  "build_date": "20260226",
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.0.2/TPQueryTool.exe",
   "file_size_mb": 173.08,
-  "file_size_bytes": 181490488,
-  "file_hash": "66bc8ab7a4e9c3eb6a7fcababa2f4b46d95a5a8582bd03f495a65216b7cc959e",
+  "file_size_bytes": 181492299,
+  "file_hash": "f54d80be562baa1e408eb2919d10def32b779363c9a623fa21da5d858375b4a6",
   "hash_algorithm": "sha256",
-  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.0.1/TPQueryTool.exe.sha256",
-  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.0.1",
+  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.0.2/TPQueryTool.exe.sha256",
+  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.0.2",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": "修复已知问题"
+  "changelog": "修复固件信息查询失败问题"
 }
