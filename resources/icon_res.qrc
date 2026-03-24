@@ -38,5 +38,9 @@
 	<file>icons/gitlab/disconnect.png</file>
 	<file>icons/gitlab/browser.png</file>
 	<file>icons/gitlab/export.png</file>
+	
+	<!-- 数据采集 -->
+	<file>battery.png</file>
+	<file>collect.png</file>
 </qresource>
 </RCC>

@@ -418,6 +418,13 @@ class DeviceStatusPage(BasePage):
         self.batch_upgrade_btn.setEnabled(False)
         self.batch_upgrade_btn.clicked.connect(self.on_batch_upgrade)
         
+        self.batch_collect_btn = QPushButton("批量采集")
+        self.batch_collect_btn.setIcon(QIcon(":/collect.png"))
+        self.batch_collect_btn.setIconSize(QSize(16, 16))
+        self.batch_collect_btn.setFixedSize(100, 28)
+        self.batch_collect_btn.setEnabled(False)
+        self.batch_collect_btn.clicked.connect(self.on_batch_collect)
+        
         # 提示文本
         result_tip = QLabel("提示: 双击单元格可复制内容，右击设备行展开操作")
         result_tip.setStyleSheet("color: #909090; font-size: 11px; border: none;")
@@ -426,6 +433,7 @@ class DeviceStatusPage(BasePage):
         batch_layout.addWidget(self.batch_wake_btn)
         batch_layout.addWidget(self.batch_reboot_btn)
         batch_layout.addWidget(self.batch_upgrade_btn)
+        batch_layout.addWidget(self.batch_collect_btn)
         batch_layout.addStretch()
         batch_layout.addWidget(result_tip)  # 添加提示到右侧
         group_layout.addWidget(batch_frame)
@@ -534,7 +542,8 @@ class DeviceStatusPage(BasePage):
         self.main_buttons = self.btn_manager.create_group("main")
         self.main_buttons.add(
             self.query_btn, self.clear_btn, self.phone_query_btn, self.batch_wake_btn,
-            self.batch_reboot_btn, self.batch_upgrade_btn, self.select_all_checkbox, self.export_btn
+            self.batch_reboot_btn, self.batch_upgrade_btn, self.batch_collect_btn, 
+            self.select_all_checkbox, self.export_btn
         )
         
         return group
@@ -757,6 +766,29 @@ class DeviceStatusPage(BasePage):
         port_mapping_action.triggered.connect(lambda: self.on_port_mapping_single(row))
         menu.addAction(port_mapping_action)
         
+        # 添加分隔符
+        menu.addSeparator()
+        
+        # 数据采集子菜单
+        collect_menu = QMenu("数据采集", self)
+        collect_menu.setIcon(QIcon(":/collect.png"))
+        collect_menu.setStyleSheet(menu.styleSheet())
+        
+        # 动态生成采集类型菜单项
+        from query_tool.utils.data_collect_api import get_enabled_collect_types
+        collect_types = get_enabled_collect_types()
+        
+        for type_id, type_info in collect_types.items():
+            action = QAction(type_info['name'], self)
+            if type_info.get('icon'):
+                action.setIcon(QIcon(type_info['icon']))
+            action.triggered.connect(
+                lambda checked, tid=type_id, r=row: self.on_collect_single(r, tid)
+            )
+            collect_menu.addAction(action)
+        
+        menu.addMenu(collect_menu)
+        
         # 显示菜单
         menu.exec_(self.result_table.viewport().mapToGlobal(pos))
     
@@ -881,6 +913,35 @@ class DeviceStatusPage(BasePage):
         from query_tool.widgets import PortMappingDialog
         dialog = PortMappingDialog(sn, dev_id, device_name, device_query, self)
         dialog.exec_()
+    
+    def on_collect_single(self, row, collect_type_id):
+        """单设备数据采集"""
+        # 获取设备信息
+        device_name_item = self.result_table.item(row, 1)
+        model_item = self.result_table.item(row, 2)
+        sn_item = self.result_table.item(row, 3)
+        id_item = self.result_table.item(row, 4)
+        
+        if not all([device_name_item, model_item, sn_item, id_item]):
+            self.show_warning("无法获取设备信息")
+            return
+        
+        device_name = device_name_item.text()
+        model = model_item.text()
+        sn = sn_item.text()
+        dev_id = id_item.text()
+        
+        # 获取复用的DeviceQuery对象
+        env, username, password = get_account_config()
+        device_query = self.ensure_device_query(env, username, password)
+        
+        # 根据采集类型打开对应对话框
+        if collect_type_id == 'battery':
+            from query_tool.widgets.battery_collect_dialog import BatteryCollectDialog
+            dialog = BatteryCollectDialog(sn, dev_id, device_name, model, device_query, self)
+            # 将日志信号连接到主界面左下角
+            dialog.log_message.connect(lambda msg: self.show_progress(msg))
+            dialog.exec_()
     
     def on_thread_count_changed(self, text):
         """线程数改变事件"""
@@ -1174,6 +1235,7 @@ class DeviceStatusPage(BasePage):
         self.batch_wake_btn.setEnabled(False)
         self.batch_reboot_btn.setEnabled(False)
         self.batch_upgrade_btn.setEnabled(False)
+        self.batch_collect_btn.setEnabled(False)
         
         # 收集所有型号和版本号并更新下拉框
         self.update_filter_combos()
@@ -1203,6 +1265,7 @@ class DeviceStatusPage(BasePage):
         self.batch_wake_btn.setEnabled(False)
         self.batch_reboot_btn.setEnabled(False)
         self.batch_upgrade_btn.setEnabled(False)
+        self.batch_collect_btn.setEnabled(False)
         
         # 重置筛选条件
         self.sn_filter_input.clear()
@@ -1291,6 +1354,7 @@ class DeviceStatusPage(BasePage):
         self.batch_wake_btn.setEnabled(has_checked)
         self.batch_reboot_btn.setEnabled(has_checked)
         self.batch_upgrade_btn.setEnabled(has_checked)
+        self.batch_collect_btn.setEnabled(has_checked)
     
     def on_wake_single(self, row):
         """单个设备唤醒"""
@@ -1683,6 +1747,39 @@ class DeviceStatusPage(BasePage):
             # 对话框关闭后，刷新选中设备的在线状态
             self.refresh_selected_devices_status([(sn, dev_id, name) for sn, dev_id, name, _ in selected_devices])
 
+    def on_batch_collect(self):
+        """批量数据采集 - 先选择采集类型"""
+        from query_tool.widgets.collect_type_selector_dialog import CollectTypeSelectorDialog
+        
+        # 获取选中的设备
+        selected_devices = []
+        for row in range(self.result_table.rowCount()):
+            checkbox_widget = self.result_table.cellWidget(row, 0)
+            checkbox = checkbox_widget.findChild(QCheckBox)
+            if checkbox and checkbox.isChecked():
+                device_name = self.result_table.item(row, 1).text()
+                model = self.result_table.item(row, 2).text()
+                sn = self.result_table.item(row, 3).text()
+                dev_id = self.result_table.item(row, 4).text()
+                
+                selected_devices.append({
+                    'device_name': device_name,
+                    'model': model,
+                    'sn': sn,
+                    'dev_id': dev_id
+                })
+        
+        if not selected_devices:
+            self.show_warning("请先选择要采集数据的设备")
+            return
+        
+        # 获取复用的DeviceQuery对象
+        env, username, password = get_account_config()
+        device_query = self.ensure_device_query(env, username, password)
+        
+        # 打开采集类型选择对话框
+        dialog = CollectTypeSelectorDialog(selected_devices, self.thread_count, device_query, self)
+        dialog.exec_()
 
     def on_export_csv(self):
         """导出CSV"""
