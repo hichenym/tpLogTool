@@ -18,15 +18,16 @@ class StatusQueryThread(QThread):
     """状态查询线程"""
     finished_signal = pyqtSignal(bool, str)  # is_online, message
     
-    def __init__(self, sn, token):
+    def __init__(self, sn, token, host='console.seetong.com'):
         super().__init__()
         self.sn = sn
         self.token = token
+        self.host = host
     
     def run(self):
         try:
             from query_tool.utils import check_device_online
-            is_online = check_device_online(self.sn, self.token)
+            is_online = check_device_online(self.sn, self.token, self.host)
             if is_online:
                 self.finished_signal.emit(True, "在线")
             else:
@@ -326,7 +327,7 @@ class PortMappingDialog(QDialog):
         self.refresh_btn.setEnabled(False)
         
         if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query.token)
+            thread = StatusQueryThread(self.sn, self.device_query.token, self.device_query.host)
             thread.finished_signal.connect(self.on_status_query_finished)
             thread.finished.connect(lambda: thread.deleteLater())
             self.thread_mgr.add("status_query", thread)
@@ -487,7 +488,7 @@ class PortMappingDialog(QDialog):
         
         # 重新查询状态
         if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query.token)
+            thread = StatusQueryThread(self.sn, self.device_query.token, self.device_query.host)
             thread.finished_signal.connect(
                 lambda is_online, msg: self.on_confirm_status_checked(is_online, msg, ip, port)
             )

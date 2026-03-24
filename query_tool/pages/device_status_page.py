@@ -1712,7 +1712,7 @@ class DeviceStatusPage(BasePage):
             count = TableHelper.export_to_csv(
                 self.result_table,
                 file_path=file_path,
-                columns={1: "设备名称", 2: "SN", 3: "ID", 4: "密码"},
+                columns={1: "设备名称", 2: "型号", 3: "SN", 4: "ID", 5: "密码"},
                 skip_text=["查询中..."]
             )
             
