@@ -206,13 +206,25 @@ class EditFirmwareDialog(QDialog):
         
         form_layout.addRow(file_label, file_widget)
         
-        # 2. 固件标识（只读）
+        # 2. 固件标识（可编辑）
         identifier_label = QLabel("<span style='color: red;'>*</span> 固件标识:")
         self.identifier_input = QLineEdit()
-        self.identifier_input.setReadOnly(True)
-        self.identifier_input.setFocusPolicy(Qt.NoFocus)  # 禁止获取焦点
+        self.identifier_input.setPlaceholderText("自动获取或手动输入固件标识...")
         self.identifier_input.setFixedHeight(28)
-        self.identifier_input.setStyleSheet(readonly_style)
+        self.identifier_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #404040;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 4px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #6a6a6a;
+            }
+        """)
+        # 连接文本变化信号，实时验证
+        self.identifier_input.textChanged.connect(self.validate_form)
         form_layout.addRow(identifier_label, self.identifier_input)
         
         # 3. 文件MD5（只读）
@@ -406,10 +418,16 @@ class EditFirmwareDialog(QDialog):
         
         # 加载发布备注
         comment = self.firmware_data.get('create_comment', '')
+        # 新增模式下，默认填写 "test"
+        if self.is_create_mode and not comment:
+            comment = 'test'
         self.comment_text.setPlainText(comment)
         
         # 加载支持升级的设备SN
         support_sn = self.firmware_data.get('support_sn', '')
+        # 新增模式下，默认填写 "AABBCCDDEEFFGGFF"
+        if self.is_create_mode and not support_sn:
+            support_sn = 'AABBCCDDEEFFGGFF'
         self.sn_text.setPlainText(support_sn)
         
         # 加载开始时间
@@ -564,14 +582,6 @@ class EditFirmwareDialog(QDialog):
             # 获取文件名
             file_name = os.path.basename(file_path)
             
-            # 校验文件名是否以 firmware_ 开头
-            if not file_name.startswith('firmware_'):
-                self.file_status_label.setText("文件非法")
-                self.file_status_label.setStyleSheet("color: #FF0000;")  # 红色
-                if self.parent():
-                    self.parent().show_error("文件非法：固件文件名必须以 firmware_ 开头")
-                return
-            
             # 显示文件名
             self.file_status_label.setText(f"已选择: {file_name}")
             
@@ -627,11 +637,25 @@ class EditFirmwareDialog(QDialog):
                 self.file_status_label.setText(f"上传成功")
             self.file_status_label.setStyleSheet("color: #00FF00;")  # 绿色
             
-            # 更新固件标识
+            # 更新固件标识（如果自动获取成功）
             firmware_identity = data.get('firmware_identity', '')
             if firmware_identity:
                 self.identifier_input.setText(firmware_identity)
                 self.firmware_data['device_identify'] = firmware_identity
+            else:
+                # 自动获取失败，使用文件名（不含后缀）作为固件标识
+                if self.selected_file_name:
+                    # 去掉文件扩展名
+                    file_name_without_ext = os.path.splitext(self.selected_file_name)[0]
+                    self.identifier_input.setText(file_name_without_ext)
+                    self.firmware_data['device_identify'] = file_name_without_ext
+                    if self.parent():
+                        self.parent().show_warning(f"固件标识自动获取失败，已使用文件名: {file_name_without_ext}")
+                else:
+                    # 没有文件名，清空输入框
+                    self.identifier_input.clear()
+                    if self.parent():
+                        self.parent().show_warning("固件标识自动获取失败，请手动填写")
             
             # 更新文件MD5
             file_md5 = data.get('file_md5', '')
@@ -659,6 +683,10 @@ class EditFirmwareDialog(QDialog):
             # 显示错误
             self.file_status_label.setText(f"上传失败")
             self.file_status_label.setStyleSheet("color: #FF0000;")  # 红色
+            
+            # 清空固件标识和MD5，等待用户重新上传或手动填写
+            self.identifier_input.clear()
+            self.md5_input.setText('')
             
             # 在主窗口显示错误提示
             if self.parent():
@@ -746,6 +774,8 @@ class EditFirmwareDialog(QDialog):
         
         # 构建提交数据（包含所有字段）
         self.result_data = self.firmware_data.copy()
+        self.result_data['device_identify'] = identifier  # 使用输入框中的固件标识
+        self.result_data['file_md5'] = md5  # 使用输入框中的MD5
         self.result_data['support_sn'] = support_sn
         self.result_data['start_time'] = start_time
         self.result_data['end_time'] = end_time
