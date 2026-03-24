@@ -1,14 +1,14 @@
 {
-  "version": "3.0.2",
-  "build_date": "20260226",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.0.2/TPQueryTool.exe",
-  "file_size_mb": 173.08,
-  "file_size_bytes": 181492299,
-  "file_hash": "f54d80be562baa1e408eb2919d10def32b779363c9a623fa21da5d858375b4a6",
+  "version": "3.1.0",
+  "build_date": "20260324",
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.0/TPQueryTool.exe",
+  "file_size_mb": 173.15,
+  "file_size_bytes": 181561108,
+  "file_hash": "671023f45a2c1796dd238eb5218ea20fc606190fc424c4bba711c9bc5ac048ce",
   "hash_algorithm": "sha256",
-  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.0.2/TPQueryTool.exe.sha256",
-  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.0.2",
+  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.0/TPQueryTool.exe.sha256",
+  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.1.0",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": "修复固件信息查询失败问题"
+  "changelog": ["增加设备电池电量数据采集","修复已知问题"]
 }
