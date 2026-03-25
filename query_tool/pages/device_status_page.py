@@ -81,6 +81,7 @@ class DeviceStatusPage(BasePage):
         self._device_query_env = None
         self._device_query_username = None
         self._device_query_password = None
+        self._device_query_timestamp = None  # 记录创建时间
         
         self.init_ui()
     
@@ -88,19 +89,31 @@ class DeviceStatusPage(BasePage):
         """
         确保 DeviceQuery 对象已初始化（使用缓存）
         如果凭证相同，则复用已有对象；否则创建新对象
+        Token 超过 90 分钟时主动重建对象，避免 2 小时后 Token 过期导致 401
         """
-        # 检查是否需要创建新对象
-        if (self._device_query is None or 
-            self._device_query_env != env or 
-            self._device_query_username != username or 
-            self._device_query_password != password):
-            
-            # 创建新的 DeviceQuery 对象
+        import time
+        TOKEN_REFRESH_INTERVAL = 90 * 60  # 90 分钟主动重建，早于服务器 2 小时过期
+
+        credentials_changed = (
+            self._device_query_env != env or
+            self._device_query_username != username or
+            self._device_query_password != password
+        )
+        token_expired = (
+            self._device_query_timestamp is None or
+            time.time() - self._device_query_timestamp > TOKEN_REFRESH_INTERVAL
+        )
+
+        if self._device_query is None or credentials_changed or token_expired:
+            if token_expired and self._device_query is not None:
+                logger.info("DeviceQuery Token 即将过期，主动重建对象")
+
             self._device_query = DeviceQuery(env, username, password)
             self._device_query_env = env
             self._device_query_username = username
             self._device_query_password = password
-        
+            self._device_query_timestamp = time.time()
+
         return self._device_query
     
     def init_ui(self):

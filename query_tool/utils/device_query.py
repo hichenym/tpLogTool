@@ -107,32 +107,28 @@ class DeviceQuery:
     def _request(self, api_path, params, retry=3):
         """发送 API 请求，带重试机制"""
         url = f'https://{self.host}{api_path}'
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA==",
-            "Seetong-Auth": self.token,
-        }
         
         logger.debug(f"API请求: {api_path}, 参数: {params}")
         
         last_error = None
         for attempt in range(retry):
             try:
+                # 每次循环都用最新的 token 构建 headers
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA==",
+                    "Seetong-Auth": self.token,
+                }
                 r = self.session.get(url, params=params, headers=headers, verify=False, timeout=10)
                 
                 if r.status_code == 401:
-                    # Token 过期，重新获取（使用锁避免并发刷新）
+                    # Token 过期，使用锁避免并发重复刷新
                     with self._token_lock:
-                        # 双重检查，可能其他线程已经刷新了
-                        if r.status_code == 401:
-                            try:
-                                logger.info(f"Token过期，刷新Token: {self.username}@{self.env}")
-                                self.token, self.refresh_token = self._get_token()
-                                config_manager.save_token_cache(self.env, self.username, self.token, self.refresh_token)
-                                headers["Seetong-Auth"] = self.token
-                                r = self.session.get(url, params=params, headers=headers, verify=False, timeout=10)
-                            except Exception as e:
-                                raise Exception(f"Token 刷新失败: {str(e)}")
+                        logger.info(f"Token过期，重新登录: {self.username}@{self.env}")
+                        self.token, self.refresh_token = self._get_token()
+                        config_manager.save_token_cache(self.env, self.username, self.token, self.refresh_token)
+                    # 刷新成功后 continue，下一次循环用新 token 重试
+                    continue
                 
                 r.raise_for_status()
                 logger.debug(f"API请求成功: {api_path}, 状态码: {r.status_code}")
