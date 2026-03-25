@@ -6,10 +6,10 @@ from datetime import datetime
 # 版本号配置
 VERSION_MAJOR = 3  # 主版本号：重大功能更新或架构变更
 VERSION_MINOR = 1  # 次版本号：新增功能或较大改进
-VERSION_PATCH = 0  # 修订号：Bug修复或小改进
+VERSION_PATCH = 1  # 修订号：Bug修复或小改进
 
 # 自动获取编译日期
-BUILD_DATE = "20260324"
+BUILD_DATE = "20260325"
 
 def get_version():
     """获取版本号元组"""
@@ -36,6 +36,9 @@ def get_build_date_formatted():
 
 # 版本历史（仅记录用户感知的重要更新、功能改进和bug修复）
 VERSION_HISTORY = """
+V3.1.1 (20260325)
+- 修复电池电量查询接口2小时后token过期导致失败
+
 V3.1.0 (20260324)
 - 增加设备电池电量数据采集
 - 修复已知问题
