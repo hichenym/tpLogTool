@@ -97,6 +97,11 @@ class DataCollectAPI:
             logger.debug(f"查询电池电量: SN={sn}, start={start_ts}, end={end_ts}")
 
             response = requests.get(url, headers=headers, params=params, timeout=30, verify=False)
+
+            # Token 过期，返回特定标识让调用方刷新后重试
+            if response.status_code == 401:
+                return {'success': False, 'data': [], 'message': 'token_expired'}
+
             response.raise_for_status()
 
             result = response.json()
@@ -162,6 +167,21 @@ class DataCollectThread(QThread):
                 self.start_time, self.end_time,
                 self.token, self.host
             )
+
+            # Token 过期，尝试刷新后重试一次
+            if not result['success'] and result.get('message') == 'token_expired':
+                self.log_message.emit(f"Token已过期，正在刷新...")
+                new_token = self._refresh_token()
+                if new_token:
+                    self.token = new_token
+                    result = DataCollectAPI.query_data_history(
+                        self.sn, self.dev_id, self.collect_type,
+                        self.start_time, self.end_time,
+                        self.token, self.host
+                    )
+                else:
+                    result = {'success': False, 'data': [], 'message': 'Token刷新失败，请重新打开查询窗口'}
+
             if result['success']:
                 self.log_message.emit(f"查询完成: {self.sn}，{result['message']}")
                 self.finished.emit(True, result['data'], result['message'])
@@ -172,6 +192,24 @@ class DataCollectThread(QThread):
             logger.error(f"数据查询线程异常: {e}")
             self.log_message.emit(f"查询异常: {self.sn}，{str(e)}")
             self.finished.emit(False, [], f'查询异常: {str(e)}')
+
+    def _refresh_token(self):
+        """刷新 Token"""
+        try:
+            from query_tool.utils.config import get_account_config
+            from query_tool.utils.device_query import DeviceQuery
+            env, username, password = get_account_config()
+            if not username or not password:
+                return None
+            dq = DeviceQuery(env, username, password, use_cache=False)
+            if dq.init_error:
+                logger.error(f"Token刷新失败: {dq.init_error}")
+                return None
+            logger.info("Token刷新成功")
+            return dq.token
+        except Exception as e:
+            logger.error(f"Token刷新异常: {e}")
+            return None
 
 
 class BatchDataCollectWorker:
@@ -194,6 +232,24 @@ class BatchDataCollectWorker:
     def stop(self):
         self.stopped = True
 
+    def _refresh_token(self):
+        """刷新 Token"""
+        try:
+            from query_tool.utils.config import get_account_config
+            from query_tool.utils.device_query import DeviceQuery
+            env, username, password = get_account_config()
+            if not username or not password:
+                return None
+            dq = DeviceQuery(env, username, password, use_cache=False)
+            if dq.init_error:
+                logger.error(f"Token刷新失败: {dq.init_error}")
+                return None
+            logger.info("批量查询Token刷新成功")
+            return dq.token
+        except Exception as e:
+            logger.error(f"Token刷新异常: {e}")
+            return None
+
     def query_single_device(self, device):
         """查询单个设备"""
         if self.stopped:
@@ -213,6 +269,21 @@ class BatchDataCollectWorker:
                 self.start_time, self.end_time,
                 self.token, self.host
             )
+
+            # Token 过期，刷新后重试一次
+            if not result['success'] and result.get('message') == 'token_expired':
+                if self.log_callback:
+                    self.log_callback(f"Token已过期，正在刷新...")
+                new_token = self._refresh_token()
+                if new_token:
+                    self.token = new_token
+                    result = DataCollectAPI.query_data_history(
+                        sn, dev_id, self.collect_type,
+                        self.start_time, self.end_time,
+                        self.token, self.host
+                    )
+                else:
+                    result = {'success': False, 'data': [], 'message': 'Token刷新失败'}
 
             if result['success']:
                 record_count = len(result['data'])

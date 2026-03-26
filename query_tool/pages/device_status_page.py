@@ -106,6 +106,7 @@ class DeviceStatusPage(BasePage):
 
         if self._device_query is None or credentials_changed or token_expired:
             if token_expired and self._device_query is not None:
+                from query_tool.utils.logger import logger
                 logger.info("DeviceQuery Token 即将过期，主动重建对象")
 
             self._device_query = DeviceQuery(env, username, password)
