@@ -1,14 +1,14 @@
 {
-  "version": "3.1.1",
-  "build_date": "20260325",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.1/TPQueryTool.exe",
+  "version": "3.1.2",
+  "build_date": "20260326",
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.2/TPQueryTool.exe",
   "file_size_mb": 173.15,
-  "file_size_bytes": 181561324,
-  "file_hash": "d3cafb482a1248bdf6d9960e15a3839de9e8591f0c198ddf92b8ff7b34ff20a0",
+  "file_size_bytes": 181561959,
+  "file_hash": "78cbb044379b747745aa705fd1dc5c75db49467d1880ed1615901537065bf2d4",
   "hash_algorithm": "sha256",
-  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.1/TPQueryTool.exe.sha256",
-  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.1.1",
+  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.2/TPQueryTool.exe.sha256",
+  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.1.2",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": "修复电池电量查询接口2小时后token过期导致失败"
+  "changelog": "修复电池电量一段时间后查询失败无反应"
 }
