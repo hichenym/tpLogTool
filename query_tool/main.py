@@ -99,6 +99,11 @@ class MainWindow(QMainWindow):
         
         # 启动时检查更新
         QTimer.singleShot(2000, self.check_update_on_startup)
+
+        # 定时检查更新（每 6 小时）
+        self._periodic_update_timer = QTimer(self)
+        self._periodic_update_timer.timeout.connect(self._periodic_update_check)
+        self._periodic_update_timer.start(6 * 60 * 60 * 1000)  # 6 小时
     
     def init_ui(self):
         """初始化UI"""
@@ -400,6 +405,33 @@ del "%~f0"
         
         event.accept()
     
+    def _periodic_update_check(self):
+        """定时检查更新（运行期间每 3 小时触发一次，强制刷新，不走缓存）"""
+        try:
+            from query_tool.utils.logger import logger
+            
+            if not hasattr(self, 'update_manager') or self.update_manager is None:
+                return
+            
+            if not self.update_manager.should_auto_check():
+                return
+            
+            logger.info("定时检查更新（强制刷新）...")
+            
+            def callback(has_update, version_info, message):
+                if has_update:
+                    logger.info(f"定时检查发现新版本: {version_info}")
+                    self.update_manager.latest_version_info = version_info
+                    self.update_manager.update_available.emit(version_info)
+                else:
+                    logger.info(f"定时检查更新: {message}")
+            
+            self.update_manager.checker.check_update_async_force_refresh(callback)
+            
+        except Exception as e:
+            from query_tool.utils.logger import logger
+            logger.error(f"定时检查更新失败: {e}")
+
     def check_update_on_startup(self):
         """启动时检查更新"""
         try:

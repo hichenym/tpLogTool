@@ -71,7 +71,7 @@ class UpdateChecker:
     CACHE_FILE = CACHE_DIR / 'version_cache.json'
     
     # 缓存有效期（小时）
-    CACHE_DURATION = 5  # 从 24 小时改为 5 小时
+    CACHE_DURATION = 6
     
     def __init__(self, current_version: str):
         """
