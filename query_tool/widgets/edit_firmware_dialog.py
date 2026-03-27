@@ -4,7 +4,8 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QDateTimeEdit, QGroupBox, QFormLayout, QWidget,
-    QLineEdit, QFileDialog, QMessageBox
+    QLineEdit, QFileDialog, QMessageBox, QTableWidget, QTableWidgetItem,
+    QHeaderView, QCheckBox, QAbstractItemView
 )
 from PyQt5.QtCore import Qt, QDateTime, QEvent, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QIcon
@@ -76,6 +77,286 @@ class FileUploadThread(QThread):
             self.finished_signal.emit(False, {}, f"上传出错: {str(e)}")
 
 
+class DeviceSnQueryThread(QThread):
+    """轻量级设备SN查询线程 - 只查询设备名称、SN和型号"""
+    progress = pyqtSignal(str)
+    error = pyqtSignal(str)
+    success = pyqtSignal(list)  # [{device_name, sn, model}, ...]
+
+    def __init__(self, phone, env, username, password):
+        super().__init__()
+        self.phone = phone
+        self.env = env
+        self.username = username
+        self.password = password
+
+    def run(self):
+        try:
+            from query_tool.utils.device_query import DeviceQuery
+            self.progress.emit("正在登录...")
+            query = DeviceQuery(self.env, self.username, self.password)
+            if query.init_error:
+                self.error.emit(query.init_error)
+                return
+
+            self.progress.emit("正在查询用户信息...")
+            user_response = query.get_user_by_mobile(self.phone)
+            if not user_response or not user_response.get('data'):
+                self.error.emit("未找到该手机号对应的用户")
+                return
+            records = user_response['data'].get('records', [])
+            if not records:
+                self.error.emit("未找到该手机号对应的用户")
+                return
+            user_id = records[0].get('id')
+            if not user_id:
+                self.error.emit("无法获取用户ID")
+                return
+
+            self.progress.emit("正在查询绑定设备...")
+            devices_response = query.get_user_bind_devices(user_id)
+            if not devices_response or not devices_response.get('data'):
+                self.error.emit("未找到该用户的绑定设备")
+                return
+            devices = devices_response['data']
+            if not devices:
+                self.error.emit("该用户暂无绑定设备")
+                return
+
+            self.progress.emit(f"正在查询 {len(devices)} 台设备的型号...")
+            results = []
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def get_device_model(device):
+                device_sn = device.get('deviceSn', '')
+                device_name = device.get('deviceName', '')
+                model = ''
+                if device_sn:
+                    try:
+                        info = query.get_device_info(dev_sn=device_sn)
+                        recs = info.get('data', {}).get('records', [])
+                        standard_sn = recs[0].get('devSN', device_sn) if recs else device_sn
+                        header = query.get_device_header(standard_sn)
+                        if header and header.get('data'):
+                            model = header['data'].get('productName', '')
+                        device_sn = standard_sn
+                    except Exception:
+                        pass
+                return {'device_name': device_name, 'sn': device_sn, 'model': model}
+
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = [executor.submit(get_device_model, d) for d in devices]
+                for i, future in enumerate(as_completed(futures)):
+                    results.append(future.result())
+                    if (i + 1) % 5 == 0 or (i + 1) == len(devices):
+                        self.progress.emit(f"正在查询设备型号... {i + 1}/{len(devices)}")
+
+            self.success.emit(results)
+        except Exception as e:
+            self.error.emit(f"查询失败：{str(e)}")
+
+
+class SnQueryDialog(QDialog):
+    """设备SN查询结果对话框 - 打开时自动查询，按型号过滤"""
+
+    def __init__(self, phone='', model_filter='', parent=None):
+        super().__init__(parent)
+        self.phone = phone
+        self.model_filter = model_filter
+        self.all_devices = []
+        self.selected_sns = []
+        self._checkboxes = []
+        self.thread_mgr = ThreadManager()
+        self.setWindowTitle("查询设备SN")
+        self.setFixedSize(500, 420)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        self._init_ui()
+        # 打开后自动开始查询
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(100, self._on_query)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        set_dark_title_bar(self)
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(15, 15, 15, 15)
+
+        # 状态标签
+        self.status_label = QLabel("正在查询...")
+        self.status_label.setStyleSheet("color: #909090; font-size: 11px;")
+        self.status_label.setFixedHeight(18)
+        layout.addWidget(self.status_label)
+
+        # 结果表格
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["", "设备名称", "SN"])
+        self.table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setShowGrid(True)
+        self.table.setFrameShape(QTableWidget.NoFrame)
+        self.table.verticalHeader().setVisible(False)
+
+        header = self.table.horizontalHeader()
+        self.table.setColumnWidth(0, 30)
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setDefaultAlignment(Qt.AlignCenter)
+
+        self.table.setStyleSheet("""
+            QTableWidget { background-color: #2b2b2b; color: #e0e0e0;
+                border: 1px solid #555555; gridline-color: #404040; }
+            QTableWidget::item { padding: 4px; }
+            QHeaderView::section { background-color: #3c3c3c; color: #e0e0e0;
+                border: 1px solid #555555; padding: 4px; }
+        """)
+        layout.addWidget(self.table, 1)
+
+        # 全选行（放在表格下方）
+        select_all_row = QHBoxLayout()
+        select_all_row.setContentsMargins(0, 0, 0, 0)
+        self.select_all_cb_bottom = QCheckBox("全选")
+        self.select_all_cb_bottom.setStyleSheet("color: #e0e0e0; font-size: 11px;")
+        self.select_all_cb_bottom.stateChanged.connect(self._on_select_all)
+        select_all_row.addWidget(self.select_all_cb_bottom)
+        select_all_row.addStretch()
+        layout.addLayout(select_all_row)
+
+        # 底部按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        btn_style = """
+            QPushButton { background-color: #404040; color: #e0e0e0;
+                border: 1px solid #555555; border-radius: 3px; padding: 6px 16px; }
+            QPushButton:hover { background-color: #4a4a4a; border: 1px solid #6a6a6a; }
+            QPushButton:disabled { background-color: #2b2b2b; color: #606060; border: 1px solid #3c3c3c; }
+        """
+
+        self.add_btn = QPushButton("添加到SN")
+        self.add_btn.setIcon(QIcon(":/icons/common/ok.png"))
+        self.add_btn.setIconSize(QSize(18, 18))
+        self.add_btn.setFixedHeight(28)
+        self.add_btn.setStyleSheet(btn_style)
+        self.add_btn.setEnabled(False)
+        self.add_btn.clicked.connect(self._on_add)
+
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+        cancel_btn.setIconSize(QSize(18, 18))
+        cancel_btn.setFixedHeight(28)
+        cancel_btn.setStyleSheet(btn_style)
+        cancel_btn.clicked.connect(self.reject)
+
+        btn_layout.addWidget(self.add_btn)
+        btn_layout.addSpacing(10)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+    def _on_query(self):
+        from query_tool.utils.config import get_account_config
+        env, username, password = get_account_config()
+        if not username or not password:
+            self.status_label.setText("运维账号未配置，请先在设置中配置")
+            self.status_label.setStyleSheet("color: #FF0000; font-size: 11px;")
+            return
+
+        self.status_label.setText("正在查询...")
+        self.status_label.setStyleSheet("color: #909090; font-size: 11px;")
+        self.table.setRowCount(0)
+
+        thread = DeviceSnQueryThread(self.phone, env, username, password)
+        thread.progress.connect(lambda msg: self.status_label.setText(msg))
+        thread.error.connect(self._on_query_error)
+        thread.success.connect(self._on_query_success)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("sn_query", thread)
+        thread.start()
+        self._query_thread = thread
+
+    def _on_query_error(self, msg):
+        self.status_label.setText(msg)
+        self.status_label.setStyleSheet("color: #FF0000; font-size: 11px;")
+
+    def _on_query_success(self, devices):
+        self.all_devices = devices
+
+        # 按型号过滤
+        if self.model_filter:
+            filtered = [d for d in devices if d.get('model', '') == self.model_filter]
+        else:
+            filtered = devices
+
+        if not filtered:
+            total = len(devices)
+            self.status_label.setText(
+                f"共 {total} 台设备，无匹配型号 [{self.model_filter}] 的设备" if self.model_filter
+                else "该账号暂无绑定设备"
+            )
+            self.status_label.setStyleSheet("color: #FFA500; font-size: 11px;")
+            self.table.setRowCount(0)
+            return
+
+        self.status_label.setText(f"共 {len(devices)} 台设备，匹配 {len(filtered)} 台")
+        self.status_label.setStyleSheet("color: #00FF00; font-size: 11px;")
+        self._fill_table(filtered)
+
+    def _fill_table(self, devices):
+        self.table.setRowCount(len(devices))
+        self._checkboxes = []
+        self.select_all_cb_bottom.blockSignals(True)
+        self.select_all_cb_bottom.setChecked(False)
+        self.select_all_cb_bottom.blockSignals(False)
+        for row, dev in enumerate(devices):
+            cb = QCheckBox()
+            cb.stateChanged.connect(self._update_add_btn)
+            cb_widget = QWidget()
+            cb_layout = QHBoxLayout(cb_widget)
+            cb_layout.addWidget(cb)
+            cb_layout.setAlignment(Qt.AlignCenter)
+            cb_layout.setContentsMargins(0, 0, 0, 0)
+            self.table.setCellWidget(row, 0, cb_widget)
+            self._checkboxes.append(cb)
+
+            name_item = QTableWidgetItem(dev.get('device_name', ''))
+            name_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.table.setItem(row, 1, name_item)
+
+            sn_item = QTableWidgetItem(dev.get('sn', ''))
+            sn_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.table.setItem(row, 2, sn_item)
+
+        self.table.resizeRowsToContents()
+
+    def _on_select_all(self, state):
+        checked = (state == Qt.Checked)
+        for cb in self._checkboxes:
+            cb.blockSignals(True)
+            cb.setChecked(checked)
+            cb.blockSignals(False)
+        self._update_add_btn()
+
+    def _update_add_btn(self):
+        has_checked = any(cb.isChecked() for cb in self._checkboxes)
+        self.add_btn.setEnabled(has_checked)
+
+    def _on_add(self):
+        self.selected_sns = []
+        for row, cb in enumerate(self._checkboxes):
+            if cb.isChecked():
+                sn_item = self.table.item(row, 2)
+                if sn_item and sn_item.text():
+                    self.selected_sns.append(sn_item.text())
+        self.accept()
+
+    def get_selected_sns(self):
+        return self.selected_sns
+
+
 class EditFirmwareDialog(QDialog):
     """修改固件信息对话框"""
     
@@ -114,7 +395,7 @@ class EditFirmwareDialog(QDialog):
         else:
             self.setWindowTitle("固件信息修改")
         
-        self.setFixedSize(700, 550)  # 增加尺寸以容纳新字段
+        self.setFixedSize(700, 560)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         
         layout = QVBoxLayout(self)
@@ -248,18 +529,77 @@ class EditFirmwareDialog(QDialog):
         self.comment_text.textChanged.connect(self.validate_form)
         form_layout.addRow(comment_label, self.comment_text)
         
-        # 5. 支持升级的设备SN
+        # 5. 支持升级的设备SN（标签、输入框、右侧账号+查询按钮）
         sn_label = QLabel("<span style='color: red;'>*</span> 升级设备SN:")
         sn_label.setToolTip("每行一个SN，支持多个设备")
+        sn_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+        sn_right_widget = QWidget()
+        sn_right_widget.setFixedHeight(100)  # 与SN输入框等高，避免多余空间
+        sn_right_layout = QHBoxLayout(sn_right_widget)
+        sn_right_layout.setContentsMargins(0, 0, 0, 0)
+        sn_right_layout.setSpacing(8)
+
         self.sn_text = QTextEdit()
         self.sn_text.setPlaceholderText("每行输入一个设备SN...")
-        self.sn_text.setMinimumHeight(100)
-        self.sn_text.setMaximumHeight(100)
+        self.sn_text.setFixedHeight(100)
         self.sn_text.setStyleSheet(editable_style)
-        # 连接文本变化信号，实时验证SN长度和是否为空
         self.sn_text.textChanged.connect(self.on_sn_text_changed)
         self.sn_text.textChanged.connect(self.validate_form)
-        form_layout.addRow(sn_label, self.sn_text)
+
+        # 右侧：账号输入框 + 查询按钮（垂直排列）
+        sn_btn_widget = QWidget()
+        sn_btn_layout = QVBoxLayout(sn_btn_widget)
+        sn_btn_layout.setContentsMargins(0, 0, 0, 0)
+        sn_btn_layout.setSpacing(4)
+
+        from PyQt5.QtWidgets import QComboBox
+        self.sn_phone_input = QComboBox()
+        self.sn_phone_input.setEditable(True)
+        self.sn_phone_input.setInsertPolicy(QComboBox.NoInsert)
+        self.sn_phone_input.lineEdit().setPlaceholderText("手机号...")
+        self.sn_phone_input.setFixedSize(100, 28)
+        self.sn_phone_input.setStyleSheet("""
+            QComboBox { background-color: #404040; color: #e0e0e0;
+                border: 1px solid #555555; border-radius: 3px; padding: 2px 4px; font-size: 11px; }
+            QComboBox:focus { border: 1px solid #6a6a6a; }
+            QComboBox::drop-down { border: none; width: 18px; }
+            QComboBox QAbstractItemView { background-color: #3c3c3c; color: #e0e0e0;
+                border: 1px solid #555555; selection-background-color: #505050; }
+        """)
+        # 加载账号历史（与设备查询页面同步）
+        self._load_phone_history()
+
+        self.sn_query_btn = QPushButton("查询设备")
+        self.sn_query_btn.setIcon(QIcon(":/icons/common/search.png"))
+        self.sn_query_btn.setIconSize(QSize(14, 14))
+        self.sn_query_btn.setFixedSize(100, 28)
+        self.sn_query_btn.setStyleSheet("""
+            QPushButton { background-color: #404040; color: #e0e0e0;
+                border: 1px solid #555555; border-radius: 3px; padding: 2px 8px; font-size: 11px; }
+            QPushButton:hover { background-color: #4a4a4a; border: 1px solid #6a6a6a; }
+        """)
+        self.sn_query_btn.clicked.connect(self.on_query_device_sn)
+
+        sn_btn_layout.addWidget(self.sn_phone_input)
+        sn_btn_layout.addWidget(self.sn_query_btn)
+
+        self.sn_temp_fill_btn = QPushButton("临时填充")
+        self.sn_temp_fill_btn.setFixedSize(100, 28)
+        self.sn_temp_fill_btn.setStyleSheet("""
+            QPushButton { background-color: #404040; color: #e0e0e0;
+                border: 1px solid #555555; border-radius: 3px; padding: 2px 8px; font-size: 11px; }
+            QPushButton:hover { background-color: #4a4a4a; border: 1px solid #6a6a6a; }
+        """)
+        self.sn_temp_fill_btn.clicked.connect(self._on_temp_fill_sn)
+        sn_btn_layout.addWidget(self.sn_temp_fill_btn)
+
+        sn_btn_widget.setFixedHeight(100)  # 与SN输入框等高
+
+        sn_right_layout.addWidget(self.sn_text, 1)
+        sn_right_layout.addWidget(sn_btn_widget)
+
+        form_layout.addRow(sn_label, sn_right_widget)
         
         # 6. 可升级时间段（两个时间控件水平排列）
         time_label = QLabel("升级时间段:")
@@ -425,9 +765,9 @@ class EditFirmwareDialog(QDialog):
         
         # 加载支持升级的设备SN
         support_sn = self.firmware_data.get('support_sn', '')
-        # 新增模式下，默认填写 "AABBCCDDEEFFGGFF"
+        # 新增模式下，默认填写 "AABBCCDDEEFFGGHH"
         if self.is_create_mode and not support_sn:
-            support_sn = 'AABBCCDDEEFFGGFF'
+            support_sn = 'AABBCCDDEEFFGGHH'
         self.sn_text.setPlainText(support_sn)
         
         # 加载开始时间
@@ -569,6 +909,58 @@ class EditFirmwareDialog(QDialog):
                 }
             """)
     
+    def on_query_device_sn(self):
+        """查询设备SN - 直接弹出结果对话框"""
+        phone = self.sn_phone_input.currentText().strip()
+        if not phone:
+            if self.parent():
+                self.parent().show_warning("请输入手机号")
+            return
+
+        # 从固件标识提取型号（取第一个 '-' 前的部分）
+        identifier = self.identifier_input.text().strip()
+        model_filter = identifier.split('-')[0] if identifier and '-' in identifier else ''
+
+        dialog = SnQueryDialog(phone=phone, model_filter=model_filter, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            sns = dialog.get_selected_sns()
+            if sns:
+                # 保存手机号到历史
+                self._save_phone_to_history(phone)
+                # 获取已有的SN，去重后追加
+                existing_text = self.sn_text.toPlainText().strip()
+                existing_sns = set(line.strip() for line in existing_text.split('\n') if line.strip())
+                new_sns = [sn for sn in sns if sn not in existing_sns]
+                if new_sns:
+                    if existing_text:
+                        self.sn_text.setPlainText(existing_text + '\n' + '\n'.join(new_sns))
+                    else:
+                        self.sn_text.setPlainText('\n'.join(new_sns))
+
+    def _load_phone_history(self):
+        """从配置加载账号历史（与设备查询页面同步）"""
+        from query_tool.utils import config_manager
+        app_config = config_manager.load_app_config()
+        if app_config.phone_history:
+            self.sn_phone_input.addItems(app_config.phone_history)
+
+    def _save_phone_to_history(self, phone):
+        """保存手机号到历史（与设备查询页面同步）"""
+        from query_tool.utils import config_manager
+        app_config = config_manager.load_app_config()
+        if phone in app_config.phone_history:
+            app_config.phone_history.remove(phone)
+        app_config.phone_history.insert(0, phone)
+        app_config.phone_history = app_config.phone_history[:5]
+        config_manager.save_app_config(app_config)
+        # 刷新下拉列表
+        self.sn_phone_input.clear()
+        self.sn_phone_input.addItems(app_config.phone_history)
+
+    def _on_temp_fill_sn(self):
+        """临时填充SN"""
+        self.sn_text.setPlainText('AABBCCDDEEFFGGHH')
+
     def on_select_file(self):
         """选择文件"""
         file_path, _ = QFileDialog.getOpenFileName(

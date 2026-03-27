@@ -261,7 +261,7 @@ class FirmwarePage(BasePage):
         )
         self.result_table.setFocusPolicy(Qt.StrongFocus)
         self.result_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)  # 改为选择整行
+        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)  # 整行高亮
         self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.result_table.setShowGrid(True)
         self.result_table.setFrameShape(QTableWidget.NoFrame)
@@ -270,6 +270,12 @@ class FirmwarePage(BasePage):
         # 启用右键菜单
         self.result_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.result_table.customContextMenuRequested.connect(self.on_context_menu)
+        
+        # 支持 Ctrl+C 复制选中单元格文本
+        from PyQt5.QtWidgets import QShortcut
+        from PyQt5.QtGui import QKeySequence
+        copy_shortcut = QShortcut(QKeySequence.Copy, self.result_table)
+        copy_shortcut.activated.connect(self.copy_selected_cell_text)
         
         # 设置列宽
         header = self.result_table.horizontalHeader()
@@ -343,7 +349,7 @@ class FirmwarePage(BasePage):
         pagination_layout.addStretch()
         
         # 提示文本
-        tip_label = QLabel("提示: 双击单元格可复制内容，右击固件行展开操作")
+        tip_label = QLabel("提示: 双击单元格修改固件信息，右键表格展开更多操作")
         tip_label.setStyleSheet("color: #909090; font-size: 11px;")
         tip_label.setFixedHeight(22)
         tip_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -965,24 +971,38 @@ class FirmwarePage(BasePage):
         self.result_table.resizeRowsToContents()
     
     def on_cell_double_clicked(self, row, column):
-        """表格单元格双击复制"""
-        item = self.result_table.item(row, column)
+        """表格单元格双击 - 有权限时打开修改固件信息页面"""
+        if row >= len(self.filtered_list):
+            return
+        
+        firmware = self.filtered_list[row]
+        publisher = firmware.get('publisher', '')
+        current_user_display_name = self.get_current_user_display_name()
+        
+        # 判断是否有编辑权限（与右键菜单逻辑一致）
+        if self.is_current_user_query:
+            has_edit_permission = True
+        else:
+            has_edit_permission = (publisher == current_user_display_name)
+        
+        if has_edit_permission:
+            self.edit_firmware(row)
+        else:
+            self.show_warning("仅可修改自己发布的固件")
+    
+    def on_cell_clicked(self, row, column):
+        """表格单元格单击 - 选中单元格"""
+        pass
+    
+    def copy_selected_cell_text(self):
+        """复制选中单元格的文本（Ctrl+C）"""
+        from PyQt5.QtWidgets import QApplication
+        item = self.result_table.currentItem()
         if item:
             text = item.text()
             if text:
-                from PyQt5.QtWidgets import QApplication
-                clipboard = QApplication.clipboard()
-                clipboard.setText(text)
-                
-                # 选中当前行
-                self.result_table.selectRow(row)
-                
+                QApplication.clipboard().setText(text)
                 self.show_success(f"已复制: {text}", 2000)
-    
-    def on_cell_clicked(self, row, column):
-        """表格单元格单击"""
-        # 选中当前行
-        self.result_table.selectRow(row)
     
     def on_context_menu(self, pos):
         """显示右键菜单"""
