@@ -1,15 +1,15 @@
 {
-  "version": "3.1.9",
+  "version": "3.2.0",
   "build_date": "20260330",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.9/TPQueryTool.exe",
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.2.0/TPQueryTool.exe",
   "file_size_mb": 173.16,
-  "file_size_bytes": 181573474,
-  "file_hash": "fae5e9e538badea703fa4b60226b72d7ac153911fd8d2454329ca8506dabbc88",
+  "file_size_bytes": 181573553,
+  "file_hash": "67fc49298465a85f5b6c254f7969d197dc9029684be6c41aea5453e74fd63ed2",
   "hash_algorithm": "sha256",
-  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.9/TPQueryTool.exe.sha256",
-  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.1.9",
+  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.2.0/TPQueryTool.exe.sha256",
+  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.2.0",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": "请查看 Release 页面获取完整更新日志",
+  "changelog": ["增加固件信息页双击弹出修改页面","固件增加和修改页SN增加账号查询控件"],
   "analytics": {"doc_id":"IVx0bqWefaVflZssxeycgHvSn5J","sheet_id":"tblyZtqCQEC43Hzl"}
 }
