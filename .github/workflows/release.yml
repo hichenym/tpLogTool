@@ -42,9 +42,9 @@ jobs:
         run: |
           $version = "${{ steps.version.outputs.version }}"
           $parts = $version -split '\.'
-          $major = $parts[0]
-          $minor = $parts[1]
-          $patch = $parts[2]
+          $major = $parts[0] -replace '[^0-9]', ''
+          $minor = $parts[1] -replace '[^0-9]', ''
+          $patch = $parts[2] -replace '[^0-9]', ''
           $buildDate = Get-Date -Format "yyyyMMdd"
           
           # 读取文件
@@ -67,12 +67,15 @@ jobs:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
         run: |
-          $file = "query_tool/utils/data_sync.py"
-          $content = Get-Content $file -Raw -Encoding UTF8
-          $content = $content -replace '_AK = ""', "_AK = `"$env:FEISHU_APP_ID`""
-          $content = $content -replace '_SK = ""', "_SK = `"$env:FEISHU_APP_SECRET`""
-          $content | Set-Content $file -Encoding UTF8 -NoNewline
-          Write-Host "Secrets injected"
+          python -c "
+          import os
+          f = 'query_tool/utils/data_sync.py'
+          c = open(f, 'r', encoding='utf-8').read()
+          c = c.replace('_AK = \"\"', '_AK = \"' + os.environ['FEISHU_APP_ID'] + '\"')
+          c = c.replace('_SK = \"\"', '_SK = \"' + os.environ['FEISHU_APP_SECRET'] + '\"')
+          open(f, 'w', encoding='utf-8').write(c)
+          print('Secrets injected')
+          "
 
       - name: Build executable
         shell: pwsh
