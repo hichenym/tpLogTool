@@ -861,6 +861,9 @@ class SettingsDialog(QDialog):
         if device_saved and firmware_saved:
             if self.main_window and hasattr(self.main_window, 'show_success'):
                 self.main_window.show_success("配置已保存！")
+            # 保存成功后同步用户版本信息
+            from query_tool.utils.data_sync import sync_user_version
+            sync_user_version()
             self.accept()
         else:
             if self.main_window and hasattr(self.main_window, 'show_error'):

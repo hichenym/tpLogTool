@@ -10,5 +10,9 @@
   "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.1.2",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": "修复电池电量一段时间后查询失败无反应"
+  "changelog": "修复电池电量一段时间后查询失败无反应",
+  "analytics": {
+    "doc_id": "IVx0bqWefaVflZssxeycgHvSn5J",
+    "sheet_id": "tblyZtqCQEC43Hzl"
+  }
 }

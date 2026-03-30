@@ -100,6 +100,9 @@ class MainWindow(QMainWindow):
         # 启动时检查更新
         QTimer.singleShot(2000, self.check_update_on_startup)
 
+        # 启动时同步用户版本信息到飞书
+        QTimer.singleShot(3000, self._sync_user_data)
+
         # 定时检查更新（每 6 小时）
         self._periodic_update_timer = QTimer(self)
         self._periodic_update_timer.timeout.connect(self._periodic_update_check)
@@ -285,6 +288,11 @@ class MainWindow(QMainWindow):
         for page in self.pages:
             if hasattr(page, 'load_config'):
                 page.load_config()
+
+    def _sync_user_data(self):
+        """同步用户版本信息到飞书"""
+        from query_tool.utils.data_sync import sync_user_version
+        sync_user_version()
     
     def save_config(self):
         """保存配置"""

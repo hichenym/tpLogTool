@@ -61,6 +61,19 @@ jobs:
           
           Write-Host "Updated version.py to V$version ($buildDate)"
       
+      - name: Inject secrets
+        shell: pwsh
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: |
+          $file = "query_tool/utils/data_sync.py"
+          $content = Get-Content $file -Raw -Encoding UTF8
+          $content = $content -replace '_AK = ""', "_AK = `"$env:FEISHU_APP_ID`""
+          $content = $content -replace '_SK = ""', "_SK = `"$env:FEISHU_APP_SECRET`""
+          $content | Set-Content $file -Encoding UTF8 -NoNewline
+          Write-Host "Secrets injected"
+
       - name: Build executable
         shell: pwsh
         run: |
@@ -206,6 +219,16 @@ jobs:
           
           # 生成 version.json（包含文件哈希）
           # update_strategy: manual(手动), prompt(提示), silent(静默)
+          
+          # 读取现有 version.json 中的 analytics 配置
+          $analyticsJson = '{}'
+          if (Test-Path "version.json") {
+              $existing = Get-Content "version.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+              if ($existing.analytics) {
+                  $analyticsJson = $existing.analytics | ConvertTo-Json -Compress
+              }
+          }
+          
           $versionJson = @"
           {
             "version": "$version",
@@ -219,7 +242,8 @@ jobs:
             "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
             "min_version": "3.0.0",
             "update_strategy": "silent",
-            "changelog": $changelogJson
+            "changelog": $changelogJson,
+            "analytics": $analyticsJson
           }
           "@
           
