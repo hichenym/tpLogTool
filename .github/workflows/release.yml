@@ -100,7 +100,9 @@ jobs:
             --hidden-import onnxruntime `
             --hidden-import cv2 `
             --hidden-import numpy `
+            --hidden-import lark_oapi `
             --collect-all ddddocr `
+            --collect-all lark_oapi `
             --collect-binaries onnxruntime `
             --collect-data onnxruntime `
             run.py
