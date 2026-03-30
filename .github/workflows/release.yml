@@ -101,8 +101,8 @@ jobs:
             --hidden-import cv2 `
             --hidden-import numpy `
             --hidden-import lark_oapi `
+            --hidden-import lark_oapi.api.bitable.v1 `
             --collect-all ddddocr `
-            --collect-all lark_oapi `
             --collect-binaries onnxruntime `
             --collect-data onnxruntime `
             run.py

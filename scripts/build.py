@@ -57,6 +57,8 @@ def build_exe():
         '--hidden-import onnxruntime '
         '--hidden-import cv2 '
         '--hidden-import numpy '
+        '--hidden-import lark_oapi '
+        '--hidden-import lark_oapi.api.bitable.v1 '
         '--collect-all ddddocr '
         '--collect-binaries onnxruntime '
         '--collect-data onnxruntime '
