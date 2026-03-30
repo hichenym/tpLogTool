@@ -1,18 +1,15 @@
 {
-  "version": "3.1.2",
-  "build_date": "20260326",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.2/TPQueryTool.exe",
-  "file_size_mb": 173.15,
-  "file_size_bytes": 181561959,
-  "file_hash": "78cbb044379b747745aa705fd1dc5c75db49467d1880ed1615901537065bf2d4",
+  "version": "3.1.9",
+  "build_date": "20260330",
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.9/TPQueryTool.exe",
+  "file_size_mb": 173.16,
+  "file_size_bytes": 181573474,
+  "file_hash": "fae5e9e538badea703fa4b60226b72d7ac153911fd8d2454329ca8506dabbc88",
   "hash_algorithm": "sha256",
-  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.2/TPQueryTool.exe.sha256",
-  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.1.2",
+  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.1.9/TPQueryTool.exe.sha256",
+  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.1.9",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": "修复电池电量一段时间后查询失败无反应",
-  "analytics": {
-    "doc_id": "IVx0bqWefaVflZssxeycgHvSn5J",
-    "sheet_id": "tblyZtqCQEC43Hzl"
-  }
+  "changelog": "请查看 Release 页面获取完整更新日志",
+  "analytics": {"doc_id":"IVx0bqWefaVflZssxeycgHvSn5J","sheet_id":"tblyZtqCQEC43Hzl"}
 }

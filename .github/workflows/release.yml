@@ -67,15 +67,18 @@ jobs:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
         run: |
-          python -c "
+          $pyScript = @'
           import os
-          f = 'query_tool/utils/data_sync.py'
-          c = open(f, 'r', encoding='utf-8').read()
-          c = c.replace('_AK = \"\"', '_AK = \"' + os.environ['FEISHU_APP_ID'] + '\"')
-          c = c.replace('_SK = \"\"', '_SK = \"' + os.environ['FEISHU_APP_SECRET'] + '\"')
-          open(f, 'w', encoding='utf-8').write(c)
-          print('Secrets injected')
-          "
+          f = "query_tool/utils/data_sync.py"
+          c = open(f, "r", encoding="utf-8").read()
+          ak = os.environ.get("FEISHU_APP_ID", "")
+          sk = os.environ.get("FEISHU_APP_SECRET", "")
+          c = c.replace("_AK = \"\"", f"_AK = \"{ak}\"")
+          c = c.replace("_SK = \"\"", f"_SK = \"{sk}\"")
+          open(f, "w", encoding="utf-8").write(c)
+          print(f"Secrets injected: AK={bool(ak)}, SK={bool(sk)}")
+          '@
+          $pyScript | python -
 
       - name: Build executable
         shell: pwsh
