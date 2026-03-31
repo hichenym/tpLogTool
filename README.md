@@ -24,7 +24,7 @@
 - 📝 日志记录系统（可配置调试信息输出）
 - 🔄 自动更新检测（支持手动检查和自动更新）
 - 💾 配置信息保存到注册表
-- 🎨 友好的图形界面（深色主题）
+- 🎨 友好的图形界面（支持深色/浅色主题切换，首次启动自动跟随 Windows 系统主题）
 
 ## 环境要求
 
@@ -272,7 +272,8 @@ query-tool/
 │   │   ├── workers.py         # 多线程Worker
 │   │   ├── button_manager.py  # 按钮管理器
 │   │   ├── message_manager.py # 消息管理器
-│   │   ├── style_manager.py   # 样式管理器
+│   │   ├── style_manager.py   # 样式管理器（QSS生成）
+│   │   ├── theme_manager.py   # 主题管理器（颜色Token）
 │   │   ├── table_helper.py    # 表格工具
 │   │   ├── thread_manager.py  # 线程管理器
 │   │   ├── gitlab_api.py      # GitLab API封装
@@ -448,6 +449,15 @@ A: 检查网络连接和账号密码是否正确
 A: PowerShell需要管理员权限或执行 `Set-ExecutionPolicy RemoteSigned`
 
 ## 更新日志
+
+### V3.2.0 (2026-03-31)
+- 新增深色/浅色主题切换功能，点击菜单栏 ☀/🌙 按钮即可切换
+- 首次启动自动跟随 Windows 系统主题偏好
+- 主题偏好保存到注册表，下次启动自动恢复
+- 重构主题架构：theme_manager（颜色Token）+ style_manager（QSS生成）双层设计
+- 修复多处弹窗控件在浅色模式下显示异常的问题
+- 修复新增固件按钮点击时主线程阻塞卡顿问题
+- 修复关闭窗口时定时器未停止的问题
 
 ### V3.1.1 (2026-03-25)
 - 修复电池电量查询接口2小时后Token过期导致失败的问题

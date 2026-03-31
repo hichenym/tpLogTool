@@ -1,4 +1,4 @@
-"""
+﻿"""
 批量设备固件升级对话框
 """
 from PyQt5.QtWidgets import (
@@ -9,6 +9,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize
 from PyQt5.QtGui import QColor, QIcon
 from .custom_widgets import set_dark_title_bar
+from query_tool.utils.theme_manager import t
+from query_tool.utils import StyleManager
 from query_tool.utils.logger import logger
 from query_tool.utils.session_manager import SessionManager
 from query_tool.utils.thread_manager import ThreadManager
@@ -387,7 +389,7 @@ class BatchUpgradeDialog(QDialog):
         info_button_layout.setSpacing(10)
         
         self.device_stats_label = QLabel("正在查询设备状态...")
-        self.device_stats_label.setStyleSheet("color: #4A9EFF; font-size: 13px; font-weight: bold;")
+        self.device_stats_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px; font-weight: bold;")
         
         self.batch_wake_btn = QPushButton("批量唤醒")
         self.batch_wake_btn.setIcon(QIcon(":/icons/device/werk_up_all.png"))
@@ -426,7 +428,6 @@ class BatchUpgradeDialog(QDialog):
         self.device_table.setMaximumHeight(table_height)
         self.device_table.setMinimumHeight(table_height)
         
-        from query_tool.utils import StyleManager
         StyleManager.apply_to_widget(self.device_table, "TABLE")
         
         header = self.device_table.horizontalHeader()
@@ -450,7 +451,7 @@ class BatchUpgradeDialog(QDialog):
             self.device_table.setItem(row, 1, QTableWidgetItem(sn))
             self.device_table.setItem(row, 2, QTableWidgetItem(model))
             status_item = QTableWidgetItem("查询中...")
-            status_item.setData(Qt.ForegroundRole, QColor("#FFA500"))
+            status_item.setData(Qt.ForegroundRole, QColor(t('status_pending')))
             self.device_table.setItem(row, 3, status_item)
         
         device_layout.addWidget(self.device_table)
@@ -465,7 +466,7 @@ class BatchUpgradeDialog(QDialog):
         # 查询条件框
         query_frame = QFrame()
         query_frame.setFrameShape(QFrame.StyledPanel)
-        query_frame.setStyleSheet("QFrame { border: 1px solid #555555; background-color: transparent; }")
+        query_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
         query_frame_layout = QVBoxLayout(query_frame)
         query_frame_layout.setContentsMargins(8, 8, 8, 8)
         query_frame_layout.setSpacing(8)
@@ -522,15 +523,7 @@ class BatchUpgradeDialog(QDialog):
         if self.has_single_model:
             self.identifier_input.setText(self.device_model)
             self.identifier_input.setReadOnly(True)
-            self.identifier_input.setStyleSheet("""
-                QLineEdit {
-                    background-color: #2b2b2b;
-                    color: #909090;
-                    border: 1px solid #555555;
-                    border-radius: 3px;
-                    padding: 4px;
-                }
-            """)
+            self.identifier_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
         
         # 占位标签，与第一行的"审核状态:"标签宽度一致
         query_label_placeholder = QLabel("")
@@ -619,7 +612,7 @@ class BatchUpgradeDialog(QDialog):
         self.prev_page_btn.clicked.connect(self.on_prev_page)
         
         self.page_label = QLabel("第 1 页")
-        self.page_label.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         self.page_label.setAlignment(Qt.AlignCenter)
         self.page_label.setFixedWidth(80)
         
@@ -637,7 +630,7 @@ class BatchUpgradeDialog(QDialog):
         
         # 统计信息（右侧）
         self.firmware_stats_label = QLabel("未选择固件")
-        self.firmware_stats_label.setStyleSheet("color: #4A9EFF; font-size: 13px;")
+        self.firmware_stats_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px;")
         bottom_layout.addWidget(self.firmware_stats_label)
         
         list_layout.addLayout(bottom_layout)
@@ -648,27 +641,7 @@ class BatchUpgradeDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         
-        action_button_style = """
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 6px 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-        """
+        action_button_style = StyleManager.get_ACTION_BUTTON()
         
         self.confirm_btn = QPushButton()
         self.confirm_btn.setIcon(QIcon(":/icons/common/ok.png"))
@@ -761,7 +734,7 @@ class BatchUpgradeDialog(QDialog):
                 if sn_item and sn_item.text() == sn:
                     status_item = self.device_table.item(row, 3)
                     status_item.setText("唤醒中...")
-                    status_item.setData(Qt.ForegroundRole, QColor("#FFA500"))
+                    status_item.setData(Qt.ForegroundRole, QColor(t('status_pending')))
                     break
         
         # 启动唤醒线程
@@ -791,7 +764,7 @@ class BatchUpgradeDialog(QDialog):
         for row in range(self.device_table.rowCount()):
             status_item = self.device_table.item(row, 3)
             status_item.setText("查询中...")
-            status_item.setData(Qt.ForegroundRole, QColor("#FFA500"))
+            status_item.setData(Qt.ForegroundRole, QColor(t('status_pending')))
         
         self.device_stats_label.setText("正在查询设备状态...")
         
@@ -863,10 +836,10 @@ class BatchUpgradeDialog(QDialog):
         
         # 审核结果颜色映射
         audit_result_color_map = {
-            '无需审核': '#909090',      # 灰色
-            '待审核': '#FFA500',        # 橙色
-            '审核通过': '#00FF00',      # 绿色
-            '审核不通过': '#FF0000',    # 红色
+            '无需审核': t('text_hint'),
+            '待审核':   t('status_pending'),
+            '审核通过': t('status_online'),
+            '审核不通过': t('status_offline'),
         }
         
         # 创建单选按钮组
@@ -898,7 +871,7 @@ class BatchUpgradeDialog(QDialog):
             item = QTableWidgetItem(audit_result)
             item.setTextAlignment(Qt.AlignCenter)
             # 根据审核结果设置颜色
-            audit_color = audit_result_color_map.get(audit_result, '#909090')  # 默认灰色
+            audit_color = audit_result_color_map.get(audit_result, t('text_hint'))
             item.setData(Qt.ForegroundRole, QColor(audit_color))
             self.firmware_table.setItem(row, 2, item)
             
@@ -1067,3 +1040,6 @@ class BatchUpgradeDialog(QDialog):
         # 停止所有线程
         self.thread_mgr.stop_all()
         event.accept()
+
+
+

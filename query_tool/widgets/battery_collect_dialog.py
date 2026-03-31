@@ -1,4 +1,4 @@
-"""
+﻿"""
 单设备电池电量数据采集对话框
 """
 
@@ -9,6 +9,8 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt5.QtCore import Qt, QDateTime, pyqtSignal
 from PyQt5.QtGui import QIcon
 from query_tool.widgets.custom_widgets import set_dark_title_bar
+from query_tool.utils.theme_manager import t
+from query_tool.utils import StyleManager
 from query_tool.utils.data_collect_api import DataCollectThread
 from query_tool.utils.logger import logger
 import csv
@@ -59,7 +61,7 @@ class BatteryCollectDialog(QDialog):
 
         # 设备信息
         info_label = QLabel(f"设备: {self.device_name}    SN: {self.sn}    型号: {self.model}")
-        info_label.setStyleSheet("color: #4a9eff; font-size: 13px;")
+        info_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px;")
         layout.addWidget(info_label)
 
         # 查询配置分组
@@ -68,22 +70,7 @@ class BatteryCollectDialog(QDialog):
         config_layout.setContentsMargins(15, 20, 15, 15)
         config_layout.setSpacing(12)
 
-        datetime_style = """
-            QDateTimeEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 4px;
-                min-height: 24px;
-            }
-            QDateTimeEdit:hover { border: 1px solid #6a6a6a; }
-            QDateTimeEdit::drop-down {
-                border: none;
-                background-color: #505050;
-                width: 20px;
-            }
-        """
+        datetime_style = ""  # 全局 QSS 已覆盖 QDateTimeEdit
 
         # 时间范围行
         time_row1 = QWidget()
@@ -93,7 +80,7 @@ class BatteryCollectDialog(QDialog):
 
         time_range_label = QLabel("时间范围:")
         time_range_label.setFixedWidth(70)
-        time_range_label.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        time_range_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
 
         self.start_time_edit = QDateTimeEdit()
         self.start_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
@@ -104,7 +91,7 @@ class BatteryCollectDialog(QDialog):
         self.start_time_edit.setStyleSheet(datetime_style)
 
         separator_label = QLabel("至")
-        separator_label.setStyleSheet("color: #909090; font-size: 12px;")
+        separator_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
         separator_label.setAlignment(Qt.AlignCenter)
         separator_label.setFixedWidth(30)
 
@@ -123,16 +110,7 @@ class BatteryCollectDialog(QDialog):
         config_layout.addWidget(time_row1)
 
         # 快捷按钮行
-        btn_style = """
-            QPushButton {
-                background-color: #404040; color: #e0e0e0;
-                border: 1px solid #555555; border-radius: 3px;
-                padding: 4px 12px; min-height: 24px;
-            }
-            QPushButton:hover { background-color: #4a4a4a; border: 1px solid #6a6a6a; }
-            QPushButton:pressed { background-color: #3c3c3c; }
-            QPushButton:disabled { background-color: #2b2b2b; color: #606060; border: 1px solid #3c3c3c; }
-        """
+        btn_style = StyleManager.get_ACTION_BUTTON()
 
         time_row2 = QWidget()
         time_row2_layout = QHBoxLayout(time_row2)
@@ -171,7 +149,6 @@ class BatteryCollectDialog(QDialog):
         self.result_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.result_table.setMinimumHeight(200)
 
-        from query_tool.utils import StyleManager
         StyleManager.apply_to_widget(self.result_table, "TABLE")
 
         header = self.result_table.horizontalHeader()
@@ -188,7 +165,7 @@ class BatteryCollectDialog(QDialog):
 
         bottom_layout = QHBoxLayout()
         self.stats_label = QLabel("共查询到 0 条记录")
-        self.stats_label.setStyleSheet("color: #4a9eff; font-size: 12px;")
+        self.stats_label.setStyleSheet(f"color: {t('status_info')}; font-size: 12px;")
 
         self.export_btn = QPushButton("导出结果")
         self.export_btn.setIcon(QIcon(":/icons/common/export.png"))
@@ -370,3 +347,5 @@ class BatteryCollectDialog(QDialog):
             self.query_thread.terminate()
             self.query_thread.wait()
         event.accept()
+
+

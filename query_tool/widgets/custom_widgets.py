@@ -1,4 +1,4 @@
-"""
+﻿"""
 自定义控件
 提供项目中使用的自定义Qt控件
 """
@@ -16,34 +16,31 @@ from query_tool.utils.config import (
     get_firmware_account_config, save_firmware_account_config
 )
 from query_tool.utils.device_query import DeviceQuery
+from query_tool.utils.style_manager import StyleManager
+from query_tool.utils.theme_manager import t
+
+
+def set_title_bar_theme(window, dark: bool = True):
+    """设置标题栏深/浅色（Windows 10/11）"""
+    try:
+        hwnd = window.winId().__int__()
+        value = ctypes.c_int(1 if dark else 0)
+        for attr_id in (20, 19):
+            try:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr_id, ctypes.byref(value), ctypes.sizeof(value)
+                )
+                return
+            except Exception:
+                continue
+    except Exception:
+        pass
 
 
 def set_dark_title_bar(window):
-    """设置深色标题栏（Windows 10/11）"""
-    from query_tool.utils.logger import logger
-    try:
-        hwnd = window.winId().__int__()
-        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        value = ctypes.c_int(1)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_USE_IMMERSIVE_DARK_MODE,
-            ctypes.byref(value),
-            ctypes.sizeof(value)
-        )
-    except Exception as e:
-        try:
-            # 尝试 Windows 10 的方式
-            DWMWA_USE_IMMERSIVE_DARK_MODE = 19
-            value = ctypes.c_int(1)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(value),
-                ctypes.sizeof(value)
-            )
-        except Exception as e2:
-            logger.debug(f"设置深色标题栏失败: {e2}")
+    """向后兼容：根据当前主题设置标题栏"""
+    from query_tool.utils.theme_manager import theme_manager
+    set_title_bar_theme(window, dark=theme_manager.is_dark)
 
 
 def show_message_box(parent, icon, title, text):
@@ -110,13 +107,15 @@ class BreathingLabel(QLabel):
     """呼吸闪烁标签（用于静默更新提示）"""
     def __init__(self, parent=None):
         super().__init__("●", parent)
-        self.setStyleSheet("color: #888888; font-weight: bold; padding-right: 5px; font-size: 14px;")
+        from query_tool.utils.theme_manager import t
+        _hint = t('text_hint')
+        self.setStyleSheet(f"color: {_hint}; font-weight: bold; padding-right: 5px; font-size: 14px;")
         self._opacity = 1.0
-        self._direction = -1  # -1 表示变暗，1 表示变亮
+        self._direction = -1
         self._timer = QTimer()
         self._timer.timeout.connect(self._update_opacity)
         self._is_running = False
-        self._current_color = "#888888"  # 当前颜色
+        self._current_color = _hint
         self._is_breathing = True  # 是否呼吸
     
     def setVisible(self, visible):
@@ -272,29 +271,7 @@ class SettingsDialog(QDialog):
         
         # 创建标签页
         self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #555555;
-                background-color: #2b2b2b;
-            }
-            QTabBar::tab {
-                background-color: #2b2b2b;
-                color: #e0e0e0;
-                padding: 8px 20px;
-                border: 1px solid #555555;
-                border-bottom: none;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: #505050;
-                color: #e0e0e0;
-                border-bottom: 1px solid #2b2b2b;
-            }
-            QTabBar::tab:hover {
-                background-color: #4a4a4a;
-                color: #e0e0e0;
-            }
-        """)
+        self.tab_widget.setStyleSheet(StyleManager.get_TAB_WIDGET())
         
         # 账号配置标签页
         account_tab = self.create_account_tab()
@@ -347,31 +324,7 @@ class SettingsDialog(QDialog):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
-        scroll_area.setStyleSheet("""
-            QScrollArea {
-                background-color: #2b2b2b;
-                border: none;
-            }
-            QScrollBar:vertical {
-                background-color: #2b2b2b;
-                width: 12px;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #555555;
-                min-height: 20px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #666666;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: none;
-            }
-        """)
+        scroll_area.setStyleSheet(StyleManager.get_SCROLL_AREA())
         
         # 滚动内容容器
         scroll_content = QWidget()
@@ -407,25 +360,7 @@ class SettingsDialog(QDialog):
     def create_account_group(self, title, username, password, is_device=True):
         """创建账号配置组"""
         group = QGroupBox(title)
-        group.setStyleSheet("""
-            QGroupBox {
-                color: #e0e0e0;
-                font-size: 12px;
-                font-weight: bold;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                margin-top: 10px;
-                margin-bottom: 15px;
-                padding-top: 15px;
-                background-color: transparent;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0 5px;
-            }
-        """)
+        group.setStyleSheet(StyleManager.get_GROUP_BOX())
         
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(12)
@@ -515,25 +450,7 @@ class SettingsDialog(QDialog):
 
         # 版本信息组
         version_group = QGroupBox("版本信息")
-        version_group.setStyleSheet("""
-            QGroupBox {
-                color: #e0e0e0;
-                font-size: 12px;
-                font-weight: bold;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                margin-top: 10px;
-                margin-bottom: 15px;
-                padding-top: 15px;
-                background-color: transparent;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0 5px;
-            }
-        """)
+        version_group.setStyleSheet(StyleManager.get_GROUP_BOX())
 
         version_layout = QVBoxLayout(version_group)
         version_layout.setSpacing(8)
@@ -541,7 +458,7 @@ class SettingsDialog(QDialog):
 
         # 当前版本（双击显示详细信息）
         self.current_version_label = VersionLabel(f"当前版本：{get_short_version()}")
-        self.current_version_label.setStyleSheet("color: #e0e0e0;")
+        self.current_version_label.setStyleSheet(f"color: {t('text_primary')};")
         self.current_version_label.double_clicked = self.on_version_double_click
         
         # 保存版本信息用于切换显示
@@ -569,25 +486,7 @@ class SettingsDialog(QDialog):
         if update_strategy_str != 'silent':
             # 更新检测组
             update_group = QGroupBox("更新检测")
-            update_group.setStyleSheet("""
-                QGroupBox {
-                    color: #e0e0e0;
-                    font-size: 12px;
-                    font-weight: bold;
-                    border: 1px solid #555555;
-                    border-radius: 4px;
-                    margin-top: 10px;
-                    margin-bottom: 15px;
-                    padding-top: 15px;
-                    background-color: transparent;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    subcontrol-position: top left;
-                    left: 10px;
-                    padding: 0 5px;
-                }
-            """)
+            update_group.setStyleSheet(StyleManager.get_GROUP_BOX())
 
             update_layout = QVBoxLayout(update_group)
             update_layout.setSpacing(12)
@@ -605,7 +504,6 @@ class SettingsDialog(QDialog):
             self.check_update_btn_widget = None
 
         tab_layout.addStretch()
-
         return tab
     
     def on_version_double_click(self):
@@ -873,3 +771,4 @@ class SettingsDialog(QDialog):
                 if not firmware_saved:
                     error_msg += "固件账号 "
                 self.main_window.show_error(error_msg)
+

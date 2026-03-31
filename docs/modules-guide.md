@@ -33,10 +33,12 @@ app_config = config_manager.load_app_config()
 print(app_config.export_path)
 print(app_config.phone_history)
 print(app_config.last_page_index)
+print(app_config.theme)  # 'dark' 或 'light'
 
 # 保存应用配置
 app_config.export_path = "C:/exports"
 app_config.phone_history.append("13800138000")
+app_config.theme = 'light'
 config_manager.save_app_config(app_config)
 ```
 
@@ -157,31 +159,123 @@ self.msg.info("自定义消息", duration=5000)  # 5秒
 self.msg.clear()
 ```
 
-### 5. 样式管理器（style_manager.py）
+### 5. 样式管理器（style_manager.py / theme_manager.py）
 
-#### 应用样式
+项目使用双层主题架构：
+- `theme_manager.py` — 只管颜色 Token（深色/浅色两套），职责单一
+- `style_manager.py` — 所有 QSS 字符串生成的唯一入口，新增控件只需在这里加方法
+
+#### 应用样式（推荐方式）
 ```python
 from query_tool.utils import StyleManager
 
-# 应用预定义样式
-StyleManager.apply_to_widget(self.menu_btn, "MENU_BUTTON")
-StyleManager.apply_to_widget(self.settings_btn, "SETTINGS_BUTTON")
-StyleManager.apply_to_widget(self.menu_widget, "MENU_BAR")
-StyleManager.apply_to_widget(self.result_table, "TABLE")
-StyleManager.apply_to_widget(self.splitter, "SPLITTER")
+# 应用预定义样式（推荐）
+StyleManager.apply(self.result_table, "TABLE")
+StyleManager.apply(self.splitter, "SPLITTER")
+StyleManager.apply(self.frame, "QUERY_FRAME")
+StyleManager.apply(self.btn, "ACTION_BUTTON")
 
-# 获取样式字符串
-style = StyleManager.get_style("VERSION_LABEL")
-self.version_label.setStyleSheet(style)
+# 向后兼容写法（等同于 apply）
+StyleManager.apply_to_widget(self.result_table, "TABLE")
 ```
 
 #### 可用样式列表
-- `MENU_BUTTON` - 菜单按钮样式
-- `SETTINGS_BUTTON` - 设置按钮样式
-- `MENU_BAR` - 菜单栏样式
-- `TABLE` - 表格样式
-- `SPLITTER` - 分隔器样式
-- `VERSION_LABEL` - 版本标签样式
+| 样式名 | 适用控件 |
+|--------|---------|
+| `MENU_BUTTON` | 菜单按钮 |
+| `SETTINGS_BUTTON` | 设置/图标按钮 |
+| `MENU_BAR` | 顶部菜单栏容器 |
+| `TABLE` | QTableWidget |
+| `SPLITTER` | QSplitter |
+| `PLAINTEXT_EDIT_TABLE` | QPlainTextEdit（表格风格）|
+| `VERSION_LABEL` | 版本标签 |
+| `COMBOBOX` | QComboBox |
+| `TAB_WIDGET` | QTabWidget |
+| `GROUP_BOX` | QGroupBox |
+| `SCROLL_AREA` | QScrollArea |
+| `ACTION_BUTTON` | 操作按钮（确认/取消等）|
+| `QUERY_FRAME` | 带边框的查询条件容器 |
+| `READONLY_INPUT` | 只读输入框 |
+| `PROGRESS_BAR` | QProgressBar |
+| `CONTEXT_MENU` | 右键菜单 |
+| `COMBO_LINE_EDIT_ACTIVE` | ComboBox 内嵌 LineEdit（激活态）|
+| `COMBO_LINE_EDIT_INACTIVE` | ComboBox 内嵌 LineEdit（未激活态）|
+
+#### 获取颜色 Token
+```python
+from query_tool.utils.theme_manager import t
+
+# 在 f-string 里直接使用
+label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
+separator.setStyleSheet(f"QFrame {{ background-color: {t('border')}; }}")
+
+# 常用 Token
+# t('bg_dark')       最深背景
+# t('bg_mid')        中间背景
+# t('bg_light')      较浅背景（输入框）
+# t('text_primary')  主文字色
+# t('text_hint')     提示文字色
+# t('text_disabled') 禁用文字色
+# t('border')        边框色
+# t('accent')        强调色（青绿）
+# t('status_online') 在线状态色
+# t('status_offline')离线状态色
+# t('status_pending')进行中状态色
+# t('status_info')   信息蓝色
+```
+
+#### 新增控件样式（只需改 style_manager.py 一个文件）
+```python
+# 在 StyleManager 类里加一个 get_XXX 方法即可
+@classmethod
+def get_MY_WIDGET(cls) -> str:
+    return f"""
+    QWidget {{
+        background-color: {t('bg_light')};
+        color: {t('text_primary')};
+        border: 1px solid {t('border')};
+    }}
+    """
+
+# 使用
+StyleManager.apply(my_widget, "MY_WIDGET")
+```
+
+#### ThemedWidget Mixin（自定义控件自动响应主题切换）
+```python
+from query_tool.utils.style_manager import ThemedWidget, StyleManager
+
+class MyDialog(QDialog, ThemedWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        ThemedWidget.__init__(self)  # 注册主题监听，控件销毁时自动断开
+        self._init_ui()
+
+    def _init_ui(self):
+        self.table = QTableWidget()
+        StyleManager.apply(self.table, "TABLE")
+        self.frame = QFrame()
+        StyleManager.apply(self.frame, "QUERY_FRAME")
+
+    def refresh_theme(self):
+        """主题切换时自动调用"""
+        StyleManager.apply(self.table, "TABLE")
+        StyleManager.apply(self.frame, "QUERY_FRAME")
+```
+
+#### 主题切换
+```python
+from query_tool.utils.theme_manager import theme_manager
+
+# 切换主题（会自动触发所有注册了监听的控件刷新）
+theme_manager.toggle()
+theme_manager.set_dark()
+theme_manager.set_light()
+
+# 查询当前主题
+if theme_manager.is_dark:
+    print("当前是深色模式")
+```
 
 ### 6. 表格工具（table_helper.py）
 

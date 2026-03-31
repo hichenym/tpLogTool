@@ -8,6 +8,8 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
 from query_tool.widgets.custom_widgets import set_dark_title_bar
+from query_tool.utils.theme_manager import t
+from query_tool.utils import StyleManager
 
 
 class CollectTypeSelectorDialog(QDialog):
@@ -46,27 +48,11 @@ class CollectTypeSelectorDialog(QDialog):
         from query_tool.utils.data_collect_api import get_enabled_collect_types
         collect_types = get_enabled_collect_types()
         
-        button_style = """
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 8px 20px;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-        """
+        button_style = StyleManager.get_ACTION_BUTTON()
         
         if not collect_types:
             no_type_label = QLabel("暂无可用的采集类型")
-            no_type_label.setStyleSheet("color: #909090; font-size: 13px;")
+            no_type_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 13px;")
             no_type_label.setAlignment(Qt.AlignCenter)
             button_layout.addWidget(no_type_label)
         else:
@@ -93,22 +79,7 @@ class CollectTypeSelectorDialog(QDialog):
         cancel_btn = QPushButton("取消")
         cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
         cancel_btn.setFixedSize(80, 32)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 6px 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-        """)
+        cancel_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         cancel_btn.clicked.connect(self.reject)
         button_layout_bottom.addWidget(cancel_btn)
         

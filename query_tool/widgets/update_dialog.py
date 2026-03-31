@@ -13,30 +13,10 @@ from query_tool.utils.update_checker import VersionInfo
 
 
 def set_dark_title_bar(window):
-    """设置深色标题栏（Windows 10/11）"""
-    try:
-        hwnd = window.winId().__int__()
-        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        
-        try:
-            value = ctypes.c_int(1)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(value),
-                ctypes.sizeof(value)
-            )
-        except:
-            DWMWA_USE_IMMERSIVE_DARK_MODE = 19
-            value = ctypes.c_int(1)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(value),
-                ctypes.sizeof(value)
-            )
-    except:
-        pass
+    """根据当前主题设置标题栏"""
+    from query_tool.utils.theme_manager import theme_manager
+    from query_tool.widgets.custom_widgets import set_title_bar_theme
+    set_title_bar_theme(window, dark=theme_manager.is_dark)
 
 
 class UpdatePromptDialog(QDialog):

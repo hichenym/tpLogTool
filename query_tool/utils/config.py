@@ -32,6 +32,7 @@ class AppConfig:
     export_path: str = ''
     phone_history: List[str] = field(default_factory=list)
     last_page_index: int = 0
+    theme: str = 'dark'  # 'dark' 或 'light'
 
 
 class ConfigManager:
@@ -162,11 +163,13 @@ class ConfigManager:
         phone_history_str = self._get_value('phone_history', '')
         phone_history = phone_history_str.split('|')[:5] if phone_history_str else []
         last_page_index = int(self._get_value('last_page_index', '0'))
+        theme = self._get_value('theme', 'dark')
         
         return AppConfig(
             export_path=export_path,
             phone_history=phone_history,
-            last_page_index=last_page_index
+            last_page_index=last_page_index,
+            theme=theme
         )
     
     def save_app_config(self, config: AppConfig) -> bool:
@@ -176,6 +179,7 @@ class ConfigManager:
             phone_history_str = '|'.join(config.phone_history[:5])
             self._set_value('phone_history', phone_history_str)
             self._set_value('last_page_index', str(config.last_page_index))
+            self._set_value('theme', config.theme)
             return True
         except Exception as e:
             print(f"保存配置失败: {e}")

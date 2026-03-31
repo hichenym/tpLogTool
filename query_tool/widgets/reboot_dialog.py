@@ -1,4 +1,4 @@
-"""
+﻿"""
 设备重启对话框
 """
 from PyQt5.QtWidgets import (
@@ -8,6 +8,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QColor, QIcon
 from .custom_widgets import set_dark_title_bar
+from query_tool.utils.theme_manager import t
+from query_tool.utils import StyleManager
 from query_tool.utils.logger import logger
 from query_tool.utils.session_manager import SessionManager
 from query_tool.utils.thread_manager import ThreadManager
@@ -165,7 +167,7 @@ class RebootDialog(QDialog):
                 pass
         
         info_label = QLabel(f"设备: {device_name}    SN: {self.sn}")
-        info_label.setStyleSheet("color: #4a9eff; font-size: 13px;")
+        info_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px;")
         
         layout.addWidget(info_label)
         
@@ -182,12 +184,12 @@ class RebootDialog(QDialog):
         status_layout.setSpacing(10)
         
         status_label_text = QLabel("在线状态:")
-        status_label_text.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        status_label_text.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         status_label_text.setFixedWidth(70)
         status_label_text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
         self.status_label = QLabel("● 查询中...")
-        self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
         self.status_label.setFixedWidth(80)  # 固定宽度，防止文本变化时位置移动
         
         # 唤醒按钮（只显示图标）
@@ -208,30 +210,7 @@ class RebootDialog(QDialog):
         self.refresh_btn.setToolTip("刷新状态")
         self.refresh_btn.clicked.connect(self.on_refresh)
         
-        # 按钮样式（最小内边距）
-        button_style = """
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 0px;
-                margin: 0px;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-        """
+        button_style = StyleManager.get_ACTION_BUTTON()
         self.wake_btn.setStyleSheet(button_style)
         self.refresh_btn.setStyleSheet(button_style)
         
@@ -252,16 +231,16 @@ class RebootDialog(QDialog):
         time_layout.setSpacing(10)
         
         time_label = QLabel("重启时间:")
-        time_label.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        time_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         time_label.setFixedWidth(70)
         time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)  # 垂直居中对齐
         
         self.radio_now = QRadioButton("立即重启")
         self.radio_now.setChecked(True)
-        self.radio_now.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.radio_now.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         
         self.radio_delay = QRadioButton("5分钟后重启")
-        self.radio_delay.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.radio_delay.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         
         self.button_group = QButtonGroup()
         self.button_group.addButton(self.radio_now)
@@ -282,28 +261,7 @@ class RebootDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         
-        # 确认/取消按钮样式（与固件对话框一致）
-        action_button_style = """
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 6px 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-        """
+        action_button_style = StyleManager.get_ACTION_BUTTON()
         
         self.confirm_btn = QPushButton()
         self.confirm_btn.setIcon(QIcon(":/icons/common/ok.png"))
@@ -329,7 +287,7 @@ class RebootDialog(QDialog):
     def query_status(self):
         """查询设备在线状态"""
         self.status_label.setText("● 查询中...")
-        self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
         
         # 禁用按钮
         self.wake_btn.setEnabled(False)
@@ -345,7 +303,7 @@ class RebootDialog(QDialog):
             thread.start()
         else:
             self.status_label.setText("● 查询失败")
-            self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
     
     def on_status_query_finished(self, is_online, message):
         """状态查询完成"""
@@ -353,10 +311,10 @@ class RebootDialog(QDialog):
         
         if is_online:
             self.status_label.setText("● 在线")
-            self.status_label.setStyleSheet("color: #00FF00; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 12px;")
         else:
             self.status_label.setText("● 离线")
-            self.status_label.setStyleSheet("color: #FF0000; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
         
         # 启用按钮
         self.wake_btn.setEnabled(True)
@@ -371,7 +329,7 @@ class RebootDialog(QDialog):
         """唤醒设备"""
         # 显示唤醒中状态
         self.status_label.setText("● 唤醒中...")
-        self.status_label.setStyleSheet("color: #FFA500; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {t('status_pending')}; font-size: 12px;")
         
         self.wake_btn.setEnabled(False)
         self.refresh_btn.setEnabled(False)
@@ -395,15 +353,15 @@ class RebootDialog(QDialog):
             # 唤醒成功，设备在线
             self.is_online = True
             self.status_label.setText("● 在线")
-            self.status_label.setStyleSheet("color: #00FF00; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 12px;")
         else:
             # 唤醒失败，恢复之前的状态显示
             if self.is_online:
                 self.status_label.setText("● 在线")
-                self.status_label.setStyleSheet("color: #00FF00; font-size: 12px;")
+                self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 12px;")
             else:
                 self.status_label.setText("● 离线")
-                self.status_label.setStyleSheet("color: #FF0000; font-size: 12px;")
+                self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
     
     def on_confirm(self):
         """确认重启"""
@@ -439,7 +397,7 @@ class RebootDialog(QDialog):
             
             # 更新状态显示
             self.status_label.setText("● 离线")
-            self.status_label.setStyleSheet("color: #FF0000; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
     
     def send_reboot_command(self):
         """发送重启命令"""
@@ -478,3 +436,5 @@ class RebootDialog(QDialog):
         self.refresh_btn.setEnabled(True)
         self.confirm_btn.setEnabled(True)
         self.cancel_btn.setEnabled(True)
+
+

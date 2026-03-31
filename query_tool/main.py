@@ -31,44 +31,34 @@ from query_tool import pages
 
 # 导入工具和控件
 from query_tool.utils import config_manager
+from query_tool.utils.style_manager import StyleManager
+from query_tool.utils.theme_manager import theme_manager
 from query_tool.widgets import SettingsDialog
 
 # 禁用SSL警告
 requests.packages.urllib3.disable_warnings()
 
 
-def set_dark_title_bar(window):
-    """设置深色标题栏（Windows 10/11）"""
+def set_title_bar_theme(window, dark: bool = True):
+    """设置标题栏深/浅色模式（Windows 10/11）"""
     try:
         hwnd = window.winId().__int__()
-        
-        # Windows 10 版本 1809 及以上支持深色标题栏
-        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 10 1903+)
-        # DWMWA_USE_IMMERSIVE_DARK_MODE = 19 (Windows 10 1809)
-        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        
-        # 尝试使用 Windows 11 的方式
-        try:
-            value = ctypes.c_int(1)  # 1 = 深色模式
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(value),
-                ctypes.sizeof(value)
-            )
-        except Exception as e:
-            logger.debug(f"设置深色标题栏失败（Windows 11方式）: {e}")
-            # 如果失败，尝试 Windows 10 的方式
-            DWMWA_USE_IMMERSIVE_DARK_MODE = 19
-            value = ctypes.c_int(1)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(value),
-                ctypes.sizeof(value)
-            )
+        value = ctypes.c_int(1 if dark else 0)
+        for attr_id in (20, 19):  # 先试 Win11 方式，再试 Win10
+            try:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr_id, ctypes.byref(value), ctypes.sizeof(value)
+                )
+                return
+            except Exception:
+                continue
     except Exception as e:
-        print(f"设置深色标题栏失败: {e}")
+        print(f"设置标题栏主题失败: {e}")
+
+
+# 向后兼容别名
+def set_dark_title_bar(window):
+    set_title_bar_theme(window, dark=True)
 
 
 class MainWindow(QMainWindow):
@@ -94,9 +84,11 @@ class MainWindow(QMainWindow):
         self.load_config()
         self.center_on_screen()
         
-        # 设置深色标题栏（需要在窗口显示后调用）
-        QTimer.singleShot(0, lambda: set_dark_title_bar(self))
+        # 设置标题栏主题（需要在窗口显示后调用）
+        QTimer.singleShot(0, lambda: set_title_bar_theme(self, theme_manager.is_dark))
         
+        # 监听主题切换
+        theme_manager.theme_changed.connect(self._on_theme_changed)
         # 启动时检查更新
         QTimer.singleShot(2000, self.check_update_on_startup)
 
@@ -112,6 +104,7 @@ class MainWindow(QMainWindow):
         """初始化UI"""
         # 创建自定义菜单栏
         menu_widget = QWidget()
+        self._menu_widget = menu_widget  # 保存引用供主题刷新使用
         menu_widget.setFixedHeight(28)
         menu_widget.setAutoFillBackground(True)  # 确保使用自定义背景
         from query_tool.utils import StyleManager
@@ -153,7 +146,16 @@ class MainWindow(QMainWindow):
         StyleManager.apply_to_widget(self.settings_btn, "SETTINGS_BUTTON")
         self.settings_btn.clicked.connect(self.on_settings_clicked)
         
+        # 主题切换按钮
+        self.theme_btn = QPushButton()
+        self.theme_btn.setFixedSize(32, 28)
+        self.theme_btn.setToolTip("切换浅色/深色模式")
+        self._update_theme_btn_icon()
+        StyleManager.apply_to_widget(self.theme_btn, "SETTINGS_BUTTON")
+        self.theme_btn.clicked.connect(self._toggle_theme)
+        
         menu_layout.addStretch()
+        menu_layout.addWidget(self.theme_btn)
         menu_layout.addWidget(self.settings_btn)
         menu_layout.addSpacing(5)
         
@@ -184,12 +186,12 @@ class MainWindow(QMainWindow):
         from PyQt5.QtWidgets import QLabel
         self.status_label = QLabel("")
         self.status_label.setTextFormat(Qt.RichText)
-        self.status_label.setStyleSheet("color: #e0e0e0; padding-left: 5px;")
+        self.status_label.setStyleSheet(f"color: {theme_manager.token('text_primary')}; padding-left: 5px;")
         self.status_bar.addWidget(self.status_label, 1)
         
         # 下载进度标签 - 右侧
         self.download_progress_label = QLabel("")
-        self.download_progress_label.setStyleSheet("color: #4a9eff; padding-right: 10px;")
+        self.download_progress_label.setStyleSheet(f"color: {theme_manager.token('status_info')}; padding-right: 10px;")
         self.download_progress_label.setVisible(False)  # 默认隐藏
         self.status_bar.addPermanentWidget(self.download_progress_label)
         
@@ -239,6 +241,56 @@ class MainWindow(QMainWindow):
         """设置按钮点击"""
         dialog = SettingsDialog(self)
         dialog.exec_()
+
+    def _update_theme_btn_icon(self):
+        """更新主题切换按钮图标/文字"""
+        if theme_manager.is_dark:
+            self.theme_btn.setText("☀")  # 深色模式下显示太阳（切换到浅色）
+            self.theme_btn.setToolTip("切换到浅色模式")
+        else:
+            self.theme_btn.setText("🌙")  # 浅色模式下显示月亮（切换到深色）
+            self.theme_btn.setToolTip("切换到深色模式")
+
+    def _toggle_theme(self):
+        """切换主题"""
+        theme_manager.toggle()
+        # 保存到注册表
+        app_config = config_manager.load_app_config()
+        app_config.theme = 'dark' if theme_manager.is_dark else 'light'
+        config_manager.save_app_config(app_config)
+
+    def _on_theme_changed(self):
+        """主题切换后刷新主窗口自身的样式"""
+        from query_tool.utils import StyleManager
+        from query_tool.utils.logger import logger
+        try:
+            # 刷新菜单栏
+            if hasattr(self, '_menu_widget'):
+                StyleManager.apply_to_widget(self._menu_widget, "MENU_BAR")
+            for btn in self.page_buttons:
+                StyleManager.apply_to_widget(btn, "MENU_BUTTON")
+            StyleManager.apply_to_widget(self.settings_btn, "SETTINGS_BUTTON")
+            StyleManager.apply_to_widget(self.theme_btn, "SETTINGS_BUTTON")
+            self._update_theme_btn_icon()
+            # 刷新状态栏标签颜色
+            self.status_label.setStyleSheet(
+                f"color: {theme_manager.token('text_primary')}; padding-left: 5px;"
+            )
+            self.download_progress_label.setStyleSheet(
+                f"color: {theme_manager.token('status_info')}; padding-right: 10px;"
+            )
+            # 刷新标题栏
+            set_title_bar_theme(self, theme_manager.is_dark)
+        except Exception as e:
+            logger.error(f"主窗口主题刷新失败: {e}")
+        # 通知各页面刷新（每个 page 独立 try，互不影响）
+        for page in self.pages:
+            if hasattr(page, 'refresh_theme'):
+                try:
+                    page.refresh_theme()
+                except Exception as e:
+                    from query_tool.utils.logger import logger
+                    logger.error(f"页面 {getattr(page, 'page_name', page)} 主题刷新失败: {e}")
     
     def on_page_status_message(self, message, msg_type, timeout):
         """处理页面状态消息"""
@@ -288,7 +340,11 @@ class MainWindow(QMainWindow):
         for page in self.pages:
             if hasattr(page, 'load_config'):
                 page.load_config()
-
+        
+        # 恢复上次的主题
+        app_config = config_manager.load_app_config()
+        if app_config.theme == 'light':
+            theme_manager.set_light()
     def _sync_user_data(self):
         """同步用户版本信息到飞书"""
         from query_tool.utils.data_sync import sync_user_version
@@ -303,6 +359,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """窗口关闭事件"""
         from query_tool.utils.logger import logger
+        
+        # 停止定时器
+        if hasattr(self, '_periodic_update_timer'):
+            self._periodic_update_timer.stop()
         
         # 停止呼吸动画
         if hasattr(self, 'breathing_label'):
@@ -798,6 +858,43 @@ del "%~f0"
             self.show_error(f"应用更新失败: {e}", 5000)
 
 
+def _get_windows_theme() -> str:
+    """读取 Windows 系统深/浅色偏好，返回 'dark' 或 'light'"""
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            0, winreg.KEY_READ
+        )
+        value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        winreg.CloseKey(key)
+        return 'light' if value == 1 else 'dark'
+    except Exception:
+        return 'dark'  # 读取失败默认深色
+
+
+def _get_startup_theme() -> str:
+    """
+    决定启动时使用的主题：
+    - 用户已手动设置过（注册表有 theme 键）→ 使用用户偏好
+    - 首次启动（无 theme 键）→ 跟随 Windows 系统主题
+    """
+    import winreg
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\TPQueryTool",
+            0, winreg.KEY_READ
+        )
+        value, _ = winreg.QueryValueEx(key, "theme")
+        winreg.CloseKey(key)
+        return value  # 用户已设置过，直接用
+    except (FileNotFoundError, OSError):
+        # 首次启动，跟随系统
+        return _get_windows_theme()
+
+
 def main():
     """主函数入口"""
     # 设置全局异常处理
@@ -815,300 +912,23 @@ def main():
     try:
         app = QApplication(sys.argv)
         
-        # 设置全局深色主题
-        app.setStyleSheet("""
-        /* 全局样式 */
-        QWidget {
-            background-color: #2b2b2b;
-            color: #e0e0e0;
-        }
+        # 在创建任何控件之前，先从注册表读取并应用保存的主题
+        # 这样 init_ui 里所有控件直接用正确主题的颜色创建，无需事后刷新
+        from query_tool.utils.theme_manager import LIGHT_THEME
+        _saved_theme = _get_startup_theme()
+        if _saved_theme == 'light':
+            # 直接修改内部状态，不触发信号（此时还没有任何控件需要刷新）
+            theme_manager._is_dark = False
+            theme_manager._tokens = LIGHT_THEME.copy()
         
-        /* 输入框样式 */
-        QTextEdit, QPlainTextEdit, QLineEdit {
-            background-color: #404040;
-            color: #e0e0e0;
-            border: 1px solid #555555;
-            border-radius: 3px;
-            padding: 4px;
-            selection-background-color: #505050;
-        }
-        QTextEdit:disabled, QPlainTextEdit:disabled, QLineEdit:disabled {
-            background-color: #2b2b2b;
-            color: #606060;
-            border: 1px solid #3c3c3c;
-        }
+        # 设置全局主题样式
+        app.setStyleSheet(StyleManager.build_global_stylesheet())
         
-        /* 下拉框样式 */
-        QComboBox {
-            background-color: #404040;
-            color: #e0e0e0;
-            border: 1px solid #555555;
-            border-radius: 3px;
-            padding: 4px;
-            padding-right: 0px;
-        }
-        QComboBox:hover {
-            border: 1px solid #555555;
-        }
-        QComboBox:disabled {
-            background-color: #2b2b2b;
-            color: #606060;
-            border: 1px solid #3c3c3c;
-        }
-        QComboBox::drop-down {
-            border: none;
-            background-color: #505050;
-            width: 24px;
-            margin: 0px;
-            padding: 0px;
-            border-left: 1px solid #555555;
-        }
-        QComboBox::drop-down:disabled {
-            background-color: #3c3c3c;
-            border-left: 1px solid #3c3c3c;
-        }
-        QComboBox::down-arrow {
-            image: none;
-            width: 0px;
-        }
-        QComboBox QAbstractItemView {
-            background-color: #3c3c3c;
-            color: #e0e0e0;
-            selection-background-color: #505050;
-            border: 1px solid #555555;
-        }
+        # 主题切换时刷新全局样式
+        def _on_global_theme_changed():
+            app.setStyleSheet(StyleManager.build_global_stylesheet())
         
-        /* 日期选择器样式 */
-        QDateEdit {
-            background-color: #404040;
-            color: #e0e0e0;
-            border: 1px solid #555555;
-            border-radius: 3px;
-            padding: 4px;
-        }
-        QDateEdit:hover {
-            border: 1px solid #555555;
-        }
-        QDateEdit:disabled {
-            background-color: #2b2b2b;
-            color: #606060;
-            border: 1px solid #3c3c3c;
-        }
-        QDateEdit::drop-down {
-            border: none;
-            background-color: #505050;
-        }
-        QDateEdit::drop-down:disabled {
-            background-color: #3c3c3c;
-        }
-        QDateEdit QAbstractItemView {
-            background-color: #3c3c3c;
-            color: #e0e0e0;
-            selection-background-color: #505050;
-            border: 1px solid #555555;
-        }
-        QCalendarWidget {
-            background-color: #3c3c3c;
-            color: #e0e0e0;
-        }
-        QCalendarWidget QToolButton {
-            background-color: #404040;
-            color: #e0e0e0;
-            border: 1px solid #555555;
-            border-radius: 3px;
-        }
-        QCalendarWidget QMenu {
-            background-color: #3c3c3c;
-            color: #e0e0e0;
-        }
-        QCalendarWidget QSpinBox {
-            background-color: #404040;
-            color: #e0e0e0;
-            border: 1px solid #555555;
-        }
-        QCalendarWidget QWidget {
-            alternate-background-color: #404040;
-        }
-        QCalendarWidget QAbstractItemView:enabled {
-            background-color: #3c3c3c;
-            color: #e0e0e0;
-            selection-background-color: #505050;
-        }
-        
-        /* 按钮样式 */
-        QPushButton {
-            background-color: #3c3c3c;
-            color: #e0e0e0;
-            border: 1px solid #555555;
-            border-radius: 3px;
-            padding: 5px 15px;
-        }
-        QPushButton:hover {
-            background-color: #4a4a4a;
-            border: 1px solid #555555;
-        }
-        QPushButton:pressed {
-            background-color: #505050;
-        }
-        QPushButton:disabled {
-            background-color: #2b2b2b;
-            color: #707070;
-            border: 1px solid #3c3c3c;
-        }
-        
-        /* 复选框样式 */
-        QCheckBox {
-            color: #e0e0e0;
-            spacing: 5px;
-        }
-        QCheckBox:disabled {
-            color: #606060;
-        }
-        QCheckBox::indicator {
-            width: 16px;
-            height: 16px;
-            border: 1px solid #555555;
-            border-radius: 3px;
-            background-color: #404040;
-        }
-        QCheckBox::indicator:hover {
-            border: 1px solid #555555;
-        }
-        QCheckBox::indicator:checked {
-            background-color: #0d7377;
-            border: 1px solid #0d7377;
-        }
-        QCheckBox::indicator:disabled {
-            background-color: #2b2b2b;
-            border: 1px solid #3c3c3c;
-        }
-        QCheckBox::indicator:checked:disabled {
-            background-color: #0a5a5d;
-            border: 1px solid #0a5a5d;
-        }
-        
-        /* 标签样式 */
-        QLabel {
-            color: #e0e0e0;
-            background-color: transparent;
-        }
-        
-        /* 状态栏样式 */
-        QStatusBar {
-            background-color: #2b2b2b;
-            color: #e0e0e0;
-            border-top: 1px solid #3c3c3c;
-            border-right: none;
-            border-bottom: none;
-            border-left: none;
-        }
-        QStatusBar::item {
-            border: none;
-        }
-        QStatusBar QLabel {
-            border: none;
-        }
-        
-        /* 表格角落按钮样式（左上角空白单元格） */
-        QTableCornerButton::section {
-            background-color: #2b2b2b;
-            border: 1px solid #555555;
-        }
-        
-        /* 滚动条样式 */
-        QScrollBar:vertical {
-            background-color: #2b2b2b;
-            width: 12px;
-            border: none;
-            margin: 0px;
-        }
-        QScrollBar::handle:vertical {
-            background-color: #555555;
-            border-radius: 6px;
-            min-height: 20px;
-            margin: 2px;
-        }
-        QScrollBar::handle:vertical:hover {
-            background-color: #6a6a6a;
-        }
-        QScrollBar::add-line:vertical {
-            height: 0px;
-            background: none;
-            border: none;
-        }
-        QScrollBar::sub-line:vertical {
-            height: 0px;
-            background: none;
-            border: none;
-        }
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-            background: #2b2b2b;
-        }
-        QScrollBar:horizontal {
-            background-color: #2b2b2b;
-            height: 12px;
-            border: none;
-            margin: 0px;
-        }
-        QScrollBar::handle:horizontal {
-            background-color: #555555;
-            border-radius: 6px;
-            min-width: 20px;
-            margin: 2px;
-        }
-        QScrollBar::handle:horizontal:hover {
-            background-color: #6a6a6a;
-        }
-        QScrollBar::add-line:horizontal {
-            width: 0px;
-            background: none;
-            border: none;
-        }
-        QScrollBar::sub-line:horizontal {
-            width: 0px;
-            background: none;
-            border: none;
-        }
-        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
-            background: #2b2b2b;
-        }
-        
-        /* 对话框样式 */
-        QDialog {
-            background-color: #2b2b2b;
-            color: #e0e0e0;
-        }
-        
-        /* 分组框样式 */
-        QGroupBox {
-            background-color: transparent;
-            color: #e0e0e0;
-            border: 1px solid #555555;
-            border-radius: 5px;
-            margin-top: 10px;
-            font-weight: bold;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 5px;
-        }
-        
-        /* 普通框架样式 */
-        QFrame {
-            background-color: #2b2b2b;
-            border: none;
-        }
-        
-        /* 消息框样式 */
-        QMessageBox {
-            background-color: #2b2b2b;
-            color: #e0e0e0;
-        }
-        QMessageBox QPushButton {
-            min-width: 80px;
-        }
-        """)
+        theme_manager.theme_changed.connect(_on_global_theme_changed)
         
         window = MainWindow()
         window.show()

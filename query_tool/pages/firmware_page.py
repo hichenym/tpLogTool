@@ -1,4 +1,4 @@
-"""
+﻿"""
 固件查询页面
 提供固件列表查询和筛选功能
 """
@@ -21,6 +21,7 @@ if project_root not in sys.path:
 from .base_page import BasePage
 from .page_registry import register_page
 from query_tool.utils import ButtonManager, ThreadManager, StyleManager, config_manager
+from query_tool.utils.theme_manager import t
 from query_tool.widgets.custom_widgets import set_dark_title_bar
 from query_tool.widgets import EditFirmwareDialog
 from query_tool.utils.logger import logger
@@ -161,12 +162,8 @@ class FirmwarePage(BasePage):
         # 查询条件区（带边框）
         query_frame = QFrame()
         query_frame.setFrameShape(QFrame.StyledPanel)
-        query_frame.setStyleSheet("""
-            QFrame {
-                border: 1px solid #555555;
-                background-color: transparent;
-            }
-        """)
+        query_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._query_frame = query_frame
         query_frame.setFixedHeight(44)
         query_layout = QHBoxLayout(query_frame)
         query_layout.setContentsMargins(8, 8, 8, 8)
@@ -329,7 +326,7 @@ class FirmwarePage(BasePage):
         
         # 页码标签
         self.page_label = QLabel("[0/0]")
-        self.page_label.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         self.page_label.setFixedHeight(22)
         self.page_label.setMinimumWidth(60)
         self.page_label.setAlignment(Qt.AlignCenter)
@@ -350,7 +347,7 @@ class FirmwarePage(BasePage):
         
         # 提示文本
         tip_label = QLabel("提示: 双击单元格修改固件信息，右键表格展开更多操作")
-        tip_label.setStyleSheet("color: #909090; font-size: 11px;")
+        tip_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
         tip_label.setFixedHeight(22)
         tip_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
@@ -486,10 +483,6 @@ class FirmwarePage(BasePage):
                 no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
                 no_btn.setIconSize(QSize(20, 20))
                 no_btn.setFixedSize(60, 32)
-            
-            # 应用样式
-            StyleManager.apply_to_widget(msg_box, "DIALOG")
-            
             # 延迟设置深色标题栏
             QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
             
@@ -503,84 +496,78 @@ class FirmwarePage(BasePage):
         
         self.show_progress("正在加载新增页面...")
         
-        # 获取 CSRF token
-        from query_tool.utils.firmware_api import login
-        from bs4 import BeautifulSoup
-        
-        session = login()
-        if not session:
-            self.show_error("登录失败，无法新增固件")
-            return
-        
-        try:
-            # 访问新增页面获取 token
-            create_url = "https://update.seetong.com/admin/update/debug-firmware/create"
-            response = session.get(create_url)
-            
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # 提取 CSRF token
-                token_meta = soup.find('meta', {'name': 'csrf-token'})
-                if token_meta:
-                    csrf_token = token_meta.get('content', '')
-                else:
-                    # 从 input 获取
-                    token_inputs = soup.find_all('input', {'name': '_token'})
-                    csrf_token = ''
-                    for token_input in token_inputs:
-                        token_value = token_input.get('value', '')
-                        if token_value and '{{' not in token_value and 'csrf_token()' not in token_value:
-                            csrf_token = token_value
-                            break
-                
-                if csrf_token:
-                    # 获取当天的开始和结束时间
+        # 在后台线程中获取 CSRF token，避免阻塞主线程
+        from PyQt5.QtCore import QThread, pyqtSignal as _signal
+
+        class LoadCreatePageThread(QThread):
+            finished_signal = _signal(str, dict)  # (csrf_token, firmware_data)
+            error_signal = _signal(str)
+
+            def run(self):
+                try:
+                    from query_tool.utils.firmware_api import login
+                    from bs4 import BeautifulSoup
                     from datetime import datetime
+
+                    session = login()
+                    if not session:
+                        self.error_signal.emit("登录失败，无法新增固件")
+                        return
+
+                    create_url = "https://update.seetong.com/admin/update/debug-firmware/create"
+                    response = session.get(create_url)
+
+                    if response.status_code != 200:
+                        self.error_signal.emit(f"加载新增页面失败: HTTP {response.status_code}")
+                        return
+
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    token_meta = soup.find('meta', {'name': 'csrf-token'})
+                    csrf_token = token_meta.get('content', '') if token_meta else ''
+                    if not csrf_token:
+                        for ti in soup.find_all('input', {'name': '_token'}):
+                            v = ti.get('value', '')
+                            if v and '{{' not in v and 'csrf_token()' not in v:
+                                csrf_token = v
+                                break
+
+                    if not csrf_token:
+                        self.error_signal.emit("无法获取 CSRF token")
+                        return
+
                     today = datetime.now()
-                    start_time_str = today.strftime('%Y-%m-%d 00:00:00')
-                    end_time_str = today.strftime('%Y-%m-%d 23:59:59')
-                    
-                    # 创建空的固件数据
                     firmware_data = {
                         '_token': csrf_token,
-                        'device_identify': '',
-                        'file_md5': '',
-                        'create_comment': '',
+                        'device_identify': '', 'file_md5': '', 'create_comment': '',
                         'support_sn': '',
-                        'start_time': start_time_str,
-                        'end_time': end_time_str,
-                        'file_temp_path': '',
-                        'file_formal_path': '',
-                        'file_url': '',
-                        'file_path': '',
-                        'model_id': '',
-                        'version_info': '',
-                        'audit_result': '1',
-                        'audit_user_id': '',
-                        'audit_remark': '',
-                        'audit_time': ''
+                        'start_time': today.strftime('%Y-%m-%d 00:00:00'),
+                        'end_time': today.strftime('%Y-%m-%d 23:59:59'),
+                        'file_temp_path': '', 'file_formal_path': '', 'file_url': '',
+                        'file_path': '', 'model_id': '', 'version_info': '',
+                        'audit_result': '1', 'audit_user_id': '', 'audit_remark': '', 'audit_time': ''
                     }
-                    
-                    self.show_info("加载完成")
-                    
-                    # 显示新增对话框（firmware_id 为 None 表示新增模式）
-                    dialog = EditFirmwareDialog(None, firmware_data, self)
-                    
-                    result = dialog.exec_()
-                    if result == EditFirmwareDialog.Accepted:
-                        result_data = dialog.get_result()
-                        if result_data:
-                            self.submit_firmware_create(result_data)
-                    else:
-                        # 用户取消了新增
-                        self.show_info("已取消新增固件")
-                else:
-                    self.show_error("无法获取 CSRF token")
+                    self.finished_signal.emit(csrf_token, firmware_data)
+                except Exception as e:
+                    self.error_signal.emit(f"加载新增页面出错: {str(e)}")
+
+        load_thread = LoadCreatePageThread()
+
+        def on_load_done(csrf_token, firmware_data):
+            self.show_info("加载完成")
+            dialog = EditFirmwareDialog(None, firmware_data, self)
+            result = dialog.exec_()
+            if result == EditFirmwareDialog.Accepted:
+                result_data = dialog.get_result()
+                if result_data:
+                    self.submit_firmware_create(result_data)
             else:
-                self.show_error(f"加载新增页面失败: HTTP {response.status_code}")
-        except Exception as e:
-            self.show_error(f"加载新增页面出错: {str(e)}")
+                self.show_info("已取消新增固件")
+
+        load_thread.finished_signal.connect(on_load_done)
+        load_thread.error_signal.connect(self.show_error)
+        load_thread.finished.connect(lambda: load_thread.deleteLater())
+        self.thread_mgr.add("load_create_page", load_thread)
+        load_thread.start()
     
     def submit_firmware_create(self, data):
         """提交新增固件"""
@@ -723,10 +710,6 @@ class FirmwarePage(BasePage):
                 no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
                 no_btn.setIconSize(QSize(20, 20))
                 no_btn.setFixedSize(60, 32)
-            
-            # 应用样式
-            StyleManager.apply_to_widget(msg_box, "DIALOG")
-            
             # 延迟设置深色标题栏
             QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
             
@@ -912,12 +895,11 @@ class FirmwarePage(BasePage):
         # 计算起始序号：(当前页-1) * 每页条数 + 1
         start_index = (self.current_page - 1) * self.per_page + 1
         
-        # 审核结果文本映射和颜色
         audit_result_color_map = {
-            '无需审核': '#909090',      # 灰色
-            '待审核': '#FFA500',        # 橙色
-            '审核通过': '#00FF00',      # 绿色
-            '审核不通过': '#FF0000',    # 红色
+            '无需审核': t('text_hint'),
+            '待审核':   t('status_pending'),
+            '审核通过': t('status_online'),
+            '审核不通过': t('status_offline'),
         }
         
         for row, firmware in enumerate(self.filtered_list):
@@ -939,7 +921,7 @@ class FirmwarePage(BasePage):
             item = QTableWidgetItem(audit_result)
             item.setTextAlignment(Qt.AlignCenter)
             # 根据审核结果设置颜色（使用 setData 保持颜色不受选中状态影响）
-            audit_color = audit_result_color_map.get(audit_result, '#909090')  # 默认灰色
+            audit_color = audit_result_color_map.get(audit_result, t('text_hint'))
             item.setData(Qt.ForegroundRole, QColor(audit_color))
             self.result_table.setItem(row, 1, item)
             
@@ -1026,28 +1008,28 @@ class FirmwarePage(BasePage):
         
         # 创建右键菜单
         menu = QMenu(self.result_table)
-        menu.setStyleSheet("""
-            QMenu {
+        menu.setStyleSheet(f"""
+            QMenu {{
                 min-width: 120px;
-                background-color: #3c3c3c;
-                color: #e0e0e0;
-                border: 1px solid #555555;
+                background-color: {t('bg_mid')};
+                color: {t('text_primary')};
+                border: 1px solid {t('border')};
                 padding: 2px;
-            }
-            QMenu::item {
+            }}
+            QMenu::item {{
                 padding: 6px 30px 6px 6px;
                 margin: 1px 2px;
                 border-radius: 2px;
-            }
-            QMenu::item:selected {
-                background-color: #505050;
-                color: #ffffff;
-            }
-            QMenu::separator {
+            }}
+            QMenu::item:selected {{
+                background-color: {t('selection_bg')};
+                color: {t('text_primary')};
+            }}
+            QMenu::separator {{
                 height: 1px;
-                background-color: #555555;
+                background-color: {t('border')};
                 margin: 3px 5px;
-            }
+            }}
         """)
         
         # 基础操作：复制下载链接
@@ -1319,10 +1301,6 @@ class FirmwarePage(BasePage):
             no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
             no_btn.setIconSize(QSize(20, 20))
             no_btn.setFixedSize(60, 32)
-        
-        # 应用样式
-        StyleManager.apply_to_widget(msg_box, "DIALOG")
-        
         # 延迟设置深色标题栏
         QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
         
@@ -1380,3 +1358,13 @@ class FirmwarePage(BasePage):
         """清理资源"""
         # 停止所有线程
         self.thread_mgr.stop_all()
+
+    def refresh_theme(self):
+        """主题切换时刷新样式"""
+        from query_tool.utils import StyleManager
+        StyleManager.apply_to_widget(self.result_table, "TABLE")
+        if hasattr(self, '_query_frame'):
+            self._query_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        if hasattr(self, 'page_label'):
+            self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
+

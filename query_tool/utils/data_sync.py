@@ -6,8 +6,8 @@ import time
 from PyQt5.QtCore import QThread, pyqtSignal
 
 
-_AK = ""
-_SK = ""
+_AK = "cli_a931c8d41f369bef"
+_SK = "ycfuyQOK6jT8kOyVWcGdBfxnTjNA0Rcg"
 
 _SYNC_INTERVAL = 60
 _last_sync_time = 0
@@ -96,6 +96,16 @@ def sync_user_version():
         now = time.time()
         if now - _last_sync_time < _SYNC_INTERVAL:
             return
+        # 清理已完成的线程，防止 _threads 因异常未清空而永久阻塞
+        for th in list(_threads):
+            try:
+                if not th.isRunning():
+                    _threads.remove(th)
+            except Exception:
+                try:
+                    _threads.remove(th)
+                except Exception:
+                    pass
         if _threads:
             return
 
@@ -109,17 +119,20 @@ def sync_user_version():
         _last_sync_time = now
 
         from query_tool.version import get_version_string
-        t = _SyncThread(user, get_version_string())
+        thread = _SyncThread(user, get_version_string())
 
         def _cleanup():
             try:
-                _threads.remove(t)
+                _threads.remove(thread)
             except ValueError:
                 pass
-            t.deleteLater()
+            try:
+                thread.deleteLater()
+            except Exception:
+                pass
 
-        t.done.connect(_cleanup)
-        _threads.append(t)
-        t.start()
+        thread.done.connect(_cleanup)
+        _threads.append(thread)
+        thread.start()
     except Exception:
         pass

@@ -1,4 +1,4 @@
-"""
+﻿"""
 批量重启对话框
 支持批量查询在线状态、批量唤醒、批量重启
 """
@@ -15,6 +15,7 @@ from query_tool.utils import StyleManager, check_device_online, wake_device_smar
 from query_tool.utils.logger import logger
 from query_tool.utils.thread_manager import ThreadManager
 from query_tool.widgets.custom_widgets import set_dark_title_bar
+from query_tool.utils.theme_manager import t
 
 
 class BatchStatusWorker(QObject):
@@ -285,7 +286,7 @@ class BatchRebootDialog(QDialog):
         info_button_layout.setSpacing(10)
         
         self.stats_label = QLabel("正在查询设备状态...")
-        self.stats_label.setStyleSheet("color: #4A9EFF; font-size: 13px; font-weight: bold;")
+        self.stats_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px; font-weight: bold;")
         
         self.batch_wake_btn = QPushButton("批量唤醒")
         self.batch_wake_btn.setIcon(QIcon(":/icons/device/werk_up_all.png"))
@@ -336,7 +337,7 @@ class BatchRebootDialog(QDialog):
             self.device_table.setItem(row, 0, QTableWidgetItem(device_name))
             self.device_table.setItem(row, 1, QTableWidgetItem(sn))
             status_item = QTableWidgetItem("查询中...")
-            status_item.setData(Qt.ForegroundRole, QColor("#FFA500"))
+            status_item.setData(Qt.ForegroundRole, QColor(t('status_pending')))
             self.device_table.setItem(row, 2, status_item)
         
         operation_layout.addWidget(self.device_table)
@@ -455,7 +456,7 @@ class BatchRebootDialog(QDialog):
                 if sn_item and sn_item.text() == sn:
                     status_item = self.device_table.item(row, 2)
                     status_item.setText("唤醒中...")
-                    status_item.setData(Qt.ForegroundRole, QColor("#FFA500"))
+                    status_item.setData(Qt.ForegroundRole, QColor(t('status_pending')))
                     break
         
         # 启动唤醒线程
@@ -484,7 +485,7 @@ class BatchRebootDialog(QDialog):
         for row in range(self.device_table.rowCount()):
             status_item = self.device_table.item(row, 2)
             status_item.setText("查询中...")
-            status_item.setData(Qt.ForegroundRole, QColor("#FFA500"))
+            status_item.setData(Qt.ForegroundRole, QColor(t('status_pending')))
         
         self.stats_label.setText("正在查询设备状态...")
         
@@ -579,3 +580,6 @@ class BatchRebootDialog(QDialog):
         # 停止所有线程
         self.thread_mgr.stop_all()
         event.accept()
+
+
+

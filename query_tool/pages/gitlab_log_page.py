@@ -1,4 +1,4 @@
-"""
+﻿"""
 GitLab 日志导出页面
 提供 GitLab 提交日志查询和导出功能
 """
@@ -15,6 +15,8 @@ from PyQt5.QtGui import QIcon
 from .base_page import BasePage
 from .page_registry import register_page
 from query_tool.utils import ButtonManager, ThreadManager, config_manager
+from query_tool.utils.style_manager import StyleManager
+from query_tool.utils.theme_manager import t, theme_manager
 from query_tool.utils.logger import logger
 from query_tool.utils.gitlab_api import GitLabAPI
 from query_tool.utils.excel_helper import create_gitlab_xlsx
@@ -178,14 +180,7 @@ class GitLabLogPage(BasePage):
         # 设置项目下拉框 lineEdit 初始样式（透明背景）
         project_line_edit = self.project_combo.lineEdit()
         if project_line_edit:
-            project_line_edit.setStyleSheet("""
-                QLineEdit {
-                    background-color: transparent;
-                    color: #606060;
-                    border: none;
-                    padding: 4px;
-                }
-            """)
+            project_line_edit.setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
         
         # 禁用滚轮事件
         self.project_combo.wheelEvent = lambda event: event.ignore()
@@ -227,14 +222,7 @@ class GitLabLogPage(BasePage):
         # 设置提交者下拉框 lineEdit 初始样式（透明背景）
         author_line_edit = self.author_combo.lineEdit()
         if author_line_edit:
-            author_line_edit.setStyleSheet("""
-                QLineEdit {
-                    background-color: transparent;
-                    color: #606060;
-                    border: none;
-                    padding: 4px;
-                }
-            """)
+            author_line_edit.setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
         
         # 禁用滚轮事件
         self.author_combo.wheelEvent = lambda event: event.ignore()
@@ -385,35 +373,14 @@ class GitLabLogPage(BasePage):
         self.author_combo.lineEdit().setPlaceholderText("")
         
         # 移除背景色（设置为透明/禁用样式）
-        self.project_combo.lineEdit().setStyleSheet("""
-            QLineEdit {
-                background-color: transparent;
-                color: #606060;
-                border: none;
-                padding: 4px;
-            }
-        """)
+        self.project_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
         
         # 分支下拉框也需要设置透明背景
         # 如果分支下拉框是可编辑的，需要设置 lineEdit 样式
         if self.branch_combo.lineEdit():
-            self.branch_combo.lineEdit().setStyleSheet("""
-                QLineEdit {
-                    background-color: transparent;
-                    color: #606060;
-                    border: none;
-                    padding: 4px;
-                }
-            """)
+            self.branch_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
         
-        self.author_combo.lineEdit().setStyleSheet("""
-            QLineEdit {
-                background-color: transparent;
-                color: #606060;
-                border: none;
-                padding: 4px;
-            }
-        """)
+        self.author_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
         
         self.set_controls_enabled(False)
         
@@ -436,15 +403,7 @@ class GitLabLogPage(BasePage):
         self.connect_btn.setEnabled(True)
         
         # 恢复项目下拉框的样式和占位文字
-        self.project_combo.lineEdit().setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: none;
-                padding: 4px;
-                selection-background-color: #505050;
-            }
-        """)
+        self.project_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_ACTIVE())
         self.project_combo.lineEdit().setPlaceholderText("请选择或输入项目名...")
         
         # 填充项目列表
@@ -519,15 +478,7 @@ class GitLabLogPage(BasePage):
         # 设置 lineEdit 的样式（恢复正常背景色）
         line_edit = self.branch_combo.lineEdit()
         if line_edit:
-            line_edit.setStyleSheet("""
-                QLineEdit {
-                    background-color: #404040;
-                    color: #e0e0e0;
-                    border: none;
-                    padding: 4px;
-                    selection-background-color: #505050;
-                }
-            """)
+            line_edit.setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_ACTIVE())
         
         self.branch_combo.clear()
         
@@ -607,15 +558,7 @@ class GitLabLogPage(BasePage):
         self.author_combo.setCurrentIndex(-1)
         
         # 恢复提交者下拉框的样式和占位文字
-        self.author_combo.lineEdit().setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: none;
-                padding: 4px;
-                selection-background-color: #505050;
-            }
-        """)
+        self.author_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_ACTIVE())
         self.author_combo.lineEdit().setPlaceholderText("全部提交者")
         
         # 提交者查询完成后，启用所有控件
@@ -634,15 +577,7 @@ class GitLabLogPage(BasePage):
         self.author_combo.setCurrentIndex(-1)
         
         # 即使失败也恢复样式和占位文字
-        self.author_combo.lineEdit().setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: none;
-                padding: 4px;
-                selection-background-color: #505050;
-            }
-        """)
+        self.author_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_ACTIVE())
         self.author_combo.lineEdit().setPlaceholderText("全部提交者")
         
         # 即使失败也启用所有控件
@@ -904,3 +839,18 @@ class GitLabLogPage(BasePage):
     def cleanup(self):
         """清理资源"""
         self.thread_mgr.stop_all()
+
+    def refresh_theme(self):
+        """主题切换时刷新 ComboBox lineEdit 样式"""
+        inactive = StyleManager.get_COMBO_LINE_EDIT_INACTIVE()
+        active = StyleManager.get_COMBO_LINE_EDIT_ACTIVE()
+        if hasattr(self, 'project_combo') and self.project_combo.lineEdit():
+            style = active if self.is_connected else inactive
+            self.project_combo.lineEdit().setStyleSheet(style)
+        if hasattr(self, 'author_combo') and self.author_combo.lineEdit():
+            style = active if self.is_connected else inactive
+            self.author_combo.lineEdit().setStyleSheet(style)
+        if hasattr(self, 'branch_combo') and self.branch_combo.lineEdit():
+            style = active if self.is_connected else inactive
+            self.branch_combo.lineEdit().setStyleSheet(style)
+

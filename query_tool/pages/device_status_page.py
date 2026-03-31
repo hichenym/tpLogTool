@@ -1,4 +1,4 @@
-"""
+﻿"""
 设备状态查询页面
 提供设备信息查询、唤醒、导出等功能
 """
@@ -18,6 +18,7 @@ from query_tool.utils import (
     ButtonManager, MessageManager, ThreadManager, StyleManager, TableHelper,
     get_account_config, DeviceQuery, check_device_online
 )
+from query_tool.utils.theme_manager import t, theme_manager
 from query_tool.utils.workers import QueryThread, WakeThread, PhoneQueryThread
 from query_tool.widgets import PlainTextEdit, ClickableLineEdit, show_question_box
 
@@ -125,21 +126,22 @@ class DeviceStatusPage(BasePage):
 
         # 使用QSplitter实现可拖拽调整高度
         splitter = QSplitter(Qt.Vertical)
+        self._splitter = splitter  # 保存引用供主题刷新使用
         StyleManager.apply_to_widget(splitter, "SPLITTER")
         
         # 设置分割线样式：增加上下边距，使用柔和的颜色提示可拖动
         splitter.setHandleWidth(1)
-        splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #707070;
+        splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {t('border_hover')};
                 margin: 6px 0px;
-            }
-            QSplitter::handle:hover {
-                background-color: #909090;
-            }
-            QSplitter::handle:pressed {
-                background-color: #A0A0A0;
-            }
+            }}
+            QSplitter::handle:hover {{
+                background-color: {t('text_hint')};
+            }}
+            QSplitter::handle:pressed {{
+                background-color: {t('text_secondary')};
+            }}
         """)
         
         # 顶部查询区
@@ -167,12 +169,8 @@ class DeviceStatusPage(BasePage):
         # ===== 账号查询区（带边框） =====
         account_frame = QFrame()
         account_frame.setFrameShape(QFrame.StyledPanel)
-        account_frame.setStyleSheet("""
-            QFrame {
-                border: 1px solid #555555;
-                background-color: transparent;
-            }
-        """)
+        account_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._account_frame = account_frame
         account_frame.setFixedHeight(44)  # 设置固定高度，与其他区域保持一致
         account_frame_layout = QHBoxLayout(account_frame)
         account_frame_layout.setContentsMargins(8, 8, 8, 8)
@@ -219,32 +217,14 @@ class DeviceStatusPage(BasePage):
         self.sn_input.setMinimumHeight(80)
         self.sn_input.setPlaceholderText("")
         self.sn_input.selectionChanged.connect(self.on_text_selection_changed)
-        self.sn_input.setStyleSheet("""
-            QTextEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-            }
-            QTextEdit:focus {
-                border: 1px solid #555555;
-            }
-        """)
+        self.sn_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
         
         # ID输入框
         self.id_input = PlainTextEdit()
         self.id_input.setMinimumHeight(80)
         self.id_input.setPlaceholderText("")
         self.id_input.selectionChanged.connect(self.on_text_selection_changed)
-        self.id_input.setStyleSheet("""
-            QTextEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-            }
-            QTextEdit:focus {
-                border: 1px solid #555555;
-            }
-        """)
+        self.id_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
 
         # 按钮
         btn_widget = QWidget()
@@ -293,7 +273,8 @@ class DeviceStatusPage(BasePage):
         separator1.setFrameShape(QFrame.VLine)
         separator1.setFrameShadow(QFrame.Plain)
         separator1.setFixedWidth(1)
-        separator1.setStyleSheet("QFrame { background-color: #555555; border: none; }")
+        separator1.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+        self._separator1 = separator1
         input_layout.addWidget(separator1)
         
         input_layout.addWidget(self.id_input, 1)
@@ -303,7 +284,8 @@ class DeviceStatusPage(BasePage):
         separator2.setFrameShape(QFrame.VLine)
         separator2.setFrameShadow(QFrame.Plain)
         separator2.setFixedWidth(1)
-        separator2.setStyleSheet("QFrame { background-color: #555555; border: none; }")
+        separator2.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+        self._separator2 = separator2
         input_layout.addWidget(separator2)
         
         input_layout.addWidget(btn_widget)
@@ -323,12 +305,8 @@ class DeviceStatusPage(BasePage):
         # ===== 筛选条件区 =====
         filter_frame = QFrame()
         filter_frame.setFrameShape(QFrame.StyledPanel)
-        filter_frame.setStyleSheet("""
-            QFrame {
-                border: 1px solid #555555;
-                background-color: transparent;
-            }
-        """)
+        filter_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._filter_frame = filter_frame
         filter_frame.setFixedHeight(44)  # 设置固定高度，与其他区域保持一致
         filter_layout = QHBoxLayout(filter_frame)  # 改为水平布局，单行显示
         filter_layout.setContentsMargins(8, 8, 8, 8)
@@ -343,14 +321,7 @@ class DeviceStatusPage(BasePage):
         self.sn_filter_input.setFixedHeight(28)
         self.sn_filter_input.setPlaceholderText("输入SN筛选...")
         self.sn_filter_input.textChanged.connect(self.on_filter_changed)
-        self.sn_filter_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                padding: 4px;
-            }
-        """)
+        self.sn_filter_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
         
         # 型号筛选
         model_filter_label = QLabel("型号:")
@@ -376,7 +347,7 @@ class DeviceStatusPage(BasePage):
         
         # 数量显示
         self.match_count_label = QLabel("数量: 0 / 0")
-        self.match_count_label.setStyleSheet("color: #e0e0e0; font-size: 12px; border: none;")  # 去掉边框
+        self.match_count_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px; border: none;")
         
         # 按比例 1:1:3 添加控件
         filter_layout.addWidget(sn_filter_label)
@@ -395,12 +366,8 @@ class DeviceStatusPage(BasePage):
         # ===== 批量操作区 =====
         batch_frame = QFrame()
         batch_frame.setFrameShape(QFrame.StyledPanel)
-        batch_frame.setStyleSheet("""
-            QFrame {
-                border: 1px solid #555555;
-                background-color: transparent;
-            }
-        """)
+        batch_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._batch_frame = batch_frame
         batch_frame.setFixedHeight(44)  # 设置固定高度，与其他区域保持一致
         batch_layout = QHBoxLayout(batch_frame)
         batch_layout.setContentsMargins(8, 8, 8, 8)
@@ -441,7 +408,7 @@ class DeviceStatusPage(BasePage):
         
         # 提示文本
         result_tip = QLabel("提示: 双击单元格可复制内容，右击设备行展开操作")
-        result_tip.setStyleSheet("color: #909090; font-size: 11px; border: none;")
+        result_tip.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px; border: none;")
         
         batch_layout.addWidget(self.select_all_checkbox)
         batch_layout.addWidget(self.batch_wake_btn)
@@ -511,12 +478,8 @@ class DeviceStatusPage(BasePage):
         # ===== 导出区域（带边框） =====
         export_frame = QFrame()
         export_frame.setFrameShape(QFrame.StyledPanel)
-        export_frame.setStyleSheet("""
-            QFrame {
-                border: 1px solid #555555;
-                background-color: transparent;
-            }
-        """)
+        export_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._export_frame = export_frame
         export_frame.setFixedHeight(44)  # 设置固定高度，与其他区域保持一致
         export_layout = QHBoxLayout(export_frame)
         export_layout.setContentsMargins(8, 8, 8, 8)
@@ -532,14 +495,7 @@ class DeviceStatusPage(BasePage):
         self.export_path_input.setReadOnly(True)
         self.export_path_input.setFocusPolicy(Qt.NoFocus)
         self.export_path_input.setFixedHeight(28)
-        self.export_path_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                padding: 4px;
-            }
-        """)
+        self.export_path_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
         
         self.export_btn = QPushButton("导出结果")
         self.export_btn.setIcon(QIcon(":/icons/common/export.png"))
@@ -736,28 +692,28 @@ class DeviceStatusPage(BasePage):
         
         # 创建右键菜单
         menu = QMenu(self.result_table)
-        menu.setStyleSheet("""
-            QMenu {
+        menu.setStyleSheet(f"""
+            QMenu {{
                 min-width: 120px;
-                background-color: #3c3c3c;
-                color: #e0e0e0;
-                border: 1px solid #555555;
+                background-color: {t('bg_mid')};
+                color: {t('text_primary')};
+                border: 1px solid {t('border')};
                 padding: 2px;
-            }
-            QMenu::item {
+            }}
+            QMenu::item {{
                 padding: 6px 30px 6px 6px;
                 margin: 1px 2px;
                 border-radius: 2px;
-            }
-            QMenu::item:selected {
-                background-color: #505050;
-                color: #ffffff;
-            }
-            QMenu::separator {
+            }}
+            QMenu::item:selected {{
+                background-color: {t('selection_bg')};
+                color: {t('text_primary')};
+            }}
+            QMenu::separator {{
                 height: 1px;
-                background-color: #555555;
+                background-color: {t('border')};
                 margin: 3px 5px;
-            }
+            }}
         """)
         
         # 唤醒操作
@@ -882,10 +838,6 @@ class DeviceStatusPage(BasePage):
                 no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
                 no_btn.setIconSize(QSize(20, 20))
                 no_btn.setFixedSize(60, 32)
-            
-            # 应用样式
-            StyleManager.apply_to_widget(msg_box, "DIALOG")
-            
             # 延迟设置深色标题栏
             QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
             
@@ -995,10 +947,6 @@ class DeviceStatusPage(BasePage):
                 cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
                 cancel_btn.setIconSize(QSize(20, 20))
                 cancel_btn.setFixedSize(60, 32)
-            
-            # 应用样式
-            StyleManager.apply_to_widget(msg_box, "DIALOG")
-            
             # 延迟设置深色标题栏
             from query_tool.widgets.custom_widgets import set_dark_title_bar
             QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
@@ -1386,7 +1334,7 @@ class DeviceStatusPage(BasePage):
         self.result_table.clearSelection()
         
         # 在在线状态列显示"唤醒中..."
-        status_item = self.create_status_item("唤醒中...", "#FFA500")
+        status_item = self.create_status_item("唤醒中...", t('status_pending'))
         self.result_table.setItem(row, 8, status_item)
         
         # 显示开始唤醒的提示
@@ -1485,7 +1433,7 @@ class DeviceStatusPage(BasePage):
         
         # 在在线状态列显示"唤醒中..."
         for row in selected_rows:
-            status_item = self.create_status_item("唤醒中...", "#FFA500")
+            status_item = self.create_status_item("唤醒中...", t('status_pending'))
             self.result_table.setItem(row, 8, status_item)
         
         # 启动唤醒线程
@@ -1737,10 +1685,6 @@ class DeviceStatusPage(BasePage):
                 no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
                 no_btn.setIconSize(QSize(20, 20))
                 no_btn.setFixedSize(60, 32)
-            
-            # 应用样式
-            StyleManager.apply_to_widget(msg_box, "DIALOG")
-            
             # 延迟设置深色标题栏
             QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
             
@@ -2029,6 +1973,33 @@ class DeviceStatusPage(BasePage):
     def cleanup(self):
         """清理资源"""
         self.thread_mgr.stop_all()
+
+    def refresh_theme(self):
+        """主题切换时刷新样式"""
+        from query_tool.utils import StyleManager
+        StyleManager.apply_to_widget(self.result_table, "TABLE")
+        if hasattr(self, '_splitter'):
+            StyleManager.apply_to_widget(self._splitter, "SPLITTER")
+        # 刷新各 Frame 边框
+        for attr in ('_account_frame', '_filter_frame', '_batch_frame', '_export_frame'):
+            if hasattr(self, attr):
+                getattr(self, attr).setStyleSheet(StyleManager.get_QUERY_FRAME())
+        # 刷新输入框
+        if hasattr(self, 'sn_input'):
+            self.sn_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+        if hasattr(self, 'id_input'):
+            self.id_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+        if hasattr(self, 'sn_filter_input'):
+            self.sn_filter_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
+        if hasattr(self, 'export_path_input'):
+            self.export_path_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
+        if hasattr(self, 'match_count_label'):
+            self.match_count_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px; border: none;")
+        # 刷新分割线
+        if hasattr(self, '_separator1'):
+            self._separator1.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+        if hasattr(self, '_separator2'):
+            self._separator2.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
     
     # ===== 账号查询相关方法 =====
     
@@ -2071,10 +2042,6 @@ class DeviceStatusPage(BasePage):
                 no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
                 no_btn.setIconSize(QSize(20, 20))
                 no_btn.setFixedSize(60, 32)
-            
-            # 应用样式
-            StyleManager.apply_to_widget(msg_box, "DIALOG")
-            
             # 延迟设置深色标题栏
             QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
             
@@ -2378,3 +2345,6 @@ class DeviceStatusPage(BasePage):
             self.update_filtered_status_summary()
         else:
             self.update_device_status_summary()
+
+
+
