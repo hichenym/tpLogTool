@@ -1,4 +1,4 @@
-"""
+﻿"""
 修改固件对话框
 """
 from PyQt5.QtWidgets import (
@@ -10,6 +10,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QDateTime, QEvent, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QIcon
 from .custom_widgets import set_dark_title_bar
+from query_tool.utils.theme_manager import t
+from query_tool.utils import StyleManager
 from query_tool.utils.logger import logger
 from query_tool.utils.thread_manager import ThreadManager
 import os
@@ -186,7 +188,7 @@ class SnQueryDialog(QDialog):
 
         # 状态标签
         self.status_label = QLabel("正在查询...")
-        self.status_label.setStyleSheet("color: #909090; font-size: 11px;")
+        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
         self.status_label.setFixedHeight(18)
         layout.addWidget(self.status_label)
 
@@ -207,20 +209,14 @@ class SnQueryDialog(QDialog):
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setDefaultAlignment(Qt.AlignCenter)
 
-        self.table.setStyleSheet("""
-            QTableWidget { background-color: #2b2b2b; color: #e0e0e0;
-                border: 1px solid #555555; gridline-color: #404040; }
-            QTableWidget::item { padding: 4px; }
-            QHeaderView::section { background-color: #3c3c3c; color: #e0e0e0;
-                border: 1px solid #555555; padding: 4px; }
-        """)
+        self.table.setStyleSheet(StyleManager.get_TABLE())
         layout.addWidget(self.table, 1)
 
         # 全选行（放在表格下方）
         select_all_row = QHBoxLayout()
         select_all_row.setContentsMargins(0, 0, 0, 0)
         self.select_all_cb_bottom = QCheckBox("全选")
-        self.select_all_cb_bottom.setStyleSheet("color: #e0e0e0; font-size: 11px;")
+        self.select_all_cb_bottom.setStyleSheet(f"color: {t('text_primary')}; font-size: 11px;")
         self.select_all_cb_bottom.stateChanged.connect(self._on_select_all)
         select_all_row.addWidget(self.select_all_cb_bottom)
         select_all_row.addStretch()
@@ -230,12 +226,7 @@ class SnQueryDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        btn_style = """
-            QPushButton { background-color: #404040; color: #e0e0e0;
-                border: 1px solid #555555; border-radius: 3px; padding: 6px 16px; }
-            QPushButton:hover { background-color: #4a4a4a; border: 1px solid #6a6a6a; }
-            QPushButton:disabled { background-color: #2b2b2b; color: #606060; border: 1px solid #3c3c3c; }
-        """
+        btn_style = StyleManager.get_ACTION_BUTTON()
 
         self.add_btn = QPushButton("添加到SN")
         self.add_btn.setIcon(QIcon(":/icons/common/ok.png"))
@@ -262,11 +253,11 @@ class SnQueryDialog(QDialog):
         env, username, password = get_account_config()
         if not username or not password:
             self.status_label.setText("运维账号未配置，请先在设置中配置")
-            self.status_label.setStyleSheet("color: #FF0000; font-size: 11px;")
+            self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 11px;")
             return
 
         self.status_label.setText("正在查询...")
-        self.status_label.setStyleSheet("color: #909090; font-size: 11px;")
+        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
         self.table.setRowCount(0)
 
         thread = DeviceSnQueryThread(self.phone, env, username, password)
@@ -280,7 +271,7 @@ class SnQueryDialog(QDialog):
 
     def _on_query_error(self, msg):
         self.status_label.setText(msg)
-        self.status_label.setStyleSheet("color: #FF0000; font-size: 11px;")
+        self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 11px;")
 
     def _on_query_success(self, devices):
         self.all_devices = devices
@@ -297,12 +288,12 @@ class SnQueryDialog(QDialog):
                 f"共 {total} 台设备，无匹配型号 [{self.model_filter}] 的设备" if self.model_filter
                 else "该账号暂无绑定设备"
             )
-            self.status_label.setStyleSheet("color: #FFA500; font-size: 11px;")
+            self.status_label.setStyleSheet(f"color: {t('status_pending')}; font-size: 11px;")
             self.table.setRowCount(0)
             return
 
         self.status_label.setText(f"共 {len(devices)} 台设备，匹配 {len(filtered)} 台")
-        self.status_label.setStyleSheet("color: #00FF00; font-size: 11px;")
+        self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 11px;")
         self._fill_table(filtered)
 
     def _fill_table(self, devices):
@@ -406,12 +397,7 @@ class EditFirmwareDialog(QDialog):
         if not self.is_create_mode:
             identifier = self.firmware_data.get('device_identify', '未知')
             info_label = QLabel(f"固件标识: {identifier}")
-            info_label.setStyleSheet("""
-                QLabel {
-                    color: #4a9eff;
-                    font-size: 13px;
-                }
-            """)
+            info_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px;")
             layout.addWidget(info_label)
         
         # 表单区域
@@ -421,28 +407,9 @@ class EditFirmwareDialog(QDialog):
         form_layout.setContentsMargins(15, 20, 15, 15)
         
         # 通用样式
-        readonly_style = """
-            QLineEdit {
-                background-color: #2b2b2b;
-                color: #909090;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 4px;
-            }
-        """
+        readonly_style = StyleManager.get_READONLY_INPUT()
         
-        editable_style = """
-            QTextEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 4px;
-            }
-            QTextEdit:focus {
-                border: 1px solid #6a6a6a;
-            }
-        """
+        editable_style = StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit")
         
         # 1. 固件文件上传
         file_label = QLabel("固件文件:")
@@ -455,31 +422,11 @@ class EditFirmwareDialog(QDialog):
         
         self.file_btn = QPushButton("选择文件")
         self.file_btn.setFixedHeight(28)
-        self.file_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 6px 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-        """)
+        self.file_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.file_btn.clicked.connect(self.on_select_file)
         
         self.file_status_label = QLabel("未选择文件")
-        self.file_status_label.setStyleSheet("color: #909090; font-size: 12px;")
+        self.file_status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
         self.file_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
         file_layout.addWidget(self.file_btn)
@@ -492,18 +439,7 @@ class EditFirmwareDialog(QDialog):
         self.identifier_input = QLineEdit()
         self.identifier_input.setPlaceholderText("自动获取或手动输入固件标识...")
         self.identifier_input.setFixedHeight(28)
-        self.identifier_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 4px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #6a6a6a;
-            }
-        """)
+        self.identifier_input.setStyleSheet(StyleManager.get_style("PLAINTEXT_EDIT_TABLE").replace("QPlainTextEdit", "QLineEdit"))
         # 连接文本变化信号，实时验证
         self.identifier_input.textChanged.connect(self.validate_form)
         form_layout.addRow(identifier_label, self.identifier_input)
@@ -559,14 +495,7 @@ class EditFirmwareDialog(QDialog):
         self.sn_phone_input.setInsertPolicy(QComboBox.NoInsert)
         self.sn_phone_input.lineEdit().setPlaceholderText("手机号...")
         self.sn_phone_input.setFixedSize(100, 28)
-        self.sn_phone_input.setStyleSheet("""
-            QComboBox { background-color: #404040; color: #e0e0e0;
-                border: 1px solid #555555; border-radius: 3px; padding: 2px 4px; font-size: 11px; }
-            QComboBox:focus { border: 1px solid #6a6a6a; }
-            QComboBox::drop-down { border: none; width: 18px; }
-            QComboBox QAbstractItemView { background-color: #3c3c3c; color: #e0e0e0;
-                border: 1px solid #555555; selection-background-color: #505050; }
-        """)
+        self.sn_phone_input.setStyleSheet(StyleManager.get_COMBOBOX())
         # 加载账号历史（与设备查询页面同步）
         self._load_phone_history()
 
@@ -574,11 +503,7 @@ class EditFirmwareDialog(QDialog):
         self.sn_query_btn.setIcon(QIcon(":/icons/common/search.png"))
         self.sn_query_btn.setIconSize(QSize(14, 14))
         self.sn_query_btn.setFixedSize(100, 28)
-        self.sn_query_btn.setStyleSheet("""
-            QPushButton { background-color: #404040; color: #e0e0e0;
-                border: 1px solid #555555; border-radius: 3px; padding: 2px 8px; font-size: 11px; }
-            QPushButton:hover { background-color: #4a4a4a; border: 1px solid #6a6a6a; }
-        """)
+        self.sn_query_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.sn_query_btn.clicked.connect(self.on_query_device_sn)
 
         sn_btn_layout.addWidget(self.sn_phone_input)
@@ -586,11 +511,7 @@ class EditFirmwareDialog(QDialog):
 
         self.sn_temp_fill_btn = QPushButton("临时填充")
         self.sn_temp_fill_btn.setFixedSize(100, 28)
-        self.sn_temp_fill_btn.setStyleSheet("""
-            QPushButton { background-color: #404040; color: #e0e0e0;
-                border: 1px solid #555555; border-radius: 3px; padding: 2px 8px; font-size: 11px; }
-            QPushButton:hover { background-color: #4a4a4a; border: 1px solid #6a6a6a; }
-        """)
+        self.sn_temp_fill_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.sn_temp_fill_btn.clicked.connect(self._on_temp_fill_sn)
         sn_btn_layout.addWidget(self.sn_temp_fill_btn)
 
@@ -610,63 +531,7 @@ class EditFirmwareDialog(QDialog):
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.setSpacing(10)
         
-        # 时间控件样式
-        datetime_style = """
-            QDateTimeEdit {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 4px;
-            }
-            QDateTimeEdit:hover {
-                border: 1px solid #6a6a6a;
-            }
-            QDateTimeEdit:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-            QDateTimeEdit::drop-down {
-                border: none;
-                background-color: #505050;
-                width: 24px;
-                border-left: 1px solid #555555;
-            }
-            QDateTimeEdit::down-arrow {
-                image: none;
-                width: 0px;
-            }
-            QCalendarWidget {
-                background-color: #3c3c3c;
-                color: #e0e0e0;
-            }
-            QCalendarWidget QToolButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 4px;
-            }
-            QCalendarWidget QToolButton:hover {
-                background-color: #4a4a4a;
-            }
-            QCalendarWidget QMenu {
-                background-color: #3c3c3c;
-                color: #e0e0e0;
-            }
-            QCalendarWidget QSpinBox {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-            }
-            QCalendarWidget QAbstractItemView {
-                background-color: #3c3c3c;
-                color: #e0e0e0;
-                selection-background-color: #0d7377;
-                selection-color: #ffffff;
-            }
-        """
+        datetime_style = ""  # 全局 QSS 已覆盖 QDateTimeEdit
         
         # 开始时间
         self.start_time_edit = ClickableDateTimeEdit()
@@ -678,7 +543,7 @@ class EditFirmwareDialog(QDialog):
         
         # 分隔符
         separator_label = QLabel("—")
-        separator_label.setStyleSheet("color: #909090; font-size: 14px;")
+        separator_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 14px;")
         
         # 结束时间
         self.end_time_edit = ClickableDateTimeEdit()
@@ -693,6 +558,16 @@ class EditFirmwareDialog(QDialog):
         time_layout.addWidget(self.end_time_edit)
         time_layout.addStretch()
         
+        # 今天快捷按钮，与右侧按钮列对齐（同宽 100px）
+        today_btn = QPushButton("今天")
+        today_btn.setFixedSize(100, 28)
+        today_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+        today_btn.clicked.connect(self._on_set_today)
+        time_layout.addWidget(today_btn)
+        
+        # 调整 time_widget 高度以容纳按钮
+        time_widget.setFixedHeight(28)
+        
         form_layout.addRow(time_label, time_widget)
         
         layout.addWidget(form_group)
@@ -703,28 +578,7 @@ class EditFirmwareDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        # 按钮样式
-        button_style = """
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 6px 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-        """
+        button_style = StyleManager.get_ACTION_BUTTON()
         
         self.submit_btn = QPushButton()
         self.submit_btn.setIcon(QIcon(":/icons/common/ok.png"))
@@ -849,65 +703,21 @@ class EditFirmwareDialog(QDialog):
             
             # 根据验证结果设置边框颜色
             if has_invalid:
-                # 红色边框（1px，参考端口穿透样式）
-                self.sn_text.setStyleSheet("""
-                    QTextEdit {
-                        background-color: #404040;
-                        color: #e0e0e0;
-                        border: 1px solid #FF0000;
-                        border-radius: 3px;
-                        padding: 4px;
-                    }
-                    QTextEdit:focus {
-                        border: 1px solid #FF0000;
-                    }
-                """)
+                self.sn_text.setStyleSheet(
+                    f"QTextEdit {{ background-color: {t('bg_light')}; color: {t('text_primary')}; "
+                    f"border: 1px solid {t('status_offline')}; border-radius: 3px; padding: 4px; }}"
+                    f"QTextEdit:focus {{ border: 1px solid {t('status_offline')}; }}"
+                )
             else:
-                # 正常边框
-                self.sn_text.setStyleSheet("""
-                    QTextEdit {
-                        background-color: #404040;
-                        color: #e0e0e0;
-                        border: 1px solid #555555;
-                        border-radius: 3px;
-                        padding: 4px;
-                    }
-                    QTextEdit:focus {
-                        border: 1px solid #6a6a6a;
-                    }
-                """)
+                self.sn_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit"))
         else:
-            # 如果为空，恢复正常边框
-            self.sn_text.setStyleSheet("""
-                QTextEdit {
-                    background-color: #404040;
-                    color: #e0e0e0;
-                    border: 1px solid #555555;
-                    border-radius: 3px;
-                    padding: 4px;
-                }
-                QTextEdit:focus {
-                    border: 1px solid #6a6a6a;
-                }
-            """)
+            self.sn_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit"))
     
     def on_comment_text_changed(self):
         """发布备注文本变化时，如果有内容则取消红框"""
         text = self.comment_text.toPlainText().strip()
         if text:
-            # 有内容时恢复正常边框
-            self.comment_text.setStyleSheet("""
-                QTextEdit {
-                    background-color: #404040;
-                    color: #e0e0e0;
-                    border: 1px solid #555555;
-                    border-radius: 3px;
-                    padding: 4px;
-                }
-                QTextEdit:focus {
-                    border: 1px solid #6a6a6a;
-                }
-            """)
+            self.comment_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit"))
     
     def on_query_device_sn(self):
         """查询设备SN - 直接弹出结果对话框"""
@@ -961,6 +771,13 @@ class EditFirmwareDialog(QDialog):
         """临时填充SN"""
         self.sn_text.setPlainText('AABBCCDDEEFFGGHH')
 
+    def _on_set_today(self):
+        """将时间段设置为今天"""
+        from PyQt5.QtCore import QDateTime, QDate, QTime
+        today = QDate.currentDate()
+        self.start_time_edit.setDateTime(QDateTime(today, QTime(0, 0, 0)))
+        self.end_time_edit.setDateTime(QDateTime(today, QTime(23, 59, 59)))
+
     def on_select_file(self):
         """选择文件"""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1001,7 +818,7 @@ class EditFirmwareDialog(QDialog):
         self.file_btn.setEnabled(False)
         self.submit_btn.setEnabled(False)
         self.file_status_label.setText("上传中...")
-        self.file_status_label.setStyleSheet("color: #FFA500;")  # 橙色
+        self.file_status_label.setStyleSheet(f"color: {t('status_pending')};  # 橙色")  # 橙色
         
         # 在主窗口显示上传提示
         if self.parent():
@@ -1027,7 +844,7 @@ class EditFirmwareDialog(QDialog):
                 self.file_status_label.setText(f"上传成功: {self.selected_file_name}")
             else:
                 self.file_status_label.setText(f"上传成功")
-            self.file_status_label.setStyleSheet("color: #00FF00;")  # 绿色
+            self.file_status_label.setStyleSheet(f"color: {t('status_online')};  # 绿色")  # 绿色
             
             # 更新固件标识（如果自动获取成功）
             firmware_identity = data.get('firmware_identity', '')
@@ -1074,7 +891,7 @@ class EditFirmwareDialog(QDialog):
         else:
             # 显示错误
             self.file_status_label.setText(f"上传失败")
-            self.file_status_label.setStyleSheet("color: #FF0000;")  # 红色
+            self.file_status_label.setStyleSheet(f"color: {t('status_offline')};  # 红色")  # 红色
             
             # 清空固件标识和MD5，等待用户重新上传或手动填写
             self.identifier_input.clear()
@@ -1184,3 +1001,4 @@ class EditFirmwareDialog(QDialog):
     def get_result(self):
         """获取修改结果"""
         return self.result_data
+

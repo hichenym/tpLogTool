@@ -1,4 +1,4 @@
-"""
+﻿"""
 设备固件升级对话框
 """
 from PyQt5.QtWidgets import (
@@ -9,6 +9,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QColor, QIcon
 from .custom_widgets import set_dark_title_bar
+from query_tool.utils.theme_manager import t
+from query_tool.utils import StyleManager
 from query_tool.utils.logger import logger
 from query_tool.utils.session_manager import SessionManager
 from query_tool.utils.thread_manager import ThreadManager
@@ -217,7 +219,7 @@ class UpgradeDialog(QDialog):
         
         # 设备信息
         info_label = QLabel(f"设备: {self.device_name}    SN: {self.sn}    型号: {self.model}")
-        info_label.setStyleSheet("color: #4a9eff; font-size: 13px;")
+        info_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px;")
         layout.addWidget(info_label)
         
         # 在线状态区
@@ -227,12 +229,12 @@ class UpgradeDialog(QDialog):
         status_layout.setSpacing(10)
         
         status_label_text = QLabel("在线状态:")
-        status_label_text.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        status_label_text.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         status_label_text.setFixedWidth(70)
         status_label_text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
         self.status_label = QLabel("● 查询中...")
-        self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
         self.status_label.setFixedWidth(80)
         
         self.wake_btn = QPushButton()
@@ -251,28 +253,7 @@ class UpgradeDialog(QDialog):
         self.refresh_btn.setToolTip("刷新状态")
         self.refresh_btn.clicked.connect(self.on_refresh)
         
-        button_style = """
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 0px;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-        """
+        button_style = StyleManager.get_ACTION_BUTTON()
         self.wake_btn.setStyleSheet(button_style)
         self.refresh_btn.setStyleSheet(button_style)
         
@@ -295,7 +276,7 @@ class UpgradeDialog(QDialog):
         # 查询条件框
         query_frame = QFrame()
         query_frame.setFrameShape(QFrame.StyledPanel)
-        query_frame.setStyleSheet("QFrame { border: 1px solid #555555; background-color: transparent; }")
+        query_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
         query_frame_layout = QVBoxLayout(query_frame)
         query_frame_layout.setContentsMargins(8, 8, 8, 8)
         query_frame_layout.setSpacing(8)
@@ -349,15 +330,7 @@ class UpgradeDialog(QDialog):
         self.identifier_input.setText(self.model)  # 默认填充型号
         self.identifier_input.setReadOnly(True)  # 设置为只读，不允许修改
         self.identifier_input.setFixedHeight(28)
-        self.identifier_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #2b2b2b;
-                color: #909090;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 4px;
-            }
-        """)
+        self.identifier_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
         
         # 占位标签，与第一行的"审核状态:"标签宽度一致
         query_label_placeholder = QLabel("")
@@ -409,7 +382,6 @@ class UpgradeDialog(QDialog):
         self.firmware_table.setMaximumHeight(200)
         self.firmware_table.setWordWrap(True)  # 启用自动换行
         
-        from query_tool.utils import StyleManager
         StyleManager.apply_to_widget(self.firmware_table, "TABLE")
         
         # 连接行点击事件
@@ -448,7 +420,7 @@ class UpgradeDialog(QDialog):
         self.prev_page_btn.clicked.connect(self.on_prev_page)
         
         self.page_label = QLabel("第 1 页")
-        self.page_label.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         self.page_label.setAlignment(Qt.AlignCenter)
         self.page_label.setFixedWidth(80)
         
@@ -466,7 +438,7 @@ class UpgradeDialog(QDialog):
         
         # 统计信息（右侧）
         self.stats_label = QLabel("未选择固件")
-        self.stats_label.setStyleSheet("color: #4A9EFF; font-size: 13px;")
+        self.stats_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px;")
         bottom_layout.addWidget(self.stats_label)
         
         list_layout.addLayout(bottom_layout)
@@ -477,27 +449,7 @@ class UpgradeDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         
-        action_button_style = """
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 6px 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-        """
+        action_button_style = StyleManager.get_ACTION_BUTTON()
         
         self.confirm_btn = QPushButton()
         self.confirm_btn.setIcon(QIcon(":/icons/common/ok.png"))
@@ -523,7 +475,7 @@ class UpgradeDialog(QDialog):
     def query_status(self):
         """查询设备在线状态"""
         self.status_label.setText("● 查询中...")
-        self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
         
         self.wake_btn.setEnabled(False)
         self.refresh_btn.setEnabled(False)
@@ -536,7 +488,7 @@ class UpgradeDialog(QDialog):
             thread.start()
         else:
             self.status_label.setText("● 查询失败")
-            self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
     
     def on_status_query_finished(self, is_online, message):
         """状态查询完成"""
@@ -544,10 +496,10 @@ class UpgradeDialog(QDialog):
         
         if is_online:
             self.status_label.setText("● 在线")
-            self.status_label.setStyleSheet("color: #00FF00; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 12px;")
         else:
             self.status_label.setText("● 离线")
-            self.status_label.setStyleSheet("color: #FF0000; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
         
         self.wake_btn.setEnabled(True)
         self.refresh_btn.setEnabled(True)
@@ -560,7 +512,7 @@ class UpgradeDialog(QDialog):
     def on_wake(self):
         """唤醒设备"""
         self.status_label.setText("● 唤醒中...")
-        self.status_label.setStyleSheet("color: #FFA500; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {t('status_pending')}; font-size: 12px;")
         
         self.wake_btn.setEnabled(False)
         self.refresh_btn.setEnabled(False)
@@ -579,14 +531,14 @@ class UpgradeDialog(QDialog):
         if success:
             self.is_online = True
             self.status_label.setText("● 在线")
-            self.status_label.setStyleSheet("color: #00FF00; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 12px;")
         else:
             if self.is_online:
                 self.status_label.setText("● 在线")
-                self.status_label.setStyleSheet("color: #00FF00; font-size: 12px;")
+                self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 12px;")
             else:
                 self.status_label.setText("● 离线")
-                self.status_label.setStyleSheet("color: #FF0000; font-size: 12px;")
+                self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
         
         self.update_confirm_button()
     
@@ -646,10 +598,10 @@ class UpgradeDialog(QDialog):
         
         # 审核结果颜色映射
         audit_result_color_map = {
-            '无需审核': '#909090',      # 灰色
-            '待审核': '#FFA500',        # 橙色
-            '审核通过': '#00FF00',      # 绿色
-            '审核不通过': '#FF0000',    # 红色
+            '无需审核': t('text_hint'),
+            '待审核':   t('status_pending'),
+            '审核通过': t('status_online'),
+            '审核不通过': t('status_offline'),
         }
         
         # 创建单选按钮组
@@ -681,7 +633,7 @@ class UpgradeDialog(QDialog):
             item = QTableWidgetItem(audit_result)
             item.setTextAlignment(Qt.AlignCenter)
             # 根据审核结果设置颜色
-            audit_color = audit_result_color_map.get(audit_result, '#909090')  # 默认灰色
+            audit_color = audit_result_color_map.get(audit_result, t('text_hint'))
             item.setData(Qt.ForegroundRole, QColor(audit_color))
             self.firmware_table.setItem(row, 2, item)
             
@@ -786,7 +738,7 @@ class UpgradeDialog(QDialog):
                 self.parent_window.show_error("设备离线，操作失败")
             self.restore_buttons()
             self.status_label.setText("● 离线")
-            self.status_label.setStyleSheet("color: #FF0000; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
     
     def send_upgrade_command(self):
         """发送升级命令"""
@@ -833,3 +785,6 @@ class UpgradeDialog(QDialog):
         self.refresh_btn.setEnabled(True)
         self.confirm_btn.setEnabled(True)
         self.cancel_btn.setEnabled(True)
+
+
+

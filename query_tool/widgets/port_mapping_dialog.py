@@ -1,4 +1,4 @@
-"""
+﻿"""
 端口穿透对话框
 """
 from PyQt5.QtWidgets import (
@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QColor, QIcon
 from .custom_widgets import set_dark_title_bar
+from query_tool.utils.theme_manager import t
 from query_tool.utils.logger import logger
 from query_tool.utils.session_manager import SessionManager
 from query_tool.utils.thread_manager import ThreadManager
@@ -158,7 +159,7 @@ class PortMappingDialog(QDialog):
         
         # 设备信息
         info_label = QLabel(f"设备: {self.device_name}    SN: {self.sn}")
-        info_label.setStyleSheet("color: #4a9eff; font-size: 13px;")
+        info_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px;")
         layout.addWidget(info_label)
         
         # 在线状态区
@@ -168,12 +169,12 @@ class PortMappingDialog(QDialog):
         status_layout.setSpacing(10)
         
         status_label_text = QLabel("在线状态:")
-        status_label_text.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        status_label_text.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         status_label_text.setFixedWidth(70)
         status_label_text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
         self.status_label = QLabel("● 查询中...")
-        self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
         self.status_label.setFixedWidth(80)
         
         self.wake_btn = QPushButton()
@@ -192,28 +193,7 @@ class PortMappingDialog(QDialog):
         self.refresh_btn.setToolTip("刷新状态")
         self.refresh_btn.clicked.connect(self.on_refresh)
         
-        button_style = """
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 0px;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-        """
+        button_style = StyleManager.get_ACTION_BUTTON()
         self.wake_btn.setStyleSheet(button_style)
         self.refresh_btn.setStyleSheet(button_style)
         
@@ -275,27 +255,7 @@ class PortMappingDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         
-        action_button_style = """
-            QPushButton {
-                background-color: #404040;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 6px 16px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #6a6a6a;
-            }
-            QPushButton:pressed {
-                background-color: #3c3c3c;
-            }
-            QPushButton:disabled {
-                background-color: #2b2b2b;
-                color: #606060;
-                border: 1px solid #3c3c3c;
-            }
-        """
+        action_button_style = StyleManager.get_ACTION_BUTTON()
         
         self.confirm_btn = QPushButton()
         self.confirm_btn.setIcon(QIcon(":/icons/common/ok.png"))
@@ -321,7 +281,7 @@ class PortMappingDialog(QDialog):
     def query_status(self):
         """查询设备在线状态"""
         self.status_label.setText("● 查询中...")
-        self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
         
         self.wake_btn.setEnabled(False)
         self.refresh_btn.setEnabled(False)
@@ -334,7 +294,7 @@ class PortMappingDialog(QDialog):
             thread.start()
         else:
             self.status_label.setText("● 查询失败")
-            self.status_label.setStyleSheet("color: #909090; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
     
     def on_status_query_finished(self, is_online, message):
         """状态查询完成"""
@@ -342,11 +302,11 @@ class PortMappingDialog(QDialog):
         
         if is_online:
             self.status_label.setText("● 在线")
-            self.status_label.setStyleSheet("color: #00FF00; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 12px;")
             self.confirm_btn.setEnabled(True)
         else:
             self.status_label.setText("● 离线")
-            self.status_label.setStyleSheet("color: #FF0000; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
             self.confirm_btn.setEnabled(False)
         
         self.wake_btn.setEnabled(True)
@@ -359,7 +319,7 @@ class PortMappingDialog(QDialog):
     def on_wake(self):
         """唤醒设备"""
         self.status_label.setText("● 唤醒中...")
-        self.status_label.setStyleSheet("color: #FFA500; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {t('status_pending')}; font-size: 12px;")
         
         self.wake_btn.setEnabled(False)
         self.refresh_btn.setEnabled(False)
@@ -378,15 +338,15 @@ class PortMappingDialog(QDialog):
         if success:
             self.is_online = True
             self.status_label.setText("● 在线")
-            self.status_label.setStyleSheet("color: #00FF00; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 12px;")
             self.confirm_btn.setEnabled(True)
         else:
             if self.is_online:
                 self.status_label.setText("● 在线")
-                self.status_label.setStyleSheet("color: #00FF00; font-size: 12px;")
+                self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 12px;")
             else:
                 self.status_label.setText("● 离线")
-                self.status_label.setStyleSheet("color: #FF0000; font-size: 12px;")
+                self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
             self.confirm_btn.setEnabled(self.is_online)
     
     def on_ip_changed(self, text):
@@ -403,13 +363,7 @@ class PortMappingDialog(QDialog):
             self.ip_input.setStyleSheet("")
         else:
             # 格式错误，显示红色边框
-            self.ip_input.setStyleSheet("""
-                QLineEdit {
-                    border: 1px solid #FF0000;
-                    border-radius: 3px;
-                    padding: 4px;
-                }
-            """)
+            self.ip_input.setStyleSheet(f"QLineEdit {{ border: 1px solid {t('status_offline')}; border-radius: 3px; padding: 4px; }}")
     
     def on_port_changed(self, text):
         """端口输入变化时实时校验"""
@@ -427,22 +381,10 @@ class PortMappingDialog(QDialog):
                 self.port_input.setStyleSheet("")
             else:
                 # 端口超出范围，显示红色边框
-                self.port_input.setStyleSheet("""
-                    QLineEdit {
-                        border: 1px solid #FF0000;
-                        border-radius: 3px;
-                        padding: 4px;
-                    }
-                """)
+                self.port_input.setStyleSheet(f"QLineEdit {{ border: 1px solid {t('status_offline')}; border-radius: 3px; padding: 4px; }}")
         else:
             # 不是数字，显示红色边框
-            self.port_input.setStyleSheet("""
-                QLineEdit {
-                    border: 1px solid #FF0000;
-                    border-radius: 3px;
-                    padding: 4px;
-                }
-            """)
+            self.port_input.setStyleSheet(f"QLineEdit {{ border: 1px solid {t('status_offline')}; border-radius: 3px; padding: 4px; }}")
     
     def on_confirm(self):
         """确认端口穿透"""
@@ -516,7 +458,7 @@ class PortMappingDialog(QDialog):
                 self.parent_window.show_error("设备离线，操作失败")
             self.restore_buttons()
             self.status_label.setText("● 离线")
-            self.status_label.setStyleSheet("color: #FF0000; font-size: 12px;")
+            self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
     
     def send_port_mapping_command(self, ip, port):
         """发送端口穿透命令"""
@@ -554,3 +496,7 @@ class PortMappingDialog(QDialog):
         self.refresh_btn.setEnabled(True)
         self.confirm_btn.setEnabled(True)
         self.cancel_btn.setEnabled(True)
+
+
+
+

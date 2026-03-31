@@ -38,6 +38,10 @@ class BasePage(QWidget):
     def cleanup(self):
         """清理资源（页面关闭时调用，可选重写）"""
         pass
+
+    def refresh_theme(self):
+        """主题切换时调用，子类可重写以刷新自身样式"""
+        pass
     
     # 便捷的消息显示方法
     def show_info(self, message, duration=None):

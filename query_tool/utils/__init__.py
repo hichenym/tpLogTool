@@ -7,6 +7,7 @@ from .device_query import DeviceQuery, wake_device, check_device_online, wake_de
 from .button_manager import ButtonManager, ButtonGroup
 from .message_manager import MessageManager, MessageType
 from .style_manager import StyleManager
+from .theme_manager import theme_manager
 from .table_helper import TableHelper
 from .thread_manager import ThreadManager
 from .gitlab_api import GitLabAPI
@@ -37,6 +38,7 @@ __all__ = [
     'MessageManager',
     'MessageType',
     'StyleManager',
+    'theme_manager',
     'TableHelper',
     'ThreadManager',
     'GitLabAPI',
