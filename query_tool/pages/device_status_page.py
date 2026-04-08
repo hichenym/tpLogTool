@@ -421,9 +421,9 @@ class DeviceStatusPage(BasePage):
 
         # ===== 结果表格 =====
         self.result_table = QTableWidget()
-        self.result_table.setColumnCount(10)  # 减少一列：去掉操作列
+        self.result_table.setColumnCount(9)
         self.result_table.setHorizontalHeaderLabels(
-            ["选择", "设备名称", "型号", "SN", "ID", "密码", "接入节点", "版本号", "在线状态", "最后心跳"]
+            ["选择", "设备名称", "型号", "SN", "ID", "密码", "版本号", "在线状态", "最后心跳"]
         )
         self.result_table.setFocusPolicy(Qt.StrongFocus)
         self.result_table.setSelectionMode(QTableWidget.SingleSelection)
@@ -441,7 +441,7 @@ class DeviceStatusPage(BasePage):
         header = self.result_table.horizontalHeader()
         header.setMinimumSectionSize(50)
         header.setSectionResizeMode(0, QHeaderView.Fixed)
-        for col in range(1, 10):
+        for col in range(1, 9):
             header.setSectionResizeMode(col, QHeaderView.Interactive)
         
         # 设置初始列宽（根据内容调整）
@@ -451,15 +451,14 @@ class DeviceStatusPage(BasePage):
         self.result_table.setColumnWidth(3, 140)  # SN
         self.result_table.setColumnWidth(4, 100)  # ID
         self.result_table.setColumnWidth(5, 80)   # 密码
-        self.result_table.setColumnWidth(6, 80)   # 接入节点
-        self.result_table.setColumnWidth(7, 100)  # 版本号
-        self.result_table.setColumnWidth(8, 80)   # 在线状态
-        self.result_table.setColumnWidth(9, 150)  # 最后心跳（加宽以显示完整日期时间）
+        self.result_table.setColumnWidth(6, 100)  # 版本号
+        self.result_table.setColumnWidth(7, 80)   # 在线状态
+        self.result_table.setColumnWidth(8, 150)  # 最后心跳
         
         # 初始化列宽比例
         self.column_width_ratios = {
             1: 100, 2: 80, 3: 140, 4: 100, 5: 80,
-            6: 80, 7: 100, 8: 80, 9: 150
+            6: 100, 7: 80, 8: 150
         }
         
         # 连接列宽变化事件
@@ -570,7 +569,7 @@ class DeviceStatusPage(BasePage):
             return
         
         # 计算当前内容列的总宽度
-        current_total = sum(self.result_table.columnWidth(col) for col in range(1, 10))
+        current_total = sum(self.result_table.columnWidth(col) for col in range(1, 9))
         
         # 如果总宽度不等于可用宽度，调整其他列
         if current_total != available_width:
@@ -578,7 +577,7 @@ class DeviceStatusPage(BasePage):
             diff = available_width - current_total
             
             # 从其他列均匀调整
-            other_cols = [col for col in range(1, 10) if col != logicalIndex]
+            other_cols = [col for col in range(1, 9) if col != logicalIndex]
             if other_cols:
                 adjustment_per_col = diff / len(other_cols)
                 for col in other_cols:
@@ -602,7 +601,7 @@ class DeviceStatusPage(BasePage):
             return
         
         # 计算当前内容列的总宽度
-        current_total = sum(self.result_table.columnWidth(col) for col in range(1, 10))
+        current_total = sum(self.result_table.columnWidth(col) for col in range(1, 9))
         
         # 如果当前总宽度不等于可用宽度，需要调整
         if current_total != available_width:
@@ -611,7 +610,7 @@ class DeviceStatusPage(BasePage):
                 scale_factor = available_width / current_total
                 
                 # 按比例调整每列宽度
-                for col in range(1, 10):
+                for col in range(1, 9):
                     current_width = self.result_table.columnWidth(col)
                     new_width = max(50, int(current_width * scale_factor))
                     self.result_table.setColumnWidth(col, new_width)
@@ -1077,7 +1076,7 @@ class DeviceStatusPage(BasePage):
                 
                 # 占位
                 self.result_table.setItem(row, 1, QTableWidgetItem("查询中..."))
-                for col in range(2, 10):
+                for col in range(2, 9):
                     self.result_table.setItem(row, col, QTableWidgetItem(""))
         
         # 重新启用表格更新
@@ -1107,14 +1106,13 @@ class DeviceStatusPage(BasePage):
         version = item.get('version', '')
         last_heartbeat = item.get('last_heartbeat', '')
         
-        # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳 | 操作
+        # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 版本号 | 在线状态 | 最后心跳
         self.result_table.setItem(row, 1, QTableWidgetItem(device_name))
         self.result_table.setItem(row, 2, QTableWidgetItem(model))
         self.result_table.setItem(row, 3, QTableWidgetItem(sn))
         self.result_table.setItem(row, 4, QTableWidgetItem(dev_id))
         self.result_table.setItem(row, 5, QTableWidgetItem(password))
-        self.result_table.setItem(row, 6, QTableWidgetItem(str(node)))
-        self.result_table.setItem(row, 7, QTableWidgetItem(version))
+        self.result_table.setItem(row, 6, QTableWidgetItem(version))
         
         # 在线状态
         online_status = item.get('online', -1)
@@ -1134,10 +1132,10 @@ class DeviceStatusPage(BasePage):
             status_color = QColor(Qt.darkYellow)
         
         status_item = self.create_status_item(status_text, status_color)
-        self.result_table.setItem(row, 8, status_item)
+        self.result_table.setItem(row, 7, status_item)
         
         # 最后心跳
-        self.result_table.setItem(row, 9, QTableWidgetItem(last_heartbeat))
+        self.result_table.setItem(row, 8, QTableWidgetItem(last_heartbeat))
     
     def on_query_error(self, error_msg):
         """查询出错"""
@@ -1342,7 +1340,7 @@ class DeviceStatusPage(BasePage):
         
         # 在在线状态列显示"唤醒中..."
         status_item = self.create_status_item("唤醒中...", t('status_pending'))
-        self.result_table.setItem(row, 8, status_item)
+        self.result_table.setItem(row, 7, status_item)
         
         # 显示开始唤醒的提示
         self.show_progress(f"正在唤醒 {sn}...")
@@ -1385,19 +1383,19 @@ class DeviceStatusPage(BasePage):
                     status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
                     
                     status_item = self.create_status_item(status_text, status_color)
-                    self.result_table.setItem(row, 8, status_item)
+                    self.result_table.setItem(row, 7, status_item)
                 else:
                     # 查询失败，显示未知状态
                     status_item = self.create_status_item("未知", QColor(Qt.gray))
-                    self.result_table.setItem(row, 8, status_item)
+                    self.result_table.setItem(row, 7, status_item)
             except Exception as e:
                 # 查询失败，显示未知状态
                 status_item = self.create_status_item("未知", QColor(Qt.gray))
-                self.result_table.setItem(row, 8, status_item)
+                self.result_table.setItem(row, 7, status_item)
         else:
             # 唤醒失败，显示离线
             status_item = self.create_status_item("离线", QColor(Qt.red))
-            self.result_table.setItem(row, 8, status_item)
+            self.result_table.setItem(row, 7, status_item)
         
         # 唤醒完成后，重新统计在线离线数量并显示
         self.update_device_status_summary()
@@ -1441,7 +1439,7 @@ class DeviceStatusPage(BasePage):
         # 在在线状态列显示"唤醒中..."
         for row in selected_rows:
             status_item = self.create_status_item("唤醒中...", t('status_pending'))
-            self.result_table.setItem(row, 8, status_item)
+            self.result_table.setItem(row, 7, status_item)
         
         # 启动唤醒线程
         try:
@@ -1461,7 +1459,7 @@ class DeviceStatusPage(BasePage):
                 # 恢复状态显示
                 for row in selected_rows:
                     status_item = self.create_status_item("未知", QColor(Qt.gray))
-                    self.result_table.setItem(row, 8, status_item)
+                    self.result_table.setItem(row, 7, status_item)
                 self.show_error(query.init_error)
                 return
             
@@ -1484,7 +1482,7 @@ class DeviceStatusPage(BasePage):
             # 恢复状态显示
             for row in selected_rows:
                 status_item = self.create_status_item("未知", QColor(Qt.gray))
-                self.result_table.setItem(row, 8, status_item)
+                self.result_table.setItem(row, 7, status_item)
             self.show_error(f"初始化失败: {str(e)}")
     
     def on_wake_result(self, device_name, success):
@@ -1517,15 +1515,15 @@ class DeviceStatusPage(BasePage):
                     status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
                     
                     status_item = self.create_status_item(status_text, status_color)
-                    self.result_table.setItem(row, 8, status_item)
+                    self.result_table.setItem(row, 7, status_item)
                 else:
                     # 查询失败，显示未知状态
                     status_item = self.create_status_item("未知", QColor(Qt.gray))
-                    self.result_table.setItem(row, 8, status_item)
+                    self.result_table.setItem(row, 7, status_item)
             except Exception as e:
                 # 查询失败，显示未知状态
                 status_item = self.create_status_item("未知", QColor(Qt.gray))
-                self.result_table.setItem(row, 8, status_item)
+                self.result_table.setItem(row, 7, status_item)
     
     def on_wake_complete(self, selected_rows):
         """唤醒完成"""
@@ -1622,7 +1620,7 @@ class DeviceStatusPage(BasePage):
                             status_text = "在线" if is_online else "离线"
                             status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
                             status_item = self.create_status_item(status_text, status_color)
-                            self.result_table.setItem(row, 8, status_item)
+                            self.result_table.setItem(row, 7, status_item)
                             break
     
     def on_batch_upgrade(self):
@@ -1846,7 +1844,7 @@ class DeviceStatusPage(BasePage):
         
         # 遍历表格统计在线离线数量
         for row in range(total):
-            status_item = self.result_table.item(row, 8)
+            status_item = self.result_table.item(row, 7)
             if status_item:
                 status_text = status_item.text()
                 if status_text == "在线":
@@ -1865,7 +1863,7 @@ class DeviceStatusPage(BasePage):
         
         # 遍历表格统计在线离线数量
         for row in range(total):
-            status_item = self.result_table.item(row, 8)
+            status_item = self.result_table.item(row, 7)
             if status_item:
                 status_text = status_item.text()
                 if status_text == "在线":
@@ -1916,14 +1914,13 @@ class DeviceStatusPage(BasePage):
             version = item.get('version', '')
             last_heartbeat = item.get('last_heartbeat', '')
             
-            # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+            # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 版本号 | 在线状态 | 最后心跳
             self.result_table.setItem(display_row, 1, QTableWidgetItem(device_name))
             self.result_table.setItem(display_row, 2, QTableWidgetItem(model))
             self.result_table.setItem(display_row, 3, QTableWidgetItem(sn))
             self.result_table.setItem(display_row, 4, QTableWidgetItem(dev_id))
             self.result_table.setItem(display_row, 5, QTableWidgetItem(password))
-            self.result_table.setItem(display_row, 6, QTableWidgetItem(str(node)))
-            self.result_table.setItem(display_row, 7, QTableWidgetItem(version))
+            self.result_table.setItem(display_row, 6, QTableWidgetItem(version))
             
             # 在线状态
             online_status = item.get('online', -1)
@@ -1941,10 +1938,10 @@ class DeviceStatusPage(BasePage):
                 status_color = QColor(Qt.darkYellow)
             
             status_item = self.create_status_item(status_text, status_color)
-            self.result_table.setItem(display_row, 8, status_item)
+            self.result_table.setItem(display_row, 7, status_item)
             
             # 最后心跳
-            self.result_table.setItem(display_row, 9, QTableWidgetItem(last_heartbeat))
+            self.result_table.setItem(display_row, 8, QTableWidgetItem(last_heartbeat))
         
         # 重新启用表格更新
         self.result_table.setUpdatesEnabled(True)
