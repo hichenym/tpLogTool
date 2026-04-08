@@ -9,6 +9,7 @@ from .page_registry import PageRegistry, register_page
 from .device_status_page import DeviceStatusPage
 from .firmware_page import FirmwarePage
 from .gitlab_log_page import GitLabLogPage
+from .error_record_page import ErrorRecordPage
 
 __all__ = [
     'BasePage',
@@ -17,4 +18,5 @@ __all__ = [
     'DeviceStatusPage',
     'FirmwarePage',
     'GitLabLogPage',
+    'ErrorRecordPage',
 ]

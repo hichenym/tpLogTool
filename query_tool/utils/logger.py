@@ -7,6 +7,33 @@ import sys
 import os
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
+import threading
+
+
+class _SafeRotatingFileHandler(RotatingFileHandler):
+    """线程安全的 RotatingFileHandler，Windows 下 rotate 时加锁并忽略文件占用错误"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._rotate_lock = threading.Lock()
+
+    def doRollover(self):
+        if not self._rotate_lock.acquire(blocking=False):
+            # 另一个线程正在 rotate，跳过
+            return
+        try:
+            super().doRollover()
+        except (PermissionError, OSError):
+            # Windows 下文件被其他线程占用时忽略，下次再 rotate
+            pass
+        finally:
+            self._rotate_lock.release()
+
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except (PermissionError, OSError):
+            pass
 
 
 class Logger:
@@ -77,7 +104,7 @@ class Logger:
             log_file = log_dir / f'app_{datetime.now().strftime("%Y%m%d")}.log'
             
             # 创建文件处理器（滚动日志，最大10MB，保留3个备份）
-            self._file_handler = RotatingFileHandler(
+            self._file_handler = _SafeRotatingFileHandler(
                 str(log_file),
                 maxBytes=10*1024*1024,  # 10MB
                 backupCount=3,

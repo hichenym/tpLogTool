@@ -43,7 +43,7 @@ class GitLabWorkerThread(QThread):
             self.error_signal.emit(str(e))
 
 
-@register_page("GIT", order=3, icon=":/icons/system/git.png")
+@register_page("GIT", order=4, icon=":/icons/system/git.png")
 class GitLabLogPage(BasePage):
     """GitLab 日志导出页面"""
     

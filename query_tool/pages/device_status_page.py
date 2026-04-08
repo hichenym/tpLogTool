@@ -400,7 +400,7 @@ class DeviceStatusPage(BasePage):
         self.batch_upgrade_btn.clicked.connect(self.on_batch_upgrade)
         
         self.batch_collect_btn = QPushButton("批量采集")
-        self.batch_collect_btn.setIcon(QIcon(":/collect.png"))
+        self.batch_collect_btn.setIcon(QIcon(":/icons/device/collect.png"))
         self.batch_collect_btn.setIconSize(QSize(16, 16))
         self.batch_collect_btn.setFixedSize(100, 28)
         self.batch_collect_btn.setEnabled(False)
@@ -747,7 +747,7 @@ class DeviceStatusPage(BasePage):
         
         # 数据采集子菜单
         collect_menu = QMenu("数据采集", self)
-        collect_menu.setIcon(QIcon(":/collect.png"))
+        collect_menu.setIcon(QIcon(":/icons/device/collect.png"))
         collect_menu.setStyleSheet(menu.styleSheet())
         
         # 动态生成采集类型菜单项

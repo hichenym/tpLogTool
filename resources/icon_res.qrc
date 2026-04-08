@@ -31,6 +31,7 @@
 	<file>icons/system/device.png</file>
 	<file>icons/system/git.png</file>
 	<file>icons/system/user.png</file>
+	<file>icons/system/record.png</file>
 	
 	<!-- GitLab 相关 -->
 	<file>icons/gitlab/gitlab.png</file>
@@ -39,8 +40,8 @@
 	<file>icons/gitlab/browser.png</file>
 	<file>icons/gitlab/export.png</file>
 	
-	<!-- 数据采集 -->
-	<file>battery.png</file>
-	<file>collect.png</file>
+	<!-- 设备功能 -->
+	<file>icons/device/battery.png</file>
+	<file>icons/device/collect.png</file>
 </qresource>
 </RCC>

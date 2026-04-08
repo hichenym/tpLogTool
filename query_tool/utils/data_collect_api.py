@@ -15,7 +15,7 @@ COLLECT_TYPES = {
     'battery': {
         'id': 'battery',
         'name': '电池电量',
-        'icon': ':/battery.png',
+        'icon': ':/icons/device/battery.png',
         'description': '查询设备电池电量历史数据',
         'enabled': True,
         'single_dialog': 'BatteryCollectDialog',
