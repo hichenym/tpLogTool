@@ -497,15 +497,22 @@ class DeviceStatusPage(BasePage):
         self.export_path_input.setFixedHeight(28)
         self.export_path_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
         
-        self.export_btn = QPushButton("导出结果")
+        self.export_btn = QPushButton("导出CSV")
         self.export_btn.setIcon(QIcon(":/icons/common/export.png"))
         self.export_btn.setIconSize(QSize(16, 16))
-        self.export_btn.setFixedSize(90, 28)
+        self.export_btn.setFixedSize(100, 28)
         self.export_btn.clicked.connect(self.on_export_csv)
+        
+        self.export_json_btn = QPushButton("导出JSON")
+        self.export_json_btn.setIcon(QIcon(":/icons/common/export.png"))
+        self.export_json_btn.setIconSize(QSize(16, 16))
+        self.export_json_btn.setFixedSize(100, 28)
+        self.export_json_btn.clicked.connect(self.on_export_json)
         
         export_layout.addWidget(export_label)
         export_layout.addWidget(self.export_path_input, 1)
         export_layout.addWidget(self.export_btn)
+        export_layout.addWidget(self.export_json_btn)
         group_layout.addWidget(export_frame)
         
         # 创建按钮组
@@ -513,7 +520,7 @@ class DeviceStatusPage(BasePage):
         self.main_buttons.add(
             self.query_btn, self.clear_btn, self.phone_query_btn, self.batch_wake_btn,
             self.batch_reboot_btn, self.batch_upgrade_btn, self.batch_collect_btn, 
-            self.select_all_checkbox, self.export_btn
+            self.select_all_checkbox, self.export_btn, self.export_json_btn
         )
         
         return group
@@ -1776,6 +1783,61 @@ class DeviceStatusPage(BasePage):
         except Exception as e:
             self.show_error(f"导出失败：{str(e)}")
     
+    def on_export_json(self):
+        """导出JSON"""
+        import json
+        if self.result_table.rowCount() == 0:
+            self.show_warning("没有可导出的数据")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"collect-dev-info_{timestamp}.json"
+            initial_dir = self.export_path if self.export_path else os.path.expanduser("~")
+            default_path = os.path.join(initial_dir, default_filename)
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "保存JSON文件", default_path, "JSON文件 (*.json);;所有文件 (*.*)"
+            )
+            
+            if not file_path:
+                return
+            
+            if not file_path.lower().endswith('.json'):
+                file_path += '.json'
+            
+            self.export_path = os.path.dirname(file_path)
+            self.export_path_input.setText(self.export_path)
+            
+            records = []
+            for row in range(self.result_table.rowCount()):
+                sn_item = self.result_table.item(row, 3)
+                pwd_item = self.result_table.item(row, 5)
+                if not sn_item:
+                    continue
+                sn = sn_item.text()
+                password = pwd_item.text() if pwd_item else ""
+                if not sn or sn == "查询中...":
+                    continue
+                records.append({
+                    "firmware": "",
+                    "gatewayId": "",
+                    "sn": sn,
+                    "password": password,
+                    "upgradeState": 0
+                })
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                lines = [json.dumps(r, ensure_ascii=False) for r in records]
+                f.write('{"RECORDS": [\n    ')
+                f.write(',\n    '.join(lines))
+                f.write('\n]}')
+            
+            filename = os.path.basename(file_path)
+            self.show_success(f"导出成功：{filename}（共{len(records)}条数据）")
+        except Exception as e:
+            self.show_error(f"导出失败：{str(e)}")
+
     def update_device_status_summary(self):
         """更新设备状态统计信息"""
         total = self.result_table.rowCount()
