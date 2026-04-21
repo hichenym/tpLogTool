@@ -1,15 +1,15 @@
 {
-  "version": "3.3.0",
-  "build_date": "20260408",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.3.0/TPQueryTool.exe",
+  "version": "3.3.1",
+  "build_date": "20260421",
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.3.1/TPQueryTool.exe",
   "file_size_mb": 183.76,
-  "file_size_bytes": 192682533,
-  "file_hash": "658ddc72dd130be0da6bc123143a0c5990e61bd5a9e58410a24d4aa0630245d7",
+  "file_size_bytes": 192685505,
+  "file_hash": "e9a28f60f0452cc8e7b317dee4846072f608c6ded8ccc1f4d3badd375c94cc1a",
   "hash_algorithm": "sha256",
-  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.3.0/TPQueryTool.exe.sha256",
-  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.3.0",
+  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.3.1/TPQueryTool.exe.sha256",
+  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.3.1",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": "增加错误码查询页面",
+  "changelog": "修复端口穿透无响应",
   "analytics": {"doc_id":"IVx0bqWefaVflZssxeycgHvSn5J","sheet_id":"tblyZtqCQEC43Hzl"}
 }
