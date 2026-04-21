@@ -9,6 +9,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QColor, QIcon
 from .custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
+from query_tool.utils.style_manager import StyleManager
 from query_tool.utils.logger import logger
 from query_tool.utils.session_manager import SessionManager
 from query_tool.utils.thread_manager import ThreadManager
@@ -222,6 +223,7 @@ class PortMappingDialog(QDialog):
         ip_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
         self.ip_input = QLineEdit()
+        self.ip_input.setText("116.63.13.64")
         self.ip_input.setPlaceholderText("例如: 192.168.11.1")
         self.ip_input.setFixedHeight(28)
         self.ip_input.textChanged.connect(self.on_ip_changed)  # 连接文本变化信号
