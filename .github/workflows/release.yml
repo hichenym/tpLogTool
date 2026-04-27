@@ -100,6 +100,7 @@ jobs:
             --windows-product-version="${{ steps.version.outputs.version }}.0" `
             --windows-file-version="${{ steps.version.outputs.version }}.0" `
             --assume-yes-for-downloads `
+            --jobs=4 `
             --enable-plugin=pyqt5 `
             --include-module=ddddocr `
             --include-module=onnxruntime `

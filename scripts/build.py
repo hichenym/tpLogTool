@@ -80,6 +80,7 @@ def build_nuitka(debug=False):
 
         # === 编译优化 ===
         "--assume-yes-for-downloads",            # 自动下载缺失的依赖（如 MinGW64）
+        "--jobs=4",                              # 多核并行编译，加速 C 编译阶段
 
         # === PyQt5 插件 ===
         "--enable-plugin=pyqt5",                 # 启用 PyQt5 支持
