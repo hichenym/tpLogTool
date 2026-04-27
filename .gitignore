@@ -92,6 +92,11 @@ desktop.ini
 # 打包后的可执行文件（如果使用 PyInstaller）
 *.spec
 
+# Nuitka 编译中间产物
+*.build/
+*.dist/
+*.onefile-build/
+
 # GitHub Actions 生成的文件
 # version.json 会由 Actions 自动生成和提交
 # 如果不想提交，可以取消下面的注释

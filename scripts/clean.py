@@ -118,6 +118,23 @@ def clean_spec_files():
     return count
 
 
+def clean_nuitka_dirs():
+    """清除 Nuitka 编译中间产物"""
+    count = 0
+    # Nuitka 生成的中间目录：run.build, run.dist, run.onefile-build
+    for pattern in ["*.build", "*.dist", "*.onefile-build"]:
+        for item in PROJECT_ROOT.glob(pattern):
+            if item.is_dir():
+                try:
+                    shutil.rmtree(item)
+                    print(f"[OK] Delete: {item}")
+                    count += 1
+                except Exception as e:
+                    print(f"[ERROR] Failed to delete: {item} - {e}")
+    
+    return count
+
+
 def main():
     """主函数"""
     print("=" * 60)
@@ -156,6 +173,12 @@ def main():
     count = clean_spec_files()
     total_count += count
     print(f"Deleted {count} spec files\n")
+    
+    # 清除 Nuitka 中间产物
+    print("Cleaning Nuitka build artifacts...")
+    count = clean_nuitka_dirs()
+    total_count += count
+    print(f"Deleted {count} Nuitka directories\n")
     
     print("=" * 60)
     print(f"Clean completed! Total deleted: {total_count} items")

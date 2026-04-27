@@ -1,4 +1,4 @@
-name: Build and Release (Nuitka)
+name: Build and Release
 
 on:
   push:
@@ -22,13 +22,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt --no-cache-dir
-          pip install nuitka ordered-set zstandard
+          echo "Installing dependencies from requirements.txt..."
+          pip install -r requirements.txt --no-cache-dir -v
+        continue-on-error: false
       
       - name: Extract version from tag
         id: version
         shell: pwsh
         run: |
+          # 从 tag 提取版本号 (v3.0.0 -> 3.0.0)
           $tag = "${{ github.ref }}"
           $version = $tag -replace 'refs/tags/v', ''
           echo "version=$version" >> $env:GITHUB_OUTPUT
@@ -45,11 +47,16 @@ jobs:
           $patch = $parts[2] -replace '[^0-9]', ''
           $buildDate = Get-Date -Format "yyyyMMdd"
           
+          # 读取文件
           $content = Get-Content "query_tool/version.py" -Raw -Encoding UTF8
+          
+          # 更新版本号
           $content = $content -replace 'VERSION_MAJOR = \d+', "VERSION_MAJOR = $major"
           $content = $content -replace 'VERSION_MINOR = \d+', "VERSION_MINOR = $minor"
           $content = $content -replace 'VERSION_PATCH = \d+', "VERSION_PATCH = $patch"
           $content = $content -replace 'BUILD_DATE = "\d+"', "BUILD_DATE = `"$buildDate`""
+          
+          # 写回文件
           $content | Set-Content "query_tool/version.py" -Encoding UTF8 -NoNewline
           
           Write-Host "Updated version.py to V$version ($buildDate)"
@@ -73,94 +80,44 @@ jobs:
           '@
           $pyScript | python -
 
-      - name: Build with Nuitka
+      - name: Build executable
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.version }}"
+          # 删除可能存在的旧 spec 文件，避免干扰
+          if (Test-Path "*.spec") {
+              Remove-Item "*.spec" -Force
+              Write-Host "✓ 已删除旧的 spec 文件"
+          }
           
-          Write-Host "开始 Nuitka 编译..."
-          Write-Host "Python: $(python --version)"
-          Write-Host "Nuitka: $(python -m nuitka --version)"
+          Write-Host "开始打包..."
           
-          python -m nuitka `
-            --standalone `
-            --onefile `
-            --output-dir=dist `
-            --output-filename=TPQueryTool.exe `
-            --windows-icon-from-ico=./resources/icons/app/logo.ico `
-            --windows-console-mode=disable `
-            --windows-company-name=TPQueryTool `
-            --windows-product-name=TPQueryTool `
-            --windows-file-description="TP Query Tool" `
-            --windows-product-version="$version.0" `
-            --windows-file-version="$version.0" `
-            --assume-yes-for-downloads `
-            --enable-plugin=pyqt5 `
-            --include-module=ddddocr `
-            --include-module=onnxruntime `
-            --include-module=cv2 `
-            --include-module=numpy `
-            --include-module=lark_oapi `
-            --include-module=lark_oapi.api.bitable.v1 `
-            --include-module=json `
-            --include-module=requests `
-            --include-module=bs4 `
-            --include-module=coloredlogs `
-            --include-module=PIL `
-            --include-package=query_tool `
-            --include-package=query_tool.pages `
-            --include-package=query_tool.utils `
-            --include-package=query_tool.widgets `
-            --include-package=resources `
-            --include-package-data=ddddocr `
-            --include-package-data=onnxruntime `
-            --include-data-dir=resources/icons=resources/icons `
-            --nofollow-import-to="lark_oapi.api.acs.*" `
-            --nofollow-import-to="lark_oapi.api.admin.*" `
-            --nofollow-import-to="lark_oapi.api.application.*" `
-            --nofollow-import-to="lark_oapi.api.approval.*" `
-            --nofollow-import-to="lark_oapi.api.attendance.*" `
-            --nofollow-import-to="lark_oapi.api.authen.*" `
-            --nofollow-import-to="lark_oapi.api.baike.*" `
-            --nofollow-import-to="lark_oapi.api.calendar.*" `
-            --nofollow-import-to="lark_oapi.api.contact.*" `
-            --nofollow-import-to="lark_oapi.api.corehr.*" `
-            --nofollow-import-to="lark_oapi.api.docx.*" `
-            --nofollow-import-to="lark_oapi.api.drive.*" `
-            --nofollow-import-to="lark_oapi.api.ehr.*" `
-            --nofollow-import-to="lark_oapi.api.event.*" `
-            --nofollow-import-to="lark_oapi.api.hire.*" `
-            --nofollow-import-to="lark_oapi.api.human_authentication.*" `
-            --nofollow-import-to="lark_oapi.api.im.*" `
-            --nofollow-import-to="lark_oapi.api.lingo.*" `
-            --nofollow-import-to="lark_oapi.api.mail.*" `
-            --nofollow-import-to="lark_oapi.api.meeting_room.*" `
-            --nofollow-import-to="lark_oapi.api.okr.*" `
-            --nofollow-import-to="lark_oapi.api.optical_char_recognition.*" `
-            --nofollow-import-to="lark_oapi.api.passport.*" `
-            --nofollow-import-to="lark_oapi.api.performance.*" `
-            --nofollow-import-to="lark_oapi.api.personal_settings.*" `
-            --nofollow-import-to="lark_oapi.api.report.*" `
-            --nofollow-import-to="lark_oapi.api.search.*" `
-            --nofollow-import-to="lark_oapi.api.sheets.*" `
-            --nofollow-import-to="lark_oapi.api.speech_to_text.*" `
-            --nofollow-import-to="lark_oapi.api.task.*" `
-            --nofollow-import-to="lark_oapi.api.tenant.*" `
-            --nofollow-import-to="lark_oapi.api.translation.*" `
-            --nofollow-import-to="lark_oapi.api.vc.*" `
-            --nofollow-import-to="lark_oapi.api.verification.*" `
-            --nofollow-import-to="lark_oapi.api.wiki.*" `
+          # 使用英文名称打包
+          # 注意：参数顺序很重要，所有参数必须在 run.py 之前
+          pyinstaller --onefile --noconsole `
+            --name TPQueryTool `
+            --icon ./resources/icons/app/logo.ico `
+            --hidden-import ddddocr `
+            --hidden-import onnxruntime `
+            --hidden-import cv2 `
+            --hidden-import numpy `
+            --hidden-import lark_oapi `
+            --hidden-import lark_oapi.api.bitable.v1 `
+            --collect-all ddddocr `
+            --collect-binaries onnxruntime `
+            --collect-data onnxruntime `
             run.py
           
-          Write-Host "`n检查生成的文件..."
+          Write-Host "`n打包完成，检查生成的文件..."
           Get-ChildItem dist
           
+          # 验证文件
           if (Test-Path "dist/TPQueryTool.exe") {
               $file = Get-Item "dist/TPQueryTool.exe"
-              Write-Host "`n✓ Nuitka 打包成功: TPQueryTool.exe"
+              Write-Host "`n✓ 打包成功: TPQueryTool.exe"
               Write-Host "文件大小: $([math]::Round($file.Length / 1MB, 2)) MB"
           } else {
               Write-Host "`n✗ 错误: 找不到 TPQueryTool.exe"
+              Write-Host "dist 目录内容:"
               Get-ChildItem dist -Recurse
               exit 1
           }
@@ -180,11 +137,17 @@ jobs:
         shell: pwsh
         run: |
           $file = "dist/TPQueryTool.exe"
+          
+          # 计算 SHA256
           $hash = Get-FileHash -Path $file -Algorithm SHA256
           $sha256 = $hash.Hash.ToLower()
+          
           echo "sha256=$sha256" >> $env:GITHUB_OUTPUT
           Write-Host "SHA256: $sha256"
+          
+          # 生成校验和文件
           "$sha256  TPQueryTool.exe" | Set-Content "dist/TPQueryTool.exe.sha256" -Encoding ASCII
+          Write-Host "Generated checksum file: TPQueryTool.exe.sha256"
       
       - name: Extract changelog from version.py
         id: changelog
@@ -192,24 +155,40 @@ jobs:
         run: |
           $version = "${{ steps.version.outputs.version }}"
           
+          # 使用 Python 提取更新日志
           python -c @"
-          import re, sys
+          import re
+          import sys
+          
           version = '$version'
+          
+          # 读取 version.py
           with open('query_tool/version.py', 'r', encoding='utf-8') as f:
               content = f.read()
+          
+          # 提取 VERSION_HISTORY
           match = re.search(r'VERSION_HISTORY = \"\"\"(.*?)\"\"\"', content, re.DOTALL)
           if not match:
               print('ERROR: Could not find VERSION_HISTORY', file=sys.stderr)
               sys.exit(1)
+          
           history = match.group(1)
+          
+          # 提取当前版本的更新日志
           version_pattern = rf'[Vv]{re.escape(version)}\s*\([^)]+\)(.*?)(?=[Vv]\d+\.\d+\.\d+|\Z)'
           version_match = re.search(version_pattern, history, re.DOTALL)
+          
           if version_match:
               changelog = version_match.group(1).strip()
+              print(f'Found changelog for version {version}')
           else:
-              changelog = f'V{version} 版本更新'
+              changelog = f'V{version} 版本更新\n\n请查看 query_tool/version.py 中的 VERSION_HISTORY 获取详细信息。'
+              print(f'WARNING: Could not find changelog for version {version}, using default', file=sys.stderr)
+          
+          # 保存到文件
           with open('CHANGELOG.txt', 'w', encoding='utf-8') as f:
               f.write(changelog)
+          
           print('Changelog extracted successfully')
           "@
           
@@ -230,6 +209,7 @@ jobs:
           $tag = "${{ steps.version.outputs.tag }}"
           $repo = "${{ github.repository }}"
           
+          # 从 CHANGELOG.txt 读取更新日志并转换为 JSON 数组
           $changelogItems = @()
           if (Test-Path "CHANGELOG.txt") {
               $changelog = Get-Content "CHANGELOG.txt" -Encoding UTF8
@@ -237,11 +217,18 @@ jobs:
                   $_ -replace '^\s*[-*]\s*', ''
               } | Select-Object -First 10
           }
+          
           if ($changelogItems.Count -eq 0) {
               $changelogItems = @("请查看 Release 页面获取完整更新日志")
           }
+          
+          # 转换为 JSON
           $changelogJson = $changelogItems | ConvertTo-Json -Compress
           
+          # 生成 version.json（包含文件哈希）
+          # update_strategy: manual(手动), prompt(提示), silent(静默)
+          
+          # 读取现有 version.json 中的 analytics 配置
           $analyticsJson = '{}'
           if (Test-Path "version.json") {
               $existing = Get-Content "version.json" -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -269,7 +256,9 @@ jobs:
           "@
           
           $versionJson | Set-Content "version.json" -Encoding UTF8
-          Write-Host "Generated version.json"
+          
+          Write-Host "Generated version.json:"
+          Get-Content "version.json"
       
       - name: Generate Release Notes
         shell: pwsh
@@ -280,52 +269,76 @@ jobs:
           $tag = "${{ steps.version.outputs.tag }}"
           $repo = "${{ github.repository }}"
           
+          # 创建 Release 说明文件
           $releaseNotes = @"
           ## 🎉 查询工具 V$version
           
           **编译日期**: $buildDate
           **文件大小**: $fileSize MB
           **SHA256**: ``${{ steps.filehash.outputs.sha256 }}``
-          **编译方式**: Nuitka (原生编译)
           
           ### 📦 下载
           
-          - [**下载 TPQueryTool.exe**](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe)
-          - [TPQueryTool.exe.sha256](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256)
-          - [version.json](https://github.com/$repo/releases/download/$tag/version.json)
+          > **注意**：由于 GitHub Release 对中文文件名支持有限，上传的文件名为 ``TPQueryTool.exe``，下载后请根据需要重命名为 ``查询工具.exe``
+          
+          - [**下载 TPQueryTool.exe**](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe) （下载后可重命名为 ``查询工具.exe``）
+          - [TPQueryTool.exe.sha256](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256) （SHA256 校验和文件）
+          - [version.json](https://github.com/$repo/releases/download/$tag/version.json) （自动更新配置文件）
           
           ### 🔒 文件校验
           
+          下载后可以验证文件完整性：
+          
           ````powershell
+          # PowerShell
           `$hash = (Get-FileHash -Algorithm SHA256 TPQueryTool.exe).Hash.ToLower()
-          if (`$hash -eq "${{ steps.filehash.outputs.sha256 }}") { Write-Host "✓ 校验通过" } else { Write-Host "✗ 校验失败" }
+          if (`$hash -eq "${{ steps.filehash.outputs.sha256 }}") {
+              Write-Host "✓ 文件完整，校验通过"
+          } else {
+              Write-Host "✗ 文件可能已损坏或被篡改"
+          }
           ````
           
           ### 📝 更新说明
           
           "@
           
+          # 添加从 version.py 提取的更新日志
           if (Test-Path "CHANGELOG.txt") {
               $changelog = Get-Content "CHANGELOG.txt" -Raw -Encoding UTF8
               $releaseNotes += $changelog
+          } else {
+              $releaseNotes += "请查看项目 README 或 query_tool/version.py 中的版本历史。"
           }
           
+          # 添加使用说明
           $releaseNotes += @"
           
           
           ### 🚀 使用方法
           
           1. 下载 ``TPQueryTool.exe``
-          2. 直接运行（无需安装）
-          3. 首次运行请配置账号信息
+          2. （可选）重命名为 ``查询工具.exe``
+          3. 直接运行（无需安装）
+          4. 首次运行请配置账号信息
+          
+          ### 📚 文档
+          
+          - [快速开始指南](https://github.com/$repo/blob/main/docs/quick-start.md)
+          - [完整文档](https://github.com/$repo/blob/main/docs/README.md)
           
           ---
-          *此版本由 GitHub Actions + Nuitka 自动构建*
+          
+          *此版本由 GitHub Actions 自动构建和发布*
           "@
           
           $releaseNotes | Set-Content "RELEASE_NOTES.md" -Encoding UTF8
+          
+          Write-Host "Generated Release Notes:"
+          Get-Content "RELEASE_NOTES.md"
       
       - name: Create Release
+        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           files: |
