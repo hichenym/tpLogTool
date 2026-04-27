@@ -30,10 +30,17 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref }}"
-          $version = $tag -replace 'refs/tags/v', ''
+          $fullVersion = $tag -replace 'refs/tags/v', ''
+          # 提取纯数字版本号（去掉 -debug, -rc1 等后缀）
+          $version = ($fullVersion -split '-')[0]
+          # 保留后缀标识（debug, rc1 等）
+          $suffix = ''
+          if ($fullVersion -match '-(.+)$') { $suffix = $Matches[1] }
           echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "full_version=$fullVersion" >> $env:GITHUB_OUTPUT
+          echo "suffix=$suffix" >> $env:GITHUB_OUTPUT
           echo "tag=$($tag -replace 'refs/tags/', '')" >> $env:GITHUB_OUTPUT
-          Write-Host "Version: $version"
+          Write-Host "Version: $version, Suffix: $suffix, Full: $fullVersion"
       
       - name: Update version.py
         shell: pwsh
@@ -76,8 +83,6 @@ jobs:
       - name: Build with Nuitka
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          
           Write-Host "开始 Nuitka 编译..."
           Write-Host "Python: $(python --version)"
           Write-Host "Nuitka: $(python -m nuitka --version)"
@@ -92,8 +97,8 @@ jobs:
             --windows-company-name=TPQueryTool `
             --windows-product-name=TPQueryTool `
             --windows-file-description="TP Query Tool" `
-            --windows-product-version="$version.0" `
-            --windows-file-version="$version.0" `
+            --windows-product-version="${{ steps.version.outputs.version }}.0" `
+            --windows-file-version="${{ steps.version.outputs.version }}.0" `
             --assume-yes-for-downloads `
             --enable-plugin=pyqt5 `
             --include-module=ddddocr `
@@ -334,7 +339,7 @@ jobs:
             version.json
           body_path: RELEASE_NOTES.md
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.version.outputs.suffix != '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
