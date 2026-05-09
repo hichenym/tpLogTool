@@ -253,6 +253,7 @@ class DeviceQuery:
                 return False
             
             data = {
+                "moduleCode": "default",
                 "code": "reboot",
                 "params": params_json,
                 "sn": sn,

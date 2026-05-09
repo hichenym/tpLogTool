@@ -216,6 +216,7 @@ class ErrorRecordPage(BasePage):
         # Ctrl+C 复制
         copy_sc = QShortcut(QKeySequence.Copy, self.result_table)
         copy_sc.activated.connect(self._copy_selected)
+        self.result_table.cellDoubleClicked.connect(self._on_cell_double_clicked)
 
         # 分页栏
         pager = QHBoxLayout()
@@ -554,11 +555,26 @@ class ErrorRecordPage(BasePage):
 
     # ---------------------------------------------------- copy --------------
 
+    def _on_cell_double_clicked(self, row, column):
+        item = self.result_table.item(row, column)
+        if item:
+            self._copy_item_text(item, show_message=True)
+
+    def _copy_item_text(self, item, show_message=False):
+        text = item.text()
+        if not text:
+            return
+
+        from PyQt5.QtWidgets import QApplication
+        QApplication.clipboard().setText(text)
+
+        if show_message:
+            self.show_success(f"已复制: {text}", 2000)
+
     def _copy_selected(self):
         items = self.result_table.selectedItems()
         if items:
-            from PyQt5.QtWidgets import QApplication
-            QApplication.clipboard().setText(items[0].text())
+            self._copy_item_text(items[0])
 
     # ---------------------------------------------------- export -----------
 

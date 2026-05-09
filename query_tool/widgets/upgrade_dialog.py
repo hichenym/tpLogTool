@@ -147,6 +147,7 @@ class UpgradeThread(QThread):
             params_json = json.dumps(params_dict)
             
             data = {
+                "moduleCode": "default",
                 "code": "upgrade",
                 "params": params_json,
                 "sn": self.sn,

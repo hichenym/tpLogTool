@@ -96,6 +96,7 @@ class PortMappingThread(QThread):
             params_json = json.dumps(params_dict)
             
             data = {
+                "moduleCode": "default",
                 "code": "portmapDebug",
                 "params": params_json,
                 "sn": self.sn,
