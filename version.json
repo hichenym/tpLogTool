@@ -1,15 +1,15 @@
 {
   "version": "3.3.2",
-  "build_date": "20260427",
+  "build_date": "20260509",
   "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.3.2/TPQueryTool.exe",
-  "file_size_mb": 141.38,
-  "file_size_bytes": 148251648,
-  "file_hash": "e3c696ba76c29b7bac6e42a2e4da7320dd39c94337e86c8d03ab96ef697e87d2",
+  "file_size_mb": 141.47,
+  "file_size_bytes": 148346880,
+  "file_hash": "26f8f4a5f61ff8d4bc79d422ea8f558156baec8a2df6d74985bb66887721f964",
   "hash_algorithm": "sha256",
   "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.3.2/TPQueryTool.exe.sha256",
   "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.3.2",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": "请查看 Release 页面获取完整更新日志",
+  "changelog": ["修复设备右键功能全部失效问题","记录页增加双击复制功能"],
   "analytics": {"doc_id":"IVx0bqWefaVflZssxeycgHvSn5J","sheet_id":"tblyZtqCQEC43Hzl"}
 }
