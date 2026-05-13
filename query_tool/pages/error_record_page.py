@@ -8,10 +8,11 @@ import os
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QGroupBox, QLineEdit, QComboBox,
-    QFrame, QCompleter, QShortcut
+    QFrame, QCompleter, QShortcut, QDialog, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QSize, QTimer, QStringListModel, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeySequence
+from PyQt5.QtGui import QFontMetrics
 
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
@@ -21,7 +22,8 @@ from .base_page import BasePage
 from .page_registry import register_page
 from query_tool.utils import ButtonManager, ThreadManager, StyleManager
 from query_tool.utils.theme_manager import t
-from query_tool.utils.error_record_api import MetaLoadThread, ErrorRecordQueryThread
+from query_tool.utils.error_record_api import MetaLoadThread, ErrorRecordQueryThread, _make_device_query
+from query_tool.utils.logger import logger
 from query_tool.widgets.custom_widgets import set_dark_title_bar
 
 
@@ -31,13 +33,172 @@ class _NoWheelComboBox(QComboBox):
         event.ignore()
 
 
+class DeviceInfoQueryThread(QThread):
+    """根据 SN 查询设备详情线程"""
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, device_sn, fallback_model=""):
+        super().__init__()
+        self.device_sn = device_sn
+        self.fallback_model = fallback_model
+
+    def run(self):
+        try:
+            dq = _make_device_query()
+            result = dq.get_device_info(dev_sn=self.device_sn)
+            if not result.get("success"):
+                raise RuntimeError(result.get("msg", "查询设备信息失败"))
+
+            records = result.get("data", {}).get("records", [])
+            if not records:
+                raise RuntimeError("未查询到设备信息")
+
+            record = records[0]
+            dev_id = str(record.get("devId") or record.get("id") or "").strip()
+            if not dev_id:
+                raise RuntimeError("设备ID为空，无法获取详情")
+
+            device_name = dq.get_device_name(dev_id)
+            password = dq.get_cloud_password(dev_id) or ""
+            version = dq.get_device_version(dev_id) or ""
+
+            data = {
+                "设备名称": device_name or record.get("deviceName", "") or record.get("devName", ""),
+                "型号": record.get("devModel", "") or record.get("deviceModel", "") or record.get("model", "") or self.fallback_model,
+                "SN": record.get("devSN", "") or record.get("deviceSn", "") or self.device_sn,
+                "ID": dev_id,
+                "密码": password,
+                "版本号": version or record.get("fileVersion", "") or record.get("deviceIdentify", ""),
+            }
+            self.finished.emit(data)
+        except Exception as e:
+            logger.error(f"DeviceInfoQueryThread 异常: {e}")
+            self.error.emit(str(e))
+
+
+class DeviceInfoDialog(QDialog):
+    """设备信息弹窗"""
+
+    def __init__(self, info, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("设备信息")
+        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        tip = QLabel("双击内容可复制")
+        tip.setStyleSheet(f"color: {t('text_hint')}; border: none;")
+        layout.addWidget(tip)
+
+        self.table = QTableWidget(6, 2, self)
+        self._key_col_width = 120
+        self.table.setHorizontalHeaderLabels(["字段", "内容"])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setWordWrap(False)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        StyleManager.apply_to_widget(self.table, "TABLE")
+
+        for row, (key, value) in enumerate(info.items()):
+            key_item = QTableWidgetItem(key)
+            value_item = QTableWidgetItem(str(value or ""))
+            self.table.setItem(row, 0, key_item)
+            self.table.setItem(row, 1, value_item)
+
+        self.table.cellDoubleClicked.connect(self._copy_cell_text)
+        layout.addWidget(self.table)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        close_btn = QPushButton()
+        close_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+        close_btn.setIconSize(QSize(18, 18))
+        close_btn.setFixedSize(32, 32)
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+
+        self._adjust_table_size(info)
+        self.resize(self.minimumSizeHint())
+
+        set_dark_title_bar(self)
+
+    def _copy_cell_text(self, row, column):
+        item = self.table.item(row, column)
+        if not item:
+            return
+        from PyQt5.QtWidgets import QApplication
+        text = item.text()
+        if text:
+            QApplication.clipboard().setText(text)
+            parent = self.parent()
+            if parent and hasattr(parent, 'show_success'):
+                parent.show_success(f"已复制: {text}", 2000)
+
+    def _adjust_table_size(self, info):
+        metrics = QFontMetrics(self.table.font())
+
+        key_width = max(
+            [metrics.horizontalAdvance("字段")] +
+            [metrics.horizontalAdvance(str(key)) for key in info.keys()]
+        ) + 28
+
+        value_width = max(
+            [metrics.horizontalAdvance("内容")] +
+            [max(metrics.horizontalAdvance(line) for line in str(value or "").splitlines() or [""]) for value in info.values()]
+        ) + 40
+
+        key_width = max(70, min(key_width, 180))
+        value_width = max(220, min(value_width, 520))
+
+        self._key_col_width = key_width
+        self.table.setColumnWidth(0, key_width)
+
+        default_row_h = self.table.verticalHeader().defaultSectionSize()
+        for row in range(self.table.rowCount()):
+            self.table.setRowHeight(row, default_row_h)
+
+        vertical_header_w = self.table.verticalHeader().width() if self.table.verticalHeader().isVisible() else 0
+        frame_w = self.table.frameWidth() * 2
+        total_w = key_width + value_width + vertical_header_w + frame_w + 2
+        self.table.setMinimumWidth(total_w)
+
+        margins = self.layout().contentsMargins()
+        dialog_w = total_w + margins.left() + margins.right()
+        self.setMinimumWidth(dialog_w)
+
+        header_h = self.table.horizontalHeader().height()
+        rows_h = default_row_h * self.table.rowCount()
+        frame_h = self.table.frameWidth() * 2
+        table_h = header_h + rows_h + frame_h + 2
+        self.table.setMinimumHeight(table_h)
+
+        dialog_h = table_h + margins.top() + margins.bottom() + 32 + self.layout().spacing() * 2 + 24
+        self.setMinimumHeight(dialog_h)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.table.setColumnWidth(0, self._key_col_width)
+
+
 @register_page("记录", order=3, icon=":/icons/system/record.png")
 class ErrorRecordPage(BasePage):
     """错误码记录查询页面"""
 
     # 表格列定义：(表头, 数据字段, 初始宽度, 最小宽度)
     COLUMNS = [
-        ("设备SN",        "deviceSn",        160, 100),
+        ("设备SN (双击查看设备信息)", "deviceSn", 220, 140),
         ("设备型号",      "deviceModel",     100,  70),
         ("设备版本",      "deviceIdentify",  200, 120),
         ("所属模块",      "module",          100,  70),
@@ -87,6 +248,20 @@ class ErrorRecordPage(BasePage):
         self.main_buttons = self.btn_manager.create_group("main")
         self.main_buttons.add(self.query_btn)
         self.main_buttons.add(self.reset_btn)
+
+        self._bind_filter_change_events()
+
+    def _bind_filter_change_events(self):
+        """绑定筛选项变化事件，用于控制查询按钮状态"""
+        self.sn_input.textChanged.connect(self._update_query_button_state)
+        self.model_combo.currentTextChanged.connect(self._update_query_button_state)
+        self.version_combo.currentTextChanged.connect(self._update_query_button_state)
+        self.module_combo.currentTextChanged.connect(self._update_query_button_state)
+        self.error_code_input.textChanged.connect(self._update_query_button_state)
+        self.start_dt.textChanged.connect(self._update_query_button_state)
+        self.end_dt.textChanged.connect(self._update_query_button_state)
+
+        self._update_query_button_state()
 
     def _create_filter_group(self):
         group = QGroupBox("筛选条件")
@@ -324,6 +499,23 @@ class ErrorRecordPage(BasePage):
             combo.completer().setModel(QStringListModel(all_items))
         combo.blockSignals(False)
 
+    def _has_any_filter(self):
+        """是否至少填写了一个筛选条件"""
+        return any([
+            self.sn_input.text().strip(),
+            self.model_combo.currentText().strip(),
+            self.version_combo.currentText().strip(),
+            self.module_combo.currentText().strip(),
+            self.error_code_input.text().strip(),
+            self.start_dt.text().strip(),
+            self.end_dt.text().strip(),
+        ])
+
+    def _update_query_button_state(self):
+        """根据筛选条件和元数据加载状态更新查询按钮可用性"""
+        can_query = self._meta_loaded and self._has_any_filter()
+        self.query_btn.setEnabled(can_query)
+
     # ---------------------------------------------------- page lifecycle ----
 
     def on_page_show(self):
@@ -366,11 +558,11 @@ class ErrorRecordPage(BasePage):
         # 填充模块下拉框（显示中文 label）
         self._set_combo_items(self.module_combo, [m["label"] for m in module_list])
 
-        self.query_btn.setEnabled(True)
+        self._update_query_button_state()
         self.show_success(f"已加载 {len(model_map)} 个型号，{len(module_list)} 个模块")
 
     def _on_meta_error(self, msg):
-        self.query_btn.setEnabled(True)
+        self.query_btn.setEnabled(False)
         self.show_error(f"加载元数据失败: {msg}")
 
     # ---------------------------------------------------- model -> version --
@@ -389,6 +581,9 @@ class ErrorRecordPage(BasePage):
         self.end_dt.setText(now.strftime("%Y-%m-%d 23:59:59"))
 
     def on_query(self):
+        if not self._has_any_filter():
+            self.show_warning("请填写筛选条件")
+            return
         self.current_page = 1
         self._do_query(1)
 
@@ -406,6 +601,7 @@ class ErrorRecordPage(BasePage):
         self.total_pages = 1
         self.total_count = 0
         self._update_pagination()
+        self._update_query_button_state()
         self.show_info("已重置筛选条件")
 
     def _do_query(self, page):
@@ -557,8 +753,45 @@ class ErrorRecordPage(BasePage):
 
     def _on_cell_double_clicked(self, row, column):
         item = self.result_table.item(row, column)
+        if column == 0:
+            sn_item = self.result_table.item(row, column)
+            if sn_item and sn_item.text().strip():
+                model_item = self.result_table.item(row, 1)
+                fallback_model = model_item.text().strip() if model_item else ""
+                self._show_device_info_dialog(sn_item.text().strip(), fallback_model)
+            return
+
         if item:
             self._copy_item_text(item, show_message=True)
+
+    def _show_device_info_dialog(self, device_sn, fallback_model=""):
+        self.show_progress(f"正在查询设备 {device_sn} 信息...")
+
+        if hasattr(self, '_device_info_thread') and self._device_info_thread:
+            try:
+                if self._device_info_thread.isRunning():
+                    self._device_info_thread.quit()
+                    self._device_info_thread.wait(2000)
+            except RuntimeError:
+                pass
+            self._device_info_thread = None
+
+        thread = DeviceInfoQueryThread(device_sn, fallback_model=fallback_model)
+        thread.finished.connect(self._on_device_info_success)
+        thread.error.connect(self._on_device_info_error)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self._device_info_thread = thread
+        self.thread_mgr.add("device_info", thread)
+        thread.start()
+
+    def _on_device_info_success(self, info):
+        self._device_info_thread = None
+        dialog = DeviceInfoDialog(info, self)
+        dialog.exec_()
+
+    def _on_device_info_error(self, msg):
+        self._device_info_thread = None
+        self.show_error(f"查询设备信息失败: {msg}")
 
     def _copy_item_text(self, item, show_message=False):
         text = item.text()
