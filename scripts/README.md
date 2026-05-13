@@ -1,52 +1,40 @@
 # 脚本工具说明
 
-本目录包含项目的构建、打包和清理脚本。
+本目录包含项目的构建、发布、校验和清理脚本。
 
 ## 脚本列表
 
-### 1. build.py - 打包脚本
+### 1. `build.py` - Nuitka 打包脚本
 
-**用途**: 将 Python 项目打包为独立的 Windows 可执行文件
+**用途**：将 Python 项目打包为独立的 Windows 可执行文件。
 
-**功能**:
-- 编译 PyQt5 资源文件
-- 使用 PyInstaller 打包应用
-- 生成单文件可执行程序
-- 自动处理依赖和隐藏导入
+**当前实现**：使用 **Nuitka**，不是 PyInstaller。
 
-**使用方法**:
+**功能**：
+- 自动更新 `query_tool/version.py` 中的 `BUILD_DATE`
+- 使用 Nuitka 生成单文件 exe
+- 自动包含 PyQt5、OCR、ONNX、OpenCV 等依赖
+- 输出固定文件名 `TPQueryTool.exe`
+
+**使用方法**：
 ```bash
 python scripts/build.py
+python scripts/build.py --debug
 ```
 
-**输出**:
-- `dist/run.exe` - 最终的可执行文件
-- `build/` - 构建临时文件
-- `run.spec` - PyInstaller 规范文件
+**输出**：
+- `dist/TPQueryTool.exe` - 最终可执行文件
+- `run.build/` / `run.dist/` / `run.onefile-build/` - Nuitka 构建产物
 
-**依赖**:
-- PyInstaller
-- pyrcc5 (PyQt5 资源编译器)
+**依赖**：
+- Nuitka
+- ordered-set
+- zstandard
+- C 编译器（MinGW64 或 MSVC）
 
-**配置参数**:
-```python
-# 修改以下参数可自定义打包行为
---onefile              # 生成单文件
---windowed             # 无控制台窗口
---icon=resources/icons/app/logo.ico  # 应用图标
---hidden-import=...    # 隐藏导入
---collect-all=...      # 收集所有数据
-```
-
-**常见问题**:
-- Q: 打包失败，提示找不到模块？
-  A: 检查 `--hidden-import` 参数是否包含所有必需的模块
-
-- Q: 生成的 exe 文件很大？
-  A: 这是正常的，包含了所有依赖。可使用 UPX 压缩
-
-- Q: 运行 exe 时闪退？
-  A: 检查 `build.py` 中的依赖配置是否完整
+**说明**：
+- `--debug`：保留控制台窗口，便于排查启动问题
+- 正常打包默认关闭控制台窗口
 
 ---
 
@@ -138,32 +126,25 @@ python scripts/clean.py
 python scripts/build.py
 
 # 3. 测试生成的 exe
-dist/run.exe
+dist/TPQueryTool.exe
 
 # 4. 发布
-# 将 dist/run.exe 上传到发布服务器
+# 将 dist/TPQueryTool.exe 上传到发布服务器或用于发布
 ```
 
 ---
 
 ## 脚本配置
 
-### build.py 配置
+### `build.py` 可调整项
 
-**修改图标**:
-```python
-'--icon=resources/icons/app/logo.ico'
-```
+如果需要调整打包行为，可修改脚本中的：
 
-**修改输出名称**:
-```python
-'--name=TPQueryTool'  # 改为你的应用名称
-```
-
-**添加隐藏导入**:
-```python
-'--hidden-import=your_module'
-```
+- 输出文件名：`--output-filename=TPQueryTool.exe`
+- 图标路径：`resources/icons/app/logo.ico`
+- 并行编译数：`--jobs=4`
+- 是否启用 `--onefile`
+- 包含模块与资源：`--include-module` / `--include-package` / `--include-data-dir`
 
 ### clean.py 配置
 
@@ -181,7 +162,8 @@ MIN_DISK_SPACE = 10 * 1024 * 1024  # 10MB
 
 ### 快速打包
 ```bash
-python scripts/clean.py && python scripts/build.py
+python scripts/clean.py
+python scripts/build.py
 ```
 
 ### 仅清理缓存
@@ -204,10 +186,12 @@ python scripts/clean.py
 
 ## 依赖要求
 
-### build.py 依赖
-- PyInstaller >= 5.0
-- pyrcc5 (PyQt5 工具)
-- 所有项目依赖（见 requirements.txt）
+### `build.py` 依赖
+- Nuitka
+- ordered-set
+- zstandard
+- 所有运行依赖（见 `requirements.txt`）
+- 可用的 C 编译器（MinGW64 或 MSVC）
 
 ### clean.py 依赖
 - Python 3.6+
@@ -216,7 +200,7 @@ python scripts/clean.py
 ### 安装依赖
 ```bash
 pip install -r requirements.txt
-pip install pyinstaller
+pip install nuitka ordered-set zstandard
 ```
 
 ---

@@ -1,42 +1,29 @@
 # 打包说明
 
-## 版本信息
+## 打包方案
 
-当前版本：**V3.0.0 (20260207)**
+当前项目使用 **Nuitka** 进行 Windows 单文件打包，入口脚本为 `scripts/build.py`。
 
 ## 快速打包
 
-### 方式一：使用自动打包脚本（推荐）
+### 推荐方式
 
 ```bash
 python scripts/build.py
 ```
 
+调试模式：
+
+```bash
+python scripts/build.py --debug
+```
+
 脚本会自动：
-1. 更新 `version.py` 中的编译日期为当前日期
-2. 显示当前版本信息
-3. 询问是否继续打包
-4. 执行 PyInstaller 打包
-5. 显示打包结果
-
-### 方式二：使用 spec 文件
-
-```bash
-pyinstaller 查询工具.spec --clean
-```
-
-### 方式三：手动打包
-
-```bash
-pyinstaller -F -w -i ./resources/icons/app/logo.ico --name "查询工具" run.py --noconsole ^
-    --hidden-import=ddddocr ^
-    --hidden-import=onnxruntime ^
-    --hidden-import=cv2 ^
-    --hidden-import=numpy ^
-    --collect-all=ddddocr ^
-    --collect-binaries=onnxruntime ^
-    --collect-data=onnxruntime
-```
+1. 更新 `query_tool/version.py` 中的 `BUILD_DATE`
+2. 读取当前版本号
+3. 清理旧的 Nuitka 构建目录
+4. 调用 Nuitka 生成单文件 exe
+5. 输出打包结果和文件大小
 
 ## 打包前检查清单
 
@@ -76,34 +63,32 @@ BUILD_DATE = "20260207"  # 编译日期
 2. 更新 `VERSION_HISTORY` 添加更新说明
 3. 运行 `python scripts/build.py` 自动更新编译日期并打包
 
-## 打包参数说明
+## 打包依赖
 
-### 基础参数
+打包前请确保：
 
-- `-F` 或 `--onefile`: 打包成单个exe文件
-- `-w` 或 `--windowed`: 不显示控制台窗口
-- `-i ./resources/icons/app/logo.ico`: 指定程序图标
-- `--name "查询工具"`: 指定生成的exe文件名
-- `--noconsole`: 不显示控制台（同-w）
+- 已安装项目运行依赖：`pip install -r requirements.txt`
+- 已安装 Nuitka 相关依赖：
 
-### 依赖处理参数
+```bash
+pip install nuitka ordered-set zstandard
+```
 
-- `--hidden-import=ddddocr`: 显式包含ddddocr模块
-- `--hidden-import=onnxruntime`: 显式包含onnxruntime模块
-- `--hidden-import=cv2`: 显式包含opencv模块
-- `--hidden-import=numpy`: 显式包含numpy模块
-- `--collect-all=ddddocr`: 收集ddddocr的所有数据文件（包括.onnx模型）
-- `--collect-binaries=onnxruntime`: 收集onnxruntime的二进制文件
-- `--collect-data=onnxruntime`: 收集onnxruntime的数据文件
+- 已安装可用的 C 编译器：
+  - MinGW64（推荐）
+  - 或 MSVC Build Tools
 
-### 为什么需要这些参数？
+## Nuitka 关键参数说明
 
-1. **ddddocr**：验证码识别库，包含AI模型文件（.onnx）
-2. **onnxruntime**：AI模型运行时，包含大量二进制文件
-3. **cv2**：图像处理库，ddddocr的依赖
-4. **numpy**：数值计算库，基础依赖
+`scripts/build.py` 当前核心参数包括：
 
-如果不显式指定这些参数，PyInstaller可能无法自动检测到这些依赖，导致打包后的程序运行时报错。
+- `--standalone`：独立发布
+- `--onefile`：打包成单文件 exe
+- `--output-dir=dist`：输出到 `dist/`
+- `--output-filename=TPQueryTool.exe`：固定输出文件名
+- `--enable-plugin=pyqt5`：启用 PyQt5 支持
+- `--windows-console-mode=disable`：默认隐藏控制台
+- `--windows-console-mode=force`：调试模式显示控制台
 
 ## 打包输出
 
@@ -111,10 +96,11 @@ BUILD_DATE = "20260207"  # 编译日期
 
 ```
 .
-├── build/              # 临时构建文件（可删除）
 ├── dist/               # 打包输出目录
-│   └── 查询工具.exe     # 最终可执行文件
-└── 查询工具.spec       # PyInstaller配置文件
+│   └── TPQueryTool.exe # 最终可执行文件
+├── run.build/          # Nuitka 构建目录
+├── run.dist/           # Nuitka 中间目录
+└── run.onefile-build/  # Nuitka 单文件构建目录
 ```
 
 ### 文件大小
@@ -147,45 +133,25 @@ pip install -r requirements.txt
 python scripts/build.py
 ```
 
-### 3. 使用 UPX 压缩
+### 3. 使用干净的打包环境
 
-1. 下载 UPX：https://github.com/upx/upx/releases
-2. 解压后将 `upx.exe` 放到 PATH 路径中
-3. PyInstaller 会自动使用 UPX 压缩
-4. 可额外减小 30-50% 体积
-
-### 4. 排除不必要的模块
-
-在 spec 文件中添加：
-
-```python
-excludes = ['matplotlib', 'scipy', 'pandas', 'PIL']
-```
+建议单独使用打包虚拟环境，避免把不必要的依赖带入编译结果。
 
 ## 常见问题
 
-### Q1: 打包后运行报错 "No module named 'ddddocr'"
-
-**原因**：PyInstaller 未检测到 ddddocr 依赖
-
-**解决**：使用 `--hidden-import=ddddocr` 和 `--collect-all=ddddocr` 参数
-
-### Q2: 打包后运行报错 "找不到 .onnx 文件"
-
-**原因**：AI模型文件未被打包
-
-**解决**：使用 `--collect-all=ddddocr` 参数收集所有数据文件
-
-### Q3: 打包后体积过大（超过 100MB）
-
-**原因**：包含了不必要的依赖
+### Q1: 打包失败，提示未安装 Nuitka
 
 **解决**：
-1. 使用干净的虚拟环境
-2. 在 spec 文件中排除不必要的模块
-3. 使用 UPX 压缩
 
-### Q4: 打包后图标不显示
+```bash
+pip install nuitka ordered-set zstandard
+```
+
+### Q2: 打包失败，提示缺少 C 编译器
+
+**解决**：安装 MinGW64 或 MSVC Build Tools。
+
+### Q3: 打包后图标不显示
 
 **原因**：图标文件路径错误或格式不正确
 
@@ -194,7 +160,7 @@ excludes = ['matplotlib', 'scipy', 'pandas', 'PIL']
 2. 确保是标准的 .ico 格式
 3. 重新生成资源文件：`pyrcc5 resources/icon_res.qrc -o resources/icon_res.py`
 
-### Q5: 编译日期没有更新
+### Q4: 编译日期没有更新
 
 **原因**：未使用自动打包脚本
 
@@ -206,7 +172,7 @@ excludes = ['matplotlib', 'scipy', 'pandas', 'PIL']
 
 ```bash
 # 运行打包后的程序
-.\dist\设备查询工具.exe
+.\dist\TPQueryTool.exe
 ```
 
 ### 2. 功能测试
@@ -214,7 +180,9 @@ excludes = ['matplotlib', 'scipy', 'pandas', 'PIL']
 - [ ] 程序能正常启动
 - [ ] 界面显示正常
 - [ ] 图标显示正常
-- [ ] 版本号显示正确（V3.0.0）
+- [ ] 版本号显示正确
+- [ ] 记录页查询功能正常
+- [ ] 记录页双击 SN 查看设备信息正常
 - [ ] 配置读写正常
 - [ ] 运维账号配置正常
 - [ ] 固件账号配置正常
@@ -248,8 +216,8 @@ git commit -m "Release V3.0.0"
 git push
 
 # 4. 创建标签
-git tag -a V3.0.0 -m "Release V3.0.0"
-git push origin V3.0.0
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
 ### 2. 打包发布

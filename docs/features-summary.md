@@ -1,146 +1,92 @@
-# 账号密码配置功能实现总结
+# 功能总结
 
-## 实现概述
+## 项目概述
 
-为设备查询工具添加了账号密码配置功能，用户可以通过图形界面自定义账号密码，避免内置账号失效导致程序无法使用。
+`tpLogTool` 是一个基于 `PyQt5` 的 Windows 桌面工具，面向设备运维、固件管理、GitLab 日志导出和错误记录查询场景。
 
-**v1.2.0 更新**：实现了运维账号和固件账号的独立配置管理，使用标签页分离两个系统的账号配置。
+当前主要页面：
 
-## 实现内容
+- 设备
+- 固件
+- GitLab日志
+- 记录
 
-### 1. 新增文件
+## 当前核心功能
 
-| 文件名 | 说明 |
-|--------|------|
-| icon/settings.png | 设置图标（齿轮图标） |
-| 账号密码配置说明.md | 配置功能使用说明 |
-| 设置功能使用指南.md | 详细使用指南 |
-| 功能实现总结.md | 本文档 |
+### 1. 设备页面
 
-### 2. 修改文件
+- 支持按 SN / ID 批量查询设备
+- 展示设备名称、型号、SN、ID、密码、版本号、在线状态等信息
+- 支持批量唤醒、批量重启、批量升级、电池采集等操作
+- 支持导出结果
 
-| 文件名 | 修改内容 |
-|--------|----------|
-| main.py | 添加配置读写函数、设置对话框类、替换硬编码 |
-| icon_res.qrc | 添加设置图标资源 |
-| icon_res.py | 重新生成资源文件 |
-| version.py | 更新版本历史 |
-| README.md | 添加新功能说明 |
+### 2. 固件页面
 
-### 3. 代码改动统计
+- 支持固件查询、筛选、编辑等功能
+- 使用独立的固件账号配置
 
-- **新增代码**：约 150 行
-  - 配置读写函数：20 行
-  - 设置对话框类：140 行
-  
-- **修改代码**：约 30 行
-  - 菜单栏添加设置按钮：20 行
-  - 替换硬编码账号密码：10 行
+### 3. GitLab日志页面
 
-## 功能特性
+- 支持 GitLab 提交记录查询
+- 支持按项目、分支、提交者、时间范围筛选
+- 支持导出 Excel
 
-### 1. 设置界面（v1.2.0）
+### 4. 记录页面
 
-- ✅ 标签页设计，分离运维账号和固件账号
-- ✅ 每个标签页独立的账号密码输入
-- ✅ 标签页样式：选中时高亮显示
-- ✅ 账号正常显示，密码隐藏
-- ✅ 密码显示/隐藏切换
-- ✅ 测试连接功能（根据当前标签页测试对应系统）
-- ✅ 保存/取消按钮
-- ✅ 灵活配置：允许全部为空或只填一个平台
-- ✅ 固定使用生产环境
+- 支持按设备SN、型号、版本、模块、错误码、时间范围筛选错误记录
+- 无筛选条件时禁止直接查询，避免接口报错
+- 支持分页浏览记录
+- 结果表格中可双击 `设备SN` 打开设备信息弹窗
+- 设备信息弹窗支持双击复制字段内容
 
-### 2. 配置存储（v1.2.0）
+### 5. 通用能力
 
-- ✅ 运维账号保存到注册表：`account_username`、`account_password`
-- ✅ 固件账号保存到注册表：`firmware_username`、`firmware_password`
-- ✅ 密码Base64编码
-- ✅ 用户级别隔离
-- ✅ 支持独立配置或全部为空
+- 运维账号 / 固件账号独立配置
+- 主题切换
+- 状态栏消息提示
+- 自动更新检查与下载
+- 可选文件日志
 
-### 3. 配置读取（v1.2.0）
+## 主要技术实现
 
-- ✅ 自动从注册表读取
-- ✅ 运维系统使用 `get_account_config()`
-- ✅ 固件系统使用 `get_firmware_account_config()`
-- ✅ 未配置时返回空值，不使用默认值
-- ✅ 所有查询操作统一使用配置
+### UI 架构
 
-### 4. 用户体验（v1.2.0）
+- `query_tool/main.py`：主窗口、菜单、状态栏、页面切换
+- `query_tool/pages/`：各功能页面
+- `query_tool/widgets/`：通用弹窗和控件
 
-- ✅ 设置按钮位于菜单栏右侧，仅显示图标
-- ✅ 标签页切换流畅，样式统一
-- ✅ 未配置账号时弹窗提示并可直接跳转到对应标签页
-- ✅ 模态对话框设计
-- ✅ 测试连接即时反馈
-- ✅ 保存成功提示
-- ✅ 固定生产环境，简化配置
+### 工具模块
 
-## 技术实现
+- `config.py`：注册表配置管理
+- `device_query.py`：设备相关接口封装
+- `error_record_api.py`：错误记录查询接口
+- `thread_manager.py`：后台线程管理
+- `style_manager.py` / `theme_manager.py`：主题与样式管理
+- `update_manager.py`：更新流程管理
 
-### 1. 配置管理（v1.2.0）
+### 打包与发布
 
-```python
-# 运维账号配置
-def get_account_config():
-    """获取运维账号配置"""
-    config = config_manager.load_account_config()
-    return config.env, config.username, config.password
+- 当前本地打包使用 `Nuitka`
+- 发布脚本位于 `scripts/release.py`
+- 可使用 `scripts/verify_protection.py` 校验打包产物
 
-def save_account_config(env, username, password):
-    """保存运维账号配置"""
-    config = AccountConfig(env=env, username=username, password=password)
-    return config_manager.save_account_config(config)
+## 当前功能特点
 
-# 固件账号配置
-def get_firmware_account_config():
-    """获取固件账号配置"""
-    config = config_manager.load_firmware_account_config()
-    return config.username, config.password
+- 页面通过 `PageRegistry` 注册
+- 多数耗时操作通过 `QThread` 在后台执行
+- 设备信息、错误记录、GitLab 日志等功能已形成独立页面
+- 已支持较完整的 Windows 桌面运维工具工作流
 
-def save_firmware_account_config(username, password):
-    """保存固件账号配置"""
-    config = FirmwareAccountConfig(username=username, password=password)
-    return config_manager.save_firmware_account_config(config)
-```
+## 后续建议方向
 
-### 2. 设置对话框（v1.2.0）
+- 进一步统一页面中的线程模型
+- 提升配置存储安全性
+- 优化文档与实现同步机制
+- 将页面业务逻辑逐步下沉到 service 层
 
-```python
-class SettingsDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("账号密码设置")
-        self.setFixedSize(380, 240)
-        
-        # 加载运维账号配置
-        self.env, self.device_username, self.device_password = get_account_config()
-        
-        # 加载固件账号配置
-        self.firmware_username, self.firmware_password = get_firmware_account_config()
-        
-        self.init_ui()
-    
-    def init_ui(self):
-        # 创建标签页
-        self.tab_widget = QTabWidget()
-        
-        # 运维账号标签页
-        device_tab = self.create_account_tab(
-            self.device_username, 
-            self.device_password,
-            is_device=True
-        )
-        self.tab_widget.addTab(device_tab, "运维账号")
-        
-        # 固件账号标签页
-        firmware_tab = self.create_account_tab(
-            self.firmware_username,
-            self.firmware_password,
-            is_device=False
-        )
-        self.tab_widget.addTab(firmware_tab, "固件账号")
+## 说明
+
+本文档仅保留当前功能概览与架构说明，不再记录历史实现过程、代码片段和详细改动统计。
     
     def on_test_connection(self):
         """测试连接（根据当前标签页）"""

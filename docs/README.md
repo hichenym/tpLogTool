@@ -1,76 +1,55 @@
-# 📚 Documentation Index
+# 文档索引
 
-This directory contains all documentation for the Query Tool.
+本目录包含 `tpLogTool` 的使用、构建和功能说明文档。
 
-## 🚀 User Documentation
+## 用户文档
 
-### [quick-start.md](./quick-start.md)
-Quick start guide to help new users get started with the tool.
+### [`quick-start.md`](./quick-start.md)
+快速开始指南，适合首次使用者快速完成安装、配置与基础操作。
 
-### [settings-guide.md](./settings-guide.md)
-Detailed guide for settings functionality, including account configuration and interface settings.
+### [`account-config-guide.md`](./account-config-guide.md)
+账号与密码配置说明，包括运维账号和固件账号的配置方式。
 
-### [account-config-guide.md](./account-config-guide.md)
-Account and password configuration methods and precautions.
+### [`features-summary.md`](./features-summary.md)
+项目当前功能总览，包含页面能力、通用能力和技术实现概述。
 
-### [gitlab-quick-start.md](./gitlab-quick-start.md)
-Quick start guide for GitLab log export functionality.
+## 开发与模块文档
 
-## 🔧 Developer Documentation
+### [`modules-guide.md`](./modules-guide.md)
+工具模块、自定义控件及页面扩展相关说明。
 
-### [modules-guide.md](./modules-guide.md)
-Usage guide for utility modules and custom widgets, reference for developers.
+### [`data-collect-feature.md`](./data-collect-feature.md)
+数据采集相关功能说明。
 
-### [gitlab-dev-guide.md](./gitlab-dev-guide.md)
-Technical implementation details of GitLab functionality, reference for developers.
+### [`update-feature-summary.md`](./update-feature-summary.md)
+更新功能相关实现说明。
 
-### [gitlab-features.md](./gitlab-features.md)
-Complete list of GitLab features and testing points.
+## 构建与发布文档
 
-### [features-summary.md](./features-summary.md)
-Summary of project features and technical highlights.
+### [`build-guide.md`](./build-guide.md)
+本地构建与打包说明，当前以 `Nuitka` 方案为准。
 
-### [disabled-style-guide.md](./disabled-style-guide.md)
-Style design guide for disabled widget states.
+### [`github-actions-guide.md`](./github-actions-guide.md)
+GitHub Actions 自动构建与发布说明。
 
-### [dark-theme-guide.md](./dark-theme-guide.md)
-Design and implementation guide for dark theme.
+### [`hash-verification-guide.md`](./hash-verification-guide.md)
+构建产物校验与哈希验证说明。
 
-## 📦 Deployment Documentation
+### [`skip-version-registry.md`](./skip-version-registry.md)
+版本跳过配置相关说明。
 
-### [build-guide.md](./build-guide.md)
-Application packaging and deployment guide.
+## 快速导航
 
-### [version-guide.md](./version-guide.md)
-Version number management and release process guide.
-
-### [github-actions-guide.md](./github-actions-guide.md) ⭐
-GitHub Actions automated release complete guide - includes release notes generation.
-
-### [auto-update-solution.md](./auto-update-solution.md)
-Auto-update module technical solution analysis (three mainstream approaches).
-
-### [auto-update-replacement-strategy.md](./auto-update-replacement-strategy.md)
-Portable program replacement update strategy (batch script implementation).
-
-### [silent-update-guide.md](./silent-update-guide.md) ⭐
-Complete silent update implementation guide with strategy comparison.
+| 我想要… | 查看文档 |
+|---|---|
+| 快速上手 | [`quick-start.md`](./quick-start.md) |
+| 配置账号 | [`account-config-guide.md`](./account-config-guide.md) |
+| 了解项目功能 | [`features-summary.md`](./features-summary.md) |
+| 查看模块说明 | [`modules-guide.md`](./modules-guide.md) |
+| 本地打包 | [`build-guide.md`](./build-guide.md) |
+| 自动发布 | [`github-actions-guide.md`](./github-actions-guide.md) |
+| 校验发布文件 | [`hash-verification-guide.md`](./hash-verification-guide.md) |
 
 ---
 
-## 🎯 Quick Navigation
-
-| I want to... | View Document |
-|-------------|---------------|
-| Get started quickly | [quick-start.md](./quick-start.md) |
-| Configure account | [account-config-guide.md](./account-config-guide.md) |
-| Use GitLab features | [gitlab-quick-start.md](./gitlab-quick-start.md) |
-| Learn about settings | [settings-guide.md](./settings-guide.md) |
-| Develop new features | [modules-guide.md](./modules-guide.md) |
-| Package and deploy | [build-guide.md](./build-guide.md) |
-| Publish new version | [github-actions-guide.md](./github-actions-guide.md) ⭐ |
-| Implement auto-update | [auto-update-solution.md](./auto-update-solution.md) |
-
----
-
-*Last Updated: 2026-02-24*
+最后更新时间：2026-02-24

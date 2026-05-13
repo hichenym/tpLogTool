@@ -1,6 +1,6 @@
 # 设备查询工具
 
-一个基于 PyQt5 的设备信息查询和管理工具，支持批量查询设备信息、唤醒设备、导出数据等功能。
+一个基于 PyQt5 的设备运维查询与管理工具，支持设备查询、固件管理、GitLab 日志导出、错误记录查询、批量运维操作和数据导出等功能。
 
 ## 功能特性
 
@@ -10,6 +10,16 @@
 - ⚡ 批量唤醒离线设备
 - 🔋 设备电池电量数据采集
 - 📤 导出设备信息为CSV文件
+
+### 记录管理
+- 🧩 按设备SN、型号、版本、模块、错误码、时间范围查询记录
+- 🚫 无筛选条件时禁止直接查询，避免接口报错
+- 🔎 双击结果中的 `设备SN` 查看设备详细信息
+- 📋 设备信息弹窗支持双击复制
+
+### 固件管理
+- 🛠️ 固件信息查询、筛选与编辑
+- 🔐 使用独立的固件账号配置
 
 ### GitLab 日志导出（新增）
 - 🔗 连接 GitLab 服务器
@@ -130,8 +140,8 @@ GitHub Actions 会自动：
 - ✅ 更新版本号和编译日期
 - ✅ 打包 Windows 可执行文件
 - ✅ 创建 GitHub Release
-- ✅ 上传 exe 和 version.json
-- ✅ 从 version.py 提取更新日志生成发布说明
+- ✅ 上传发布产物
+- ✅ 生成发布说明
 
 构建完成后可在 [Releases](../../releases) 页面下载。
 
@@ -194,61 +204,14 @@ python scripts/build.py
 ```
 
 脚本会自动：
-1. 更新 `version.py` 中的编译日期为当前日期
+1. 更新 `query_tool/version.py` 中的编译日期
 2. 显示当前版本信息
-3. 执行 PyInstaller 打包
-4. 清理临时文件
+3. 使用 **Nuitka** 进行单文件打包
+4. 清理旧的构建目录
 
-#### 方法二：使用 spec 文件
+当前输出文件：`dist/TPQueryTool.exe`
 
-```bash
-# 清理之前的打包文件
-pyinstaller 查询工具.spec --clean
-```
-
-#### 方法三：使用命令行参数
-
-```bash
-pyinstaller -F -w -i ./resources/icons/app/logo.ico --name "查询工具" run.py --noconsole
-```
-
-### 打包参数说明
-
-- `-F` 或 `--onefile`: 打包成单个exe文件
-- `-w` 或 `--windowed`: 不显示控制台窗口
-- `-i`: 指定程序图标
-- `--name`: 指定生成的exe文件名
-- `--noconsole`: 不显示控制台（同-w）
-- `--clean`: 清理临时文件
-
-### 优化打包体积
-
-1. **使用干净的虚拟环境**
-```bash
-# 创建专门用于打包的虚拟环境
-python -m venv venv_build
-.\venv_build\Scripts\activate
-
-# 只安装必需的包
-pip install PyQt5 requests ddddocr
-
-# 打包
-pyinstaller 设备查询工具.spec --clean
-```
-
-2. **安装 UPX 压缩工具**
-   - 下载地址: https://github.com/upx/upx/releases
-   - 解压后将 `upx.exe` 放到 PATH 路径中
-   - 可额外减小 30-50% 体积
-
-3. **分析打包内容**
-```bash
-# 使用 --onedir 模式查看打包内容
-pyinstaller --onedir 设备查询工具.spec
-
-# 查看大文件
-dir /s /o-s dist\设备查询工具
-```
+详细说明请参考 `docs/build-guide.md`。
 
 ## 项目结构
 
