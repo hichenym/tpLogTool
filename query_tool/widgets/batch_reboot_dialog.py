@@ -24,10 +24,10 @@ class BatchStatusWorker(QObject):
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
-    def __init__(self, devices, token, max_workers=30):
+    def __init__(self, devices, device_query, max_workers=30):
         super().__init__()
         self.devices = devices  # [(sn, dev_id, device_name), ...]
-        self.token = token
+        self.device_query = device_query
         self.max_workers = max_workers
         self._stop = False
     
@@ -39,7 +39,7 @@ class BatchStatusWorker(QObject):
         if self._stop:
             return sn, False
         try:
-            is_online = check_device_online(sn, self.token)
+            is_online = check_device_online(sn, self.device_query)
             return sn, is_online
         except Exception as e:
             return sn, False
@@ -75,9 +75,9 @@ class BatchStatusThread(QThread):
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
-    def __init__(self, devices, token, max_workers=30):
+    def __init__(self, devices, device_query, max_workers=30):
         super().__init__()
-        self.worker = BatchStatusWorker(devices, token, max_workers)
+        self.worker = BatchStatusWorker(devices, device_query, max_workers)
         self.worker.single_result.connect(self.single_result)
         self.worker.all_done.connect(self.all_done)
         self.worker.progress.connect(self.progress)
@@ -95,10 +95,10 @@ class BatchWakeWorker(QObject):
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
-    def __init__(self, devices, token, max_workers=30):
+    def __init__(self, devices, device_query, max_workers=30):
         super().__init__()
         self.devices = devices  # [(sn, dev_id), ...]
-        self.token = token
+        self.device_query = device_query
         self.max_workers = max_workers
         self._stop = False
     
@@ -110,7 +110,7 @@ class BatchWakeWorker(QObject):
         if self._stop:
             return sn, False
         try:
-            success = wake_device_smart(dev_id, sn, self.token, max_times=3)
+            success = wake_device_smart(dev_id, sn, self.device_query, max_times=3)
             return sn, success
         except Exception as e:
             return sn, False
@@ -146,9 +146,9 @@ class BatchWakeThread(QThread):
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
-    def __init__(self, devices, token, max_workers=30):
+    def __init__(self, devices, device_query, max_workers=30):
         super().__init__()
-        self.worker = BatchWakeWorker(devices, token, max_workers)
+        self.worker = BatchWakeWorker(devices, device_query, max_workers)
         self.worker.single_result.connect(self.single_result)
         self.worker.all_done.connect(self.all_done)
         self.worker.progress.connect(self.progress)
@@ -162,7 +162,7 @@ class BatchWakeThread(QThread):
 
 class BatchRebootWorker(QObject):
     """批量重启工作器"""
-    single_result = pyqtSignal(str, bool)  # (sn, success)
+    single_result = pyqtSignal(str, str, str)  # (sn, status, message)
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
@@ -180,12 +180,14 @@ class BatchRebootWorker(QObject):
     def reboot_single_device(self, sn, dev_id):
         """重启单个设备"""
         if self._stop:
-            return sn, False
+            return sn, 'failed', '任务已停止'
         try:
-            success = self.device_query.send_reboot_command(dev_id, self.reboot_time)
-            return sn, success
+            status, message = self.device_query.send_reboot_command(
+                dev_id, self.reboot_time, return_detail=True
+            )
+            return sn, status, message
         except Exception as e:
-            return sn, False
+            return sn, 'failed', str(e)
     
     def run(self):
         try:
@@ -201,8 +203,8 @@ class BatchRebootWorker(QObject):
                 for future in as_completed(futures):
                     if self._stop:
                         break
-                    sn, success = future.result()
-                    self.single_result.emit(sn, success)
+                    sn, status, message = future.result()
+                    self.single_result.emit(sn, status, message)
                     completed += 1
                     if completed % 5 == 0 or completed == total:
                         self.progress.emit(f"重启进度: {completed}/{total}")
@@ -214,7 +216,7 @@ class BatchRebootWorker(QObject):
 
 class BatchRebootThread(QThread):
     """批量重启线程"""
-    single_result = pyqtSignal(str, bool)
+    single_result = pyqtSignal(str, str, str)
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
@@ -253,6 +255,7 @@ class BatchRebootDialog(QDialog):
         
         # 设备状态映射 {sn: is_online}
         self.device_status = {}
+        self.command_result_stats = {'success': 0, 'offline': 0, 'failed': 0}
         
         # 线程管理器
         self.thread_mgr = ThreadManager()
@@ -389,7 +392,7 @@ class BatchRebootDialog(QDialog):
         """开始初始查询"""
         thread = BatchStatusThread(
             self.devices,
-            self.device_query.token,
+            self.device_query,
             self.thread_count
         )
         thread.single_result.connect(self.on_status_result)
@@ -462,7 +465,7 @@ class BatchRebootDialog(QDialog):
         # 启动唤醒线程
         thread = BatchWakeThread(
             offline_devices,
-            self.device_query.token,
+            self.device_query,
             self.thread_count
         )
         thread.all_done.connect(self.on_wake_complete)
@@ -492,7 +495,7 @@ class BatchRebootDialog(QDialog):
         # 启动查询线程
         thread = BatchStatusThread(
             self.devices,
-            self.device_query.token,
+            self.device_query,
             self.thread_count
         )
         thread.single_result.connect(self.on_status_result)
@@ -508,11 +511,12 @@ class BatchRebootDialog(QDialog):
         self.refresh_btn.setEnabled(False)
         self.confirm_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
+        self.command_result_stats = {'success': 0, 'offline': 0, 'failed': 0}
         
         # 重新查询所有设备状态（后台查询，不更新界面）
         thread = BatchStatusThread(
             self.devices,
-            self.device_query.token,
+            self.device_query,
             self.thread_count
         )
         # 连接到后台更新方法（只更新状态字典，不更新表格）
@@ -528,45 +532,51 @@ class BatchRebootDialog(QDialog):
     
     def on_final_query_complete(self):
         """最终查询完成，开始重启"""
-        # 获取所有在线设备
-        online_devices = []
-        for sn, dev_id, device_name in self.devices:
-            if self.device_status.get(sn, False):
-                online_devices.append((sn, dev_id))
-        
-        online_count = len(online_devices)
-        offline_count = len(self.devices) - online_count
-        
-        if online_count == 0:
-            if self.parent_window:
-                self.parent_window.show_error("设备离线，操作失败")
-            self.restore_buttons()
-            return
-        
         # 获取重启时间
         reboot_time = "now" if self.now_radio.isChecked() else "after_five_minute"
         
         # 启动重启线程
         thread = BatchRebootThread(
-            online_devices,
+            [(sn, dev_id) for sn, dev_id, _ in self.devices],
             reboot_time,
             self.device_query,
             self.thread_count
         )
-        thread.all_done.connect(
-            lambda: self.on_reboot_complete(online_count, offline_count)
-        )
+        thread.single_result.connect(self.on_reboot_result)
+        thread.all_done.connect(self.on_reboot_complete)
         thread.finished.connect(lambda: thread.deleteLater())
         self.thread_mgr.add("batch_reboot", thread)
         thread.start()
     
-    def on_reboot_complete(self, online_count, offline_count):
+    def on_reboot_result(self, sn, status, message):
+        """单台重启结果"""
+        if status not in self.command_result_stats:
+            status = 'failed'
+        self.command_result_stats[status] += 1
+
+    def on_reboot_complete(self):
         """重启完成"""
-        if self.parent_window:
-            self.parent_window.show_success(
-                f"重启命令已发送：成功 {online_count} 台，离线 {offline_count} 台"
-            )
-        self.accept()
+        success_count = self.command_result_stats.get('success', 0)
+        offline_count = self.command_result_stats.get('offline', 0)
+        failed_count = self.command_result_stats.get('failed', 0)
+
+        if success_count > 0:
+            if self.parent_window:
+                self.parent_window.show_success(
+                    f"重启命令下发完成：成功 {success_count} 台，离线 {offline_count} 台，失败 {failed_count} 台"
+                )
+            self.accept()
+            return
+
+        if offline_count > 0 and failed_count == 0:
+            if self.parent_window:
+                self.parent_window.show_error("设备离线，操作失败")
+        else:
+            if self.parent_window:
+                self.parent_window.show_error(
+                    f"重启下发失败：离线 {offline_count} 台，失败 {failed_count} 台"
+                )
+        self.restore_buttons()
     
     def restore_buttons(self):
         """恢复按钮状态"""

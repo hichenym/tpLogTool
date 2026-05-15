@@ -20,16 +20,16 @@ class StatusQueryThread(QThread):
     """状态查询线程"""
     finished_signal = pyqtSignal(bool, str)  # is_online, message
     
-    def __init__(self, sn, token):
+    def __init__(self, sn, device_query):
         super().__init__()
         self.sn = sn
-        self.token = token
+        self.device_query = device_query
     
     def run(self):
         """执行查询"""
         try:
             from query_tool.utils import check_device_online
-            is_online = check_device_online(self.sn, self.token)
+            is_online = check_device_online(self.sn, self.device_query)
             if is_online:
                 self.finished_signal.emit(True, "在线")
             else:
@@ -297,7 +297,7 @@ class RebootDialog(QDialog):
         
         # 启动查询线程
         if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query.token)
+            thread = StatusQueryThread(self.sn, self.device_query)
             thread.finished_signal.connect(self.on_status_query_finished)
             thread.finished.connect(lambda: thread.deleteLater())
             self.thread_mgr.add("status_query", thread)
@@ -375,7 +375,7 @@ class RebootDialog(QDialog):
         # 不显示查询中提示，直接后台查询
         # 重新查询状态
         if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query.token)
+            thread = StatusQueryThread(self.sn, self.device_query)
             thread.finished_signal.connect(self.on_confirm_status_checked)
             thread.finished.connect(lambda: thread.deleteLater())
             self.thread_mgr.add("confirm_status_query", thread)
@@ -387,18 +387,12 @@ class RebootDialog(QDialog):
     
     def on_confirm_status_checked(self, is_online, message):
         """确认前状态检查完成"""
-        if is_online:
-            # 设备在线，发送重启命令
-            self.send_reboot_command()
-        else:
-            # 设备离线，提示并恢复按钮
-            if self.parent():
-                self.parent().show_error("设备离线，操作失败")
-            self.restore_buttons()
-            
-            # 更新状态显示
+        if not is_online:
             self.status_label.setText("● 离线")
             self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
+            if self.parent():
+                self.parent().show_warning("当前状态显示离线，继续尝试下发，最终结果以服务端返回为准")
+        self.send_reboot_command()
     
     def send_reboot_command(self):
         """发送重启命令"""

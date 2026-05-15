@@ -20,16 +20,15 @@ class StatusQueryThread(QThread):
     """状态查询线程"""
     finished_signal = pyqtSignal(bool, str)  # is_online, message
     
-    def __init__(self, sn, token, host='console.seetong.com'):
+    def __init__(self, sn, device_query):
         super().__init__()
         self.sn = sn
-        self.token = token
-        self.host = host
+        self.device_query = device_query
     
     def run(self):
         try:
             from query_tool.utils import check_device_online
-            is_online = check_device_online(self.sn, self.token, self.host)
+            is_online = check_device_online(self.sn, self.device_query)
             if is_online:
                 self.finished_signal.emit(True, "在线")
             else:
@@ -290,7 +289,7 @@ class PortMappingDialog(QDialog):
         self.refresh_btn.setEnabled(False)
         
         if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query.token, self.device_query.host)
+            thread = StatusQueryThread(self.sn, self.device_query)
             thread.finished_signal.connect(self.on_status_query_finished)
             thread.finished.connect(lambda: thread.deleteLater())
             self.thread_mgr.add("status_query", thread)
@@ -310,7 +309,7 @@ class PortMappingDialog(QDialog):
         else:
             self.status_label.setText("● 离线")
             self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
-            self.confirm_btn.setEnabled(False)
+            self.confirm_btn.setEnabled(True)
         
         self.wake_btn.setEnabled(True)
         self.refresh_btn.setEnabled(True)
@@ -350,7 +349,7 @@ class PortMappingDialog(QDialog):
             else:
                 self.status_label.setText("● 离线")
                 self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
-            self.confirm_btn.setEnabled(self.is_online)
+            self.confirm_btn.setEnabled(True)
     
     def on_ip_changed(self, text):
         """IP地址输入变化时实时校验"""
@@ -433,7 +432,7 @@ class PortMappingDialog(QDialog):
         
         # 重新查询状态
         if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query.token, self.device_query.host)
+            thread = StatusQueryThread(self.sn, self.device_query)
             thread.finished_signal.connect(
                 lambda is_online, msg: self.on_confirm_status_checked(is_online, msg, ip, port)
             )
@@ -454,14 +453,12 @@ class PortMappingDialog(QDialog):
     
     def on_confirm_status_checked(self, is_online, message, ip, port):
         """确认前状态检查完成"""
-        if is_online:
-            self.send_port_mapping_command(ip, port)
-        else:
-            if self.parent_window:
-                self.parent_window.show_error("设备离线，操作失败")
-            self.restore_buttons()
+        if not is_online:
             self.status_label.setText("● 离线")
             self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
+            if self.parent_window:
+                self.parent_window.show_warning("当前状态显示离线，继续尝试下发，最终结果以服务端返回为准")
+        self.send_port_mapping_command(ip, port)
     
     def send_port_mapping_command(self, ip, port):
         """发送端口穿透命令"""

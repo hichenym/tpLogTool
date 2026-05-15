@@ -214,10 +214,8 @@ class WakeWorker(QObject):
         if self.is_stopped():
             return dev_id, sn, False
         try:
-            # 获取token
-            token = self.query.token
             # 调用智能唤醒函数
-            success = wake_device_smart(dev_id, sn, token, max_times=3)
+            success = wake_device_smart(dev_id, sn, self.query, max_times=3)
             return dev_id, sn, success
         except Exception as e:
             logger.error(f"唤醒设备失败 {sn}({dev_id}): {e}")

@@ -220,16 +220,17 @@ class DeviceQuery:
         data = res['data']
         return {'serverId': data.get('serverId')}
     
-    def send_reboot_command(self, dev_id, reboot_time):
+    def send_reboot_command(self, dev_id, reboot_time, return_detail=False):
         """
         发送重启命令
         
         Args:
             dev_id: 设备ID
             reboot_time: 重启时间，"now" 或 "after_five_minute"
+            return_detail: 是否返回详细结果
         
         Returns:
-            bool: 是否成功
+            bool | tuple[str, str]: 是否成功或详细结果
         """
         try:
             url = f'https://{self.host}/api/seetong-siot-device/console/device/operate/sendCommand'
@@ -247,10 +248,10 @@ class DeviceQuery:
             device_info = self.get_device_info(dev_id=dev_id)
             records = device_info.get('data', {}).get('records', [])
             if not records:
-                return False
+                return ('failed', '未找到设备信息') if return_detail else False
             sn = records[0].get('devSN', '')
             if not sn:
-                return False
+                return ('failed', '设备SN为空') if return_detail else False
             
             data = {
                 "moduleCode": "default",
@@ -264,14 +265,35 @@ class DeviceQuery:
             response.raise_for_status()
             
             result = response.json()
-            return result.get('code') == 200 and result.get('success', False)
+            if result.get('code') == 200 and result.get('success', False):
+                return ('success', '重启命令已发送') if return_detail else True
+            if result.get('code') == 20001:
+                return ('offline', '设备不在线，操作失败') if return_detail else False
+            msg = result.get('msg', '操作失败')
+            return ('failed', msg) if return_detail else False
         except Exception as e:
             logger.error(f"发送重启命令失败: {e}")
-            return False
+            return ('failed', str(e)) if return_detail else False
 
 
-def wake_device(dev_id, sn, token, host='console.seetong.com', times=3):
+def _resolve_auth_context(token_or_query, host='console.seetong.com'):
+    """统一解析 DeviceQuery 或裸 token，避免 host/token 逻辑分叉。"""
+    if isinstance(token_or_query, DeviceQuery):
+        return token_or_query.token, token_or_query.host, token_or_query
+    return token_or_query, host, None
+
+
+def _is_online_status(online_status):
+    """统一解析在线状态字段，兼容 int / str。"""
+    try:
+        return int(online_status) == 1
+    except (TypeError, ValueError):
+        return False
+
+
+def wake_device(dev_id, sn, token_or_query, host='console.seetong.com', times=3):
     """唤醒设备"""
+    token, host, _ = _resolve_auth_context(token_or_query, host)
     session = session_manager.get_session('wake_device')
     url = f'https://{host}/api/seetong-device-media-command/siot-media/command/send'
     headers = {
@@ -288,9 +310,20 @@ def wake_device(dev_id, sn, token, host='console.seetong.com', times=3):
         time.sleep(1)
 
 
-def check_device_online(sn, token, host='console.seetong.com'):
-    """查询设备在线状态"""
+def check_device_online(sn, token_or_query, host='console.seetong.com'):
+    """查询设备在线状态。
+
+    优先复用 DeviceQuery，确保与主查询页使用同一套 host、token 刷新和接口逻辑。
+    """
     try:
+        token, host, query = _resolve_auth_context(token_or_query, host)
+
+        if query is not None:
+            res = query.get_device_header(sn)
+            data = res.get('data', {}) if res else {}
+            online_status = data.get('onlineStatus', 0)
+            return _is_online_status(online_status)
+
         session = session_manager.get_session('check_online')
         url = f'https://{host}/api/seetong-siot-device/console/device/header'
         headers = {
@@ -304,14 +337,15 @@ def check_device_online(sn, token, host='console.seetong.com'):
         res = r.json()
         data = res.get('data', {})
         online_status = data.get('onlineStatus', 0)
-        return online_status == 1
+        return _is_online_status(online_status)
     except Exception as e:
         logger.warning(f"查询在线状态失败: {e}")
         return False
 
 
-def wake_device_smart(dev_id, sn, token, host='console.seetong.com', max_times=3):
+def wake_device_smart(dev_id, sn, token_or_query, host='console.seetong.com', max_times=3):
     """智能唤醒设备：唤醒后查询状态，在线则停止，离线则继续唤醒"""
+    token, host, query = _resolve_auth_context(token_or_query, host)
     session = session_manager.get_session('wake_device_smart')
     url = f'https://{host}/api/seetong-device-media-command/siot-media/command/send'
     headers = {
@@ -330,7 +364,7 @@ def wake_device_smart(dev_id, sn, token, host='console.seetong.com', max_times=3
         
         # 等待 2 秒后查询在线状态
         time.sleep(2)
-        if check_device_online(sn, token, host):
+        if check_device_online(sn, query if query is not None else token, host):
             logger.info(f"设备 {sn} 唤醒成功")
             return True  # 设备已在线，停止唤醒
         

@@ -30,10 +30,10 @@ class BatchStatusWorker(QObject):
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
-    def __init__(self, devices, token, max_workers=30):
+    def __init__(self, devices, device_query, max_workers=30):
         super().__init__()
         self.devices = devices  # [(sn, dev_id, device_name, model), ...]
-        self.token = token
+        self.device_query = device_query
         self.max_workers = max_workers
         self._stop = False
     
@@ -46,7 +46,7 @@ class BatchStatusWorker(QObject):
             return sn, False
         try:
             from query_tool.utils import check_device_online
-            is_online = check_device_online(sn, self.token)
+            is_online = check_device_online(sn, self.device_query)
             return sn, is_online
         except Exception as e:
             return sn, False
@@ -82,9 +82,9 @@ class BatchStatusThread(QThread):
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
-    def __init__(self, devices, token, max_workers=30):
+    def __init__(self, devices, device_query, max_workers=30):
         super().__init__()
-        self.worker = BatchStatusWorker(devices, token, max_workers)
+        self.worker = BatchStatusWorker(devices, device_query, max_workers)
         self.worker.single_result.connect(self.single_result)
         self.worker.all_done.connect(self.all_done)
         self.worker.progress.connect(self.progress)
@@ -102,11 +102,10 @@ class BatchWakeWorker(QObject):
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
-    def __init__(self, devices, token, host, max_workers=30):
+    def __init__(self, devices, device_query, max_workers=30):
         super().__init__()
         self.devices = devices  # [(sn, dev_id), ...]
-        self.token = token
-        self.host = host
+        self.device_query = device_query
         self.max_workers = max_workers
         self._stop = False
     
@@ -119,7 +118,7 @@ class BatchWakeWorker(QObject):
             return sn, False
         try:
             from query_tool.utils import wake_device_smart
-            success = wake_device_smart(dev_id, sn, self.token, self.host, max_times=3)
+            success = wake_device_smart(dev_id, sn, self.device_query, max_times=3)
             return sn, success
         except Exception as e:
             return sn, False
@@ -155,9 +154,9 @@ class BatchWakeThread(QThread):
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
-    def __init__(self, devices, token, host, max_workers=30):
+    def __init__(self, devices, device_query, max_workers=30):
         super().__init__()
-        self.worker = BatchWakeWorker(devices, token, host, max_workers)
+        self.worker = BatchWakeWorker(devices, device_query, max_workers)
         self.worker.single_result.connect(self.single_result)
         self.worker.all_done.connect(self.all_done)
         self.worker.progress.connect(self.progress)
@@ -216,7 +215,7 @@ class FirmwareQueryThread(QThread):
 
 class BatchUpgradeWorker(QObject):
     """批量升级工作器"""
-    single_result = pyqtSignal(str, bool)  # (sn, success)
+    single_result = pyqtSignal(str, str, str)  # (sn, status, message)
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
@@ -236,7 +235,7 @@ class BatchUpgradeWorker(QObject):
     def upgrade_single_device(self, sn, dev_id):
         """升级单个设备"""
         if self._stop:
-            return sn, False
+            return sn, 'failed', '任务已停止'
         try:
             session = SessionManager().get_session()
             url = f"https://{self.host}/api/seetong-siot-device/console/device/operate/sendCommand"
@@ -266,14 +265,15 @@ class BatchUpgradeWorker(QObject):
             if response.status_code == 200:
                 result = response.json()
                 if result.get('code') == 200 and result.get('success'):
-                    return sn, True
-                else:
-                    return sn, False
+                    return sn, 'success', '升级命令已发送'
+                if result.get('code') == 20001:
+                    return sn, 'offline', '设备不在线，操作失败'
+                return sn, 'failed', result.get('msg', '操作失败')
             else:
-                return sn, False
+                return sn, 'failed', f"HTTP {response.status_code}"
         except Exception as e:
             logger.error(f"升级设备 {sn} 出错: {e}")
-            return sn, False
+            return sn, 'failed', str(e)
     
     def run(self):
         try:
@@ -289,8 +289,8 @@ class BatchUpgradeWorker(QObject):
                 for future in as_completed(futures):
                     if self._stop:
                         break
-                    sn, success = future.result()
-                    self.single_result.emit(sn, success)
+                    sn, status, message = future.result()
+                    self.single_result.emit(sn, status, message)
                     completed += 1
                     if completed % 5 == 0 or completed == total:
                         self.progress.emit(f"升级进度: {completed}/{total}")
@@ -302,7 +302,7 @@ class BatchUpgradeWorker(QObject):
 
 class BatchUpgradeThread(QThread):
     """批量升级线程"""
-    single_result = pyqtSignal(str, bool)
+    single_result = pyqtSignal(str, str, str)
     all_done = pyqtSignal()
     progress = pyqtSignal(str)
     
@@ -353,6 +353,7 @@ class BatchUpgradeDialog(QDialog):
         self.current_page = 1
         self.total_pages = 1
         self.total_count = 0
+        self.command_result_stats = {'success': 0, 'offline': 0, 'failed': 0}
         
         # 线程管理器
         self.thread_mgr = ThreadManager()
@@ -669,7 +670,7 @@ class BatchUpgradeDialog(QDialog):
         """开始初始查询设备状态"""
         thread = BatchStatusThread(
             self.devices,
-            self.device_query.token,
+            self.device_query,
             self.thread_count
         )
         thread.single_result.connect(self.on_status_result)
@@ -741,8 +742,7 @@ class BatchUpgradeDialog(QDialog):
         # 启动唤醒线程
         thread = BatchWakeThread(
             offline_devices,
-            self.device_query.token,
-            self.device_query.host,
+            self.device_query,
             self.thread_count
         )
         thread.all_done.connect(self.on_wake_complete)
@@ -772,7 +772,7 @@ class BatchUpgradeDialog(QDialog):
         # 启动查询线程
         thread = BatchStatusThread(
             self.devices,
-            self.device_query.token,
+            self.device_query,
             self.thread_count
         )
         thread.single_result.connect(self.on_status_result)
@@ -961,11 +961,12 @@ class BatchUpgradeDialog(QDialog):
         self.refresh_status_btn.setEnabled(False)
         self.confirm_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
+        self.command_result_stats = {'success': 0, 'offline': 0, 'failed': 0}
         
         # 重新查询所有设备状态（后台查询，不更新界面）
         thread = BatchStatusThread(
             self.devices,
-            self.device_query.token,
+            self.device_query,
             self.thread_count
         )
         thread.single_result.connect(self.on_status_result_silent)
@@ -980,21 +981,6 @@ class BatchUpgradeDialog(QDialog):
     
     def on_final_query_complete(self):
         """最终查询完成，开始升级"""
-        # 获取所有在线设备
-        online_devices = []
-        for sn, dev_id, device_name, model in self.devices:
-            if self.device_status.get(sn, False):
-                online_devices.append((sn, dev_id))
-        
-        online_count = len(online_devices)
-        offline_count = len(self.devices) - online_count
-        
-        if online_count == 0:
-            if self.parent_window:
-                self.parent_window.show_error("设备离线，操作失败")
-            self.restore_buttons()
-            return
-        
         # 获取固件信息
         device_identify = self.selected_firmware.get('identifier', '')
         file_url = self.selected_firmware.get('download_url', '')
@@ -1007,27 +993,48 @@ class BatchUpgradeDialog(QDialog):
         
         # 启动升级线程
         thread = BatchUpgradeThread(
-            online_devices,
+            [(sn, dev_id) for sn, dev_id, _, _ in self.devices],
             device_identify,
             file_url,
             self.device_query.token,
             self.device_query.host,
             self.thread_count
         )
-        thread.all_done.connect(
-            lambda: self.on_upgrade_complete(online_count, offline_count)
-        )
+        thread.single_result.connect(self.on_upgrade_result)
+        thread.all_done.connect(self.on_upgrade_complete)
         thread.finished.connect(lambda: thread.deleteLater())
         self.thread_mgr.add("batch_upgrade", thread)
         thread.start()
     
-    def on_upgrade_complete(self, online_count, offline_count):
+    def on_upgrade_result(self, sn, status, message):
+        """单台升级结果"""
+        if status not in self.command_result_stats:
+            status = 'failed'
+        self.command_result_stats[status] += 1
+
+    def on_upgrade_complete(self):
         """升级完成"""
-        if self.parent_window:
-            self.parent_window.show_success(
-                f"升级命令已发送：成功 {online_count} 台，离线 {offline_count} 台"
-            )
-        self.accept()
+        success_count = self.command_result_stats.get('success', 0)
+        offline_count = self.command_result_stats.get('offline', 0)
+        failed_count = self.command_result_stats.get('failed', 0)
+
+        if success_count > 0:
+            if self.parent_window:
+                self.parent_window.show_success(
+                    f"升级命令下发完成：成功 {success_count} 台，离线 {offline_count} 台，失败 {failed_count} 台"
+                )
+            self.accept()
+            return
+
+        if offline_count > 0 and failed_count == 0:
+            if self.parent_window:
+                self.parent_window.show_error("设备离线，操作失败")
+        else:
+            if self.parent_window:
+                self.parent_window.show_error(
+                    f"升级下发失败：离线 {offline_count} 台，失败 {failed_count} 台"
+                )
+        self.restore_buttons()
     
     def restore_buttons(self):
         """恢复按钮状态"""

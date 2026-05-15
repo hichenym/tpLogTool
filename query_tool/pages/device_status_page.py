@@ -1378,7 +1378,7 @@ class DeviceStatusPage(BasePage):
                 # 使用缓存的 DeviceQuery 对象
                 query = self.ensure_device_query(env, username, password)
                 if not query.init_error:
-                    is_online = check_device_online(sn, query.token)
+                    is_online = check_device_online(sn, query)
                     status_text = "在线" if is_online else "离线"
                     status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
                     
@@ -1510,7 +1510,7 @@ class DeviceStatusPage(BasePage):
                 # 使用缓存的 DeviceQuery 对象
                 query = self.ensure_device_query(env, username, password)
                 if not query.init_error:
-                    is_online = check_device_online(sn, query.token)
+                    is_online = check_device_online(sn, query)
                     status_text = "在线" if is_online else "离线"
                     status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
                     
@@ -1600,7 +1600,7 @@ class DeviceStatusPage(BasePage):
                 env, username, password = get_account_config()
                 query = self.ensure_device_query(env, username, password)
                 if not query.init_error:
-                    is_online = check_device_online(sn, query.token)
+                    is_online = check_device_online(sn, query)
                     return sn, is_online
             except Exception as e:
                 from query_tool.utils.logger import logger
