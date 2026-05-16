@@ -43,12 +43,43 @@ def update_build_date():
 
 def clean_build():
     """清理旧的构建产物"""
-    dirs_to_clean = ["run.build", "run.dist", "run.onefile-build"]
-    for d in dirs_to_clean:
-        path = os.path.join(PROJECT_ROOT, d)
+    dirs_to_clean = [
+        "run.build",
+        "run.dist",
+        "run.onefile-build",
+        os.path.join("dist", "run.build"),
+        os.path.join("dist", "run.dist"),
+        os.path.join("dist", "run.onefile-build"),
+    ]
+    for relative_path in dirs_to_clean:
+        path = os.path.join(PROJECT_ROOT, relative_path)
         if os.path.exists(path):
             shutil.rmtree(path)
-            print(f"[OK] 已清理: {d}")
+            print(f"[OK] 已清理: {relative_path}")
+
+
+def get_sdk_dll_include_args():
+    """显式包含 SIOT SDK DLL，避免 Nuitka 将纯 DLL 目录视为“无 data files”而跳过。"""
+    dll_dir = os.path.join(PROJECT_ROOT, "query_tool", "dll")
+    if not os.path.isdir(dll_dir):
+        print(f"[WARN] DLL目录不存在: {dll_dir}")
+        return []
+
+    include_args = []
+    dll_names = sorted(name for name in os.listdir(dll_dir) if name.lower().endswith(".dll"))
+    if not dll_names:
+        print(f"[WARN] DLL目录中未找到 .dll 文件: {dll_dir}")
+        return []
+
+    for dll_name in dll_names:
+        source = os.path.join("query_tool", "dll", dll_name)
+        target = f"query_tool/dll/{dll_name}"
+        include_args.append(f"--include-data-files={source}={target}")
+
+    print(f"[OK] 将显式包含 {len(dll_names)} 个SIOT DLL")
+    for dll_name in dll_names:
+        print(f"     - {dll_name}")
+    return include_args
 
 
 def build_nuitka(debug=False):
@@ -60,6 +91,7 @@ def build_nuitka(debug=False):
     from query_tool.version import get_version
     ver = get_version()
     version_str = f"{ver[0]}.{ver[1]}.{ver[2]}.0"
+    sdk_dll_args = get_sdk_dll_include_args()
 
     cmd = [
         sys.executable, "-m", "nuitka",
@@ -67,6 +99,7 @@ def build_nuitka(debug=False):
         # === 输出配置 ===
         "--standalone",                          # 独立发布，包含所有依赖
         "--onefile",                             # 打包为单个 exe
+        "--onefile-no-dll",                      # onefile 下使用可执行文件而不是 run.dll，便于内部子进程重启
         "--output-dir=dist",                     # 输出目录
         "--output-filename=TPQueryTool.exe",     # 输出文件名
 
@@ -114,8 +147,9 @@ def build_nuitka(debug=False):
 
         # === 包含项目资源文件 ===
         f"--include-data-dir={os.path.join('resources', 'icons')}=resources/icons",
-        f"--include-data-dir={os.path.join('query_tool', 'dll')}=query_tool/dll",
     ]
+
+    cmd.extend(sdk_dll_args)
 
     # 控制台窗口
     if debug:
