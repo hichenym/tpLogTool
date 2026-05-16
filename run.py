@@ -2,14 +2,26 @@
 Query Tool - Launcher Script
 启动查询工具
 """
-import sys
+from __future__ import annotations
+
 import os
+import sys
 
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# 导入并运行主程序
-from query_tool.main import main
+
+def _dispatch_internal_command() -> int | None:
+    from query_tool.utils.siot_debug.internal_cli import dispatch_internal_command
+
+    return dispatch_internal_command(sys.argv[1:])
+
 
 if __name__ == "__main__":
+    exit_code = _dispatch_internal_command()
+    if exit_code is not None:
+        raise SystemExit(exit_code)
+
+    from query_tool.main import main
+
     main()

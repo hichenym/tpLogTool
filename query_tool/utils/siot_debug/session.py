@@ -6,7 +6,6 @@ import json
 import logging
 import ssl
 import subprocess
-import sys
 import threading
 import time
 import urllib.parse
@@ -14,6 +13,8 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+
+from query_tool.utils.internal_launch import build_internal_command
 
 from .command_catalog import is_getsystemcfg_command, is_syscmd_family_command
 from .config import (
@@ -1029,73 +1030,15 @@ class DeviceSession:
             "wakeup_retry_count": DEFAULT_WAKEUP_RETRY_COUNT,
             "debug": False,
         }
-        helper_script = r"""
-import ctypes
-import json
-import os
-import sys
-from pathlib import Path
-
-sdk_bin_dir = Path(sys.argv[1])
-params_json = sys.argv[2]
-sn = sys.argv[3].encode("utf-8")
-user = sys.argv[4].encode("utf-8")
-password = sys.argv[5].encode("utf-8")
-
-if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
-    os.add_dll_directory(str(sdk_bin_dir))
-
-lib = ctypes.WinDLL(str(sdk_bin_dir / "libsiot.dll")) if sys.platform == "win32" else ctypes.CDLL(str(sdk_bin_dir / "libsiot.so"))
-lib.Siot_CreateClient.restype = ctypes.c_void_p
-lib.Siot_CreateClient.argtypes = []
-lib.Siot_DestroyClient.restype = None
-lib.Siot_DestroyClient.argtypes = [ctypes.c_void_p]
-lib.Siot_Connect.restype = ctypes.c_int
-lib.Siot_Connect.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-lib.Siot_Login.restype = ctypes.c_int
-lib.Siot_Login.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
-lib.Siot_Disconnect.restype = ctypes.c_int
-lib.Siot_Disconnect.argtypes = [ctypes.c_void_p]
-lib.Siot_GetLastError.restype = ctypes.c_char_p
-lib.Siot_GetLastError.argtypes = [ctypes.c_void_p]
-
-handle = lib.Siot_CreateClient()
-if not handle:
-    print("Siot_CreateClient failed", file=sys.stderr)
-    sys.exit(201)
-
-def last_error() -> str:
-    raw = lib.Siot_GetLastError(handle)
-    return raw.decode("utf-8", errors="replace") if raw else "unknown error"
-
-try:
-    ret = lib.Siot_Connect(handle, params_json.encode("utf-8"))
-    if ret != 0:
-        print(last_error(), file=sys.stderr)
-        sys.exit(202)
-
-    ret = lib.Siot_Login(handle, sn, user, password)
-    if ret != 0:
-        print(last_error(), file=sys.stderr)
-        sys.exit(203)
-finally:
-    try:
-        lib.Siot_Disconnect(handle)
-    except Exception:
-        pass
-    lib.Siot_DestroyClient(handle)
-"""
         proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                helper_script,
+            build_internal_command(
+                "--siot-helper-prepare",
                 str(SDK_BIN_DIR),
                 json.dumps(params, separators=(",", ":")),
                 self.device.sn,
                 self.device.username,
                 self.device.password,
-            ],
+            ),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1130,168 +1073,6 @@ finally:
             raise SiotError("device session is not initialized")
 
         logging.info("Probing device status via signaling helper: %s", self.device.sn)
-        helper_script = r"""
-import ctypes
-import json
-import os
-import sys
-import threading
-from pathlib import Path
-
-sdk_bin_dir = Path(sys.argv[1])
-probe = json.loads(sys.argv[2])
-
-if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
-    os.add_dll_directory(str(sdk_bin_dir))
-
-lib = ctypes.WinDLL(str(sdk_bin_dir / "libsiot.dll")) if sys.platform == "win32" else ctypes.CDLL(str(sdk_bin_dir / "libsiot.so"))
-
-TPSIOT_EventCallback = ctypes.CFUNCTYPE(
-    None,
-    ctypes.c_void_p,
-    ctypes.c_int,
-    ctypes.c_int,
-    ctypes.POINTER(ctypes.c_uint8),
-    ctypes.c_uint32,
-    ctypes.c_void_p,
-)
-
-class TPSIOT_DeviceMessage(ctypes.Structure):
-    _fields_ = [
-        ("deviceSN", ctypes.c_char_p),
-        ("buffer", ctypes.POINTER(ctypes.c_uint8)),
-        ("len", ctypes.c_uint32),
-        ("feedbackCode", ctypes.c_uint8),
-    ]
-
-lib.TPSRTC_SetProperties.restype = ctypes.c_int
-lib.TPSRTC_SetProperties.argtypes = [ctypes.c_int, ctypes.c_char_p]
-lib.TPSRTC_Startup.restype = ctypes.c_int
-lib.TPSRTC_Startup.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
-lib.TPSRTC_Cleanup.restype = None
-lib.TPSRTC_Cleanup.argtypes = []
-lib.TPSIOT_SetProperties.restype = ctypes.c_int
-lib.TPSIOT_SetProperties.argtypes = [ctypes.c_int, ctypes.c_char_p]
-lib.TPSIOT_Connect.restype = ctypes.c_void_p
-lib.TPSIOT_Connect.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, TPSIOT_EventCallback, ctypes.c_void_p]
-lib.TPSIOT_Close.restype = ctypes.c_int
-lib.TPSIOT_Close.argtypes = [ctypes.c_void_p]
-lib.TPSIOT_AppSend.restype = ctypes.c_int
-lib.TPSIOT_AppSend.argtypes = [
-    ctypes.c_void_p,
-    ctypes.c_int,
-    ctypes.c_char_p,
-    ctypes.c_char_p,
-    ctypes.c_void_p,
-    ctypes.c_uint32,
-    ctypes.c_char_p,
-    ctypes.c_uint8,
-    ctypes.c_uint8,
-]
-
-TPSIOT_ROLE_APP = 2
-TPSIOT_PROTOCOL_TCP = 2
-TPSIOT_TERMINAL_NORMAL = 0
-TPSIOT_CONN_HANDSHAKED = 4
-TPSIOT_CONN_HANDSHAKED_FAILED = 5
-TPSIOT_CONN_CLOSED = 0
-TPSIOT_CONN_FAILED = 2
-TPSIOT_CONN_APP_RECEIVED_DATA = 10
-TPSIOT_FB_QUERY_DEVICE = 0x1
-TPSIOT_FB_UNREACHABLE_DEVICE = 0x2
-TPSIOT_PROPERTY_ACCESS_ADDR = 0
-TPSIOT_PROPERTY_ACCESS_PROTOCOL = 1
-TPSIOT_PROPERTY_CLIENT_ID = 2
-TPSIOT_PROPERTY_TOKEN = 4
-TPSIOT_PROPERTY_KEY_INDEX = 5
-TPSRTC_PROPERTY_ENDPOINT = 0
-TPSRTC_PROPERTY_LOGLEVEL = 1
-
-handshake_event = threading.Event()
-status_event = threading.Event()
-state = {"handshake": False, "status": None}
-
-def on_event(conn, event, err_code, data_ptr, data_len, arg):
-    if event == TPSIOT_CONN_HANDSHAKED:
-        state["handshake"] = True
-        handshake_event.set()
-        return
-    if event in (TPSIOT_CONN_HANDSHAKED_FAILED, TPSIOT_CONN_CLOSED, TPSIOT_CONN_FAILED):
-        handshake_event.set()
-        return
-    if event != TPSIOT_CONN_APP_RECEIVED_DATA or not data_ptr:
-        return
-
-    message = ctypes.cast(data_ptr, ctypes.POINTER(TPSIOT_DeviceMessage)).contents
-    if message.feedbackCode == TPSIOT_FB_UNREACHABLE_DEVICE:
-        state["status"] = {"online": 0, "online4g": 0, "unreachable": 1}
-        status_event.set()
-        return
-    if message.feedbackCode != TPSIOT_FB_QUERY_DEVICE:
-        return
-    if not message.buffer or message.len == 0:
-        return
-    raw = ctypes.string_at(message.buffer, message.len)
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except Exception:
-        payload = {"probe_error": "invalid status payload"}
-    state["status"] = payload
-    status_event.set()
-
-cb = TPSIOT_EventCallback(on_event)
-conn = None
-try:
-    lib.TPSRTC_SetProperties(TPSRTC_PROPERTY_ENDPOINT, probe["client_id"].encode("utf-8"))
-    lib.TPSRTC_SetProperties(TPSRTC_PROPERTY_LOGLEVEL, b"off")
-    ret = lib.TPSRTC_Startup(None, None, None, 0, 0)
-    if ret != 0:
-        print(json.dumps({"probe_error": f"TPSRTC_Startup failed: {ret}"}, ensure_ascii=False))
-        sys.exit(211)
-
-    lib.TPSIOT_SetProperties(TPSIOT_PROPERTY_ACCESS_ADDR, probe["access_node"].encode("utf-8"))
-    lib.TPSIOT_SetProperties(TPSIOT_PROPERTY_ACCESS_PROTOCOL, b"2")
-    lib.TPSIOT_SetProperties(TPSIOT_PROPERTY_CLIENT_ID, probe["client_id"].encode("utf-8"))
-    lib.TPSIOT_SetProperties(TPSIOT_PROPERTY_TOKEN, probe["access_token"].encode("utf-8"))
-    lib.TPSIOT_SetProperties(TPSIOT_PROPERTY_KEY_INDEX, str(probe["key_version"]).encode("utf-8"))
-
-    conn = lib.TPSIOT_Connect(TPSIOT_ROLE_APP, TPSIOT_PROTOCOL_TCP, TPSIOT_TERMINAL_NORMAL, cb, None)
-    if not conn:
-        print(json.dumps({"probe_error": "TPSIOT_Connect returned NULL"}, ensure_ascii=False))
-        sys.exit(212)
-
-    if not handshake_event.wait(15.0) or not state["handshake"]:
-        print(json.dumps({"probe_error": "signaling handshake failed"}, ensure_ascii=False))
-        sys.exit(213)
-
-    lib.TPSIOT_AppSend(
-        conn,
-        TPSIOT_PROTOCOL_TCP,
-        probe["sn"].encode("utf-8"),
-        b"",
-        None,
-        0,
-        b"query_dev",
-        0,
-        TPSIOT_FB_QUERY_DEVICE,
-    )
-
-    if not status_event.wait(5.0) or state["status"] is None:
-        print(json.dumps({"probe_error": "query_dev timeout"}, ensure_ascii=False))
-        sys.exit(214)
-
-    print(json.dumps(state["status"], ensure_ascii=False))
-finally:
-    if conn:
-        try:
-            lib.TPSIOT_Close(conn)
-        except Exception:
-            pass
-    try:
-        lib.TPSRTC_Cleanup()
-    except Exception:
-        pass
-"""
         probe_params = {
             "access_node": credentials.access_node,
             "access_token": credentials.access_jwt_token,
@@ -1300,13 +1081,11 @@ finally:
             "sn": self.device.sn,
         }
         proc = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                helper_script,
+            build_internal_command(
+                "--siot-helper-probe",
                 str(SDK_BIN_DIR),
                 json.dumps(probe_params, separators=(",", ":")),
-            ],
+            ),
             capture_output=True,
             text=True,
             timeout=40,

@@ -4,13 +4,13 @@ import json
 import locale
 import re
 import subprocess
-import sys
 import threading
 from typing import Dict, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from query_tool.utils.device_query import DeviceQuery
+from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.logger import logger
 
 from .config import DEFAULT_COMMAND_TIMEOUT_MS, DEVICE_USERNAME
@@ -130,7 +130,7 @@ class SiotDebugWorker(QObject):
             self.status_message.emit(f"已获取设备密码，目标设备: {context['sn']}")
 
             process = subprocess.Popen(
-                [sys.executable, "-u", "-m", "query_tool.utils.siot_debug.subprocess_runner"],
+                build_internal_command("--siot-subprocess-runner"),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

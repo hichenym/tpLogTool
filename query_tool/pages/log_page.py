@@ -10,7 +10,6 @@ import json
 import locale
 import queue
 import subprocess
-import sys
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -38,6 +37,7 @@ from PyQt5.QtWidgets import (
 from .base_page import BasePage
 from .page_registry import register_page
 from query_tool.utils import StyleManager, config_manager, get_account_config, get_seetong_account_config
+from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.logger import logger
 from query_tool.utils.siot_debug import DEFAULT_COMMAND_TIMEOUT_MS, is_getsystemcfg_command, is_syscmd_family_command
 from query_tool.utils.siot_debug.service import resolve_device_credentials
@@ -485,7 +485,7 @@ class BatchLogFetchThread(QThread):
 
     def _start_process(self, credentials):
         process = subprocess.Popen(
-            [sys.executable, "-u", "-m", "query_tool.utils.siot_debug.subprocess_runner"],
+            build_internal_command("--siot-subprocess-runner"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
