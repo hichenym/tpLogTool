@@ -1,466 +1,245 @@
 # 设备查询工具
 
-一个基于 PyQt5 的设备运维查询与管理工具，支持设备查询、固件管理、GitLab 日志导出、错误记录查询、批量运维操作和数据导出等功能。
+一个基于 `PyQt5` 的 Windows 桌面工具，面向设备运维、远程调试、批量命令执行、固件管理、错误记录查询和 Git 提交日志导出场景。
 
-## 功能特性
+## 主要功能
 
-### 设备管理
-- 🔍 批量查询设备信息（支持SN/ID查询）
-- 📊 实时显示设备在线状态
-- ⚡ 批量唤醒离线设备
-- 🔋 设备电池电量数据采集
-- 📤 导出设备信息为CSV文件
+### 设备页
 
-### 记录管理
-- 🧩 按设备SN、型号、版本、模块、错误码、时间范围查询记录
-- 🚫 无筛选条件时禁止直接查询，避免接口报错
-- 🔎 双击结果中的 `设备SN` 查看设备详细信息
-- 📋 设备信息弹窗支持双击复制
+- 批量查询设备信息，支持 `SN / ID`
+- 展示在线状态、版本、设备密码等信息
+- 支持唤醒、重启、升级、电池采集、导出
+- 结果表格支持右键菜单
+- 支持从设备页右键直接跳转到调试页连接设备
 
-### 固件管理
-- 🛠️ 固件信息查询、筛选与编辑
-- 🔐 使用独立的固件账号配置
+### 调试页
 
-### GitLab 日志导出（新增）
-- 🔗 连接 GitLab 服务器
-- 📋 查询项目提交记录
-- 🔍 支持按分支、提交者、时间范围筛选
-- 🎨 关键词高亮导出
-- 📊 导出为 Excel 文件（带超链接）
-- 💾 记录最近使用的项目和分支
+- 使用 Seetong 账号远程登录设备
+- 自动根据 SN 查询设备密码
+- 单设备交互式命令窗口
+- 支持时间戳显示切换
+- 支持命令历史
+- 支持快捷命令、右键编辑/删除、拖拽排序
+- 支持 `GetSystemCfg` 文件下载
+- 连接中可取消，连接后可注销
 
-### 通用功能
-- ⚙️ 账号密码配置（运维账号和固件账号独立配置）
-- 📝 日志记录系统（可配置调试信息输出）
-- 🔄 自动更新检测（支持手动检查和自动更新）
-- 💾 配置信息保存到注册表
-- 🎨 友好的图形界面（支持深色/浅色主题切换，首次启动自动跟随 Windows 系统主题）
+### 命令页
+
+- 面向多设备并发执行命令
+- 支持多 SN、多命令输入
+- 支持批量 `GetSystemCfg` 文件下载
+- 默认并发 20 台设备
+- 支持运行中取消
+- 结果表格展示状态、文件、详情和执行汇总
+
+### 固件页
+
+- 固件查询、筛选、编辑
+- 使用独立固件账号
+
+### 记录页
+
+- 按设备 SN、型号、版本、模块、错误码、时间范围查询错误记录
+- 双击结果中的 `设备SN` 查看设备详情
+
+### GIT 页
+
+- 连接 Git 服务
+- 按项目、分支、提交者、时间范围筛选提交记录
+- 导出 Excel
+
+## 账号体系
+
+程序当前支持三类账号：
+
+- 运维账号
+- Seetong 账号
+- 固件账号
+
+其中：
+
+- 设备页主要依赖运维账号
+- 调试页和命令页依赖运维账号 + Seetong 账号
+- 固件页依赖固件账号
 
 ## 环境要求
 
-- Python 3.7+
 - Windows 操作系统
+- Python 3.8+
 
-## 安装步骤
+## 安装与运行
 
-### 1. 创建虚拟环境
+### 创建虚拟环境
 
 ```bash
-# 创建虚拟环境
 python -m venv venv
-
-# 激活虚拟环境 (Windows PowerShell)
-.\venv\Scripts\Activate.ps1
-
-# 激活虚拟环境 (Windows CMD)
-.\venv\Scripts\activate.bat
-
-# 激活虚拟环境 (Linux/Mac)
-source venv/bin/activate
 ```
 
-### 2. 安装依赖包
+### 激活虚拟环境
+
+PowerShell：
+
+```bash
+.\venv\Scripts\Activate.ps1
+```
+
+CMD：
+
+```bash
+.\venv\Scripts\activate.bat
+```
+
+### 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. 退出虚拟环境
+### 启动程序
 
 ```bash
-deactivate
+python run.py
 ```
+
+## 首次使用
+
+1. 点击右上角设置按钮
+2. 在账号配置页填写账号
+3. 至少按需配置：
+   - 运维账号
+   - Seetong 账号
+   - 固件账号
+4. 点击保存
+
+配置保存在：
+
+```text
+HKEY_CURRENT_USER\Software\TPQueryTool
+```
+
+## 常用操作
+
+### 设备查询
+
+1. 打开“设备”页
+2. 输入设备 SN 或 ID
+3. 点击查询
+
+### 调试设备
+
+方式一：
+
+1. 打开“调试”页
+2. 输入 SN
+3. 点击连接
+
+方式二：
+
+1. 在“设备”页右键目标设备
+2. 点击“连接调试”
+
+### 批量执行命令
+
+1. 打开“命令”页
+2. 输入 SN 列表
+3. 输入命令列表
+4. 选择下载目录
+5. 点击运行
+
+## 项目结构
+
+```text
+tpLogTool/
+├── query_tool/
+│   ├── dll/                     # 调试/命令模块依赖的 DLL
+│   ├── pages/                   # 页面模块
+│   │   ├── device_status_page.py
+│   │   ├── debug_page.py
+│   │   ├── log_page.py
+│   │   ├── firmware_page.py
+│   │   ├── error_record_page.py
+│   │   └── gitlab_log_page.py
+│   ├── utils/
+│   │   ├── config.py
+│   │   ├── device_query.py
+│   │   ├── workers.py
+│   │   └── siot_debug/          # 调试/命令公共模块
+│   ├── widgets/
+│   ├── main.py
+│   └── version.py
+├── resources/
+│   ├── icons/
+│   ├── icon_res.qrc
+│   └── icon_res.py
+├── docs/
+├── scripts/
+│   ├── build.py
+│   ├── release.py
+│   └── clean.py
+├── requirements.txt
+└── run.py
+```
+
+## 打包发布
+
+当前本地打包使用 `Nuitka`：
+
+```bash
+python scripts/build.py
+```
+
+打包时会一并带上：
+
+- `resources/icons`
+- `query_tool/dll`
+
+当前项目已经不再依赖旧的 `windows-siot-command-client` 目录。
+
+## 配置说明
+
+注册表中主要保存：
+
+- 运维账号、Seetong 账号、固件账号
+- 导出路径
+- 调试页最近 SN、下载路径、快捷命令
+- 命令页 SN 列表、命令列表、下载路径
+- 主题
+- Token 缓存
+
+说明：
+
+- 账号密码当前使用 `Base64` 编码存储，不是强加密
+- 不建议在公共电脑上长期保存敏感账号
+
+## 相关文档
+
+- [docs/README.md](./docs/README.md)
+- [docs/quick-start.md](./docs/quick-start.md)
+- [docs/account-config-guide.md](./docs/account-config-guide.md)
+- [docs/features-summary.md](./docs/features-summary.md)
+- [docs/build-guide.md](./docs/build-guide.md)
 
 ## 开发命令
 
-### 导出依赖清单
-
-```bash
-pip freeze > requirements.txt
-```
-
-### UI 文件转 Python 文件
-
-```bash
-python -m PyQt5.uic.pyuic ui/mainWindow.ui -o mainWindow.py
-```
-
-### 图片资源转 Python 文件
+### 重新生成 Qt 资源文件
 
 ```bash
 pyrcc5 resources/icon_res.qrc -o resources/icon_res.py
 ```
 
-### 清除图标缓存（Windows）
+### 清理缓存和构建产物
 
 ```bash
-ie4uinit.exe -show
-```
-
-### 清除编译文件
-
-```bash
-# 清除 __pycache__、*.pyc、build、dist 等编译生成的文件
 python scripts/clean.py
 ```
 
-## 打包发布
-
-### 🚀 快速发布新版本（推荐）
-
-#### 方法一：使用快速发布脚本 ⭐
-
-```bash
-# 最简单的方式 - 一键发布
-python scripts/release.py
-```
-
-脚本会自动引导你完成：
-1. ✅ 检查 Git 状态
-2. ✅ 显示当前版本和现有标签
-3. ✅ 输入新版本号
-4. ✅ 创建并推送标签
-5. ✅ 触发 GitHub Actions 自动构建
-
-#### 方法二：手动创建标签
-
-```bash
-# 1. 确保所有更改已提交
-git add .
-git commit -m "feat: 新功能描述"
-
-# 2. 创建并推送标签
-git tag v3.0.1
-git push origin v3.0.1
-
-# 3. 等待 GitHub Actions 自动构建（约 6-9 分钟）
-```
-
-GitHub Actions 会自动：
-- ✅ 更新版本号和编译日期
-- ✅ 打包 Windows 可执行文件
-- ✅ 创建 GitHub Release
-- ✅ 上传发布产物
-- ✅ 生成发布说明
-
-构建完成后可在 [Releases](../../releases) 页面下载。
-
-#### 发布前检查清单
-
-- [ ] 本地测试通过
-- [ ] 更新 `query_tool/version.py` 中的 `VERSION_HISTORY`
-- [ ] 更新 `README.md`（如有必要）
-- [ ] 更新相关文档
-- [ ] 提交所有更改
-- [ ] 运行 `python scripts/release.py`
-
-#### 版本号规范
-
-- **主版本号（Major）**: 重大功能更新或架构变更（如 `v3.0.0` → `v4.0.0`）
-- **次版本号（Minor）**: 新增功能或较大改进（如 `v3.0.0` → `v3.1.0`）
-- **修订号（Patch）**: Bug 修复或小改进（如 `v3.0.0` → `v3.0.1`）
-
-#### 常见问题
-
-**Q: 如何删除错误的标签？**
-```bash
-git tag -d v3.0.1              # 删除本地标签
-git push origin :refs/tags/v3.0.1  # 删除远程标签
-```
-
-**Q: 构建失败怎么办？**
-1. 查看 Actions 页面的详细日志
-2. 修复问题后提交代码
-3. 删除失败的标签并重新创建
-
-**Q: 如何修改已发布的 Release？**
-进入 Releases 页面，点击 Release 右侧的编辑按钮。
-
-详细说明请参考：[docs/github-actions-guide.md](docs/github-actions-guide.md)
-
----
-
-### 本地打包（开发测试用）
-
-#### 版本管理
-
-项目使用 `query_tool/version.py` 统一管理版本信息：
-
-```python
-VERSION_MAJOR = 3  # 主版本号：重大功能更新或架构变更
-VERSION_MINOR = 0  # 次版本号：新增功能或较大改进
-VERSION_PATCH = 0  # 修订号：Bug修复或小改进
-BUILD_DATE = "20260224"  # 编译日期（自动生成）
-```
-
-版本号格式：`V主版本.次版本.修订号 (编译日期)`
-例如：`V3.0.0 (20260224)`
-
-#### 方法一：使用自动打包脚本
-
-```bash
-# 自动更新编译日期并打包
-python scripts/build.py
-```
-
-脚本会自动：
-1. 更新 `query_tool/version.py` 中的编译日期
-2. 显示当前版本信息
-3. 使用 **Nuitka** 进行单文件打包
-4. 清理旧的构建目录
-
-当前输出文件：`dist/TPQueryTool.exe`
-
-详细说明请参考 `docs/build-guide.md`。
-
-## 项目结构
-
-```
-query-tool/
-├── query_tool/                  # 主包（源代码）
-│   ├── __init__.py             # 包初始化
-│   ├── main.py                 # 程序入口
-│   ├── version.py              # 版本信息
-│   ├── pages/                  # 页面模块
-│   │   ├── __init__.py
-│   │   ├── base_page.py       # 页面基类
-│   │   ├── page_registry.py   # 页面注册机制
-│   │   ├── device_status_page.py  # 设备状态页面
-│   │   ├── phone_query_page.py    # 账号查询页面
-│   │   └── gitlab_log_page.py     # GitLab日志页面
-│   ├── utils/                  # 工具模块
-│   │   ├── __init__.py
-│   │   ├── config.py          # 配置管理
-│   │   ├── device_query.py    # 设备查询API
-│   │   ├── workers.py         # 多线程Worker
-│   │   ├── button_manager.py  # 按钮管理器
-│   │   ├── message_manager.py # 消息管理器
-│   │   ├── style_manager.py   # 样式管理器（QSS生成）
-│   │   ├── theme_manager.py   # 主题管理器（颜色Token）
-│   │   ├── table_helper.py    # 表格工具
-│   │   ├── thread_manager.py  # 线程管理器
-│   │   ├── gitlab_api.py      # GitLab API封装
-│   │   └── excel_helper.py    # Excel导出工具
-│   └── widgets/                # 自定义控件
-│       ├── __init__.py
-│       └── custom_widgets.py  # 自定义控件
-├── resources/                   # 资源文件
-│   ├── icons/                  # 图标资源
-│   │   ├── app/               # 应用图标
-│   │   ├── common/            # 通用操作图标
-│   │   ├── device/            # 设备操作图标
-│   │   ├── gitlab/            # GitLab相关图标
-│   │   ├── system/            # 系统设置图标
-│   │   └── README.md          # 图标说明
-│   ├── icon_res.qrc            # Qt资源配置
-│   └── icon_res.py             # 编译后的资源
-├── docs/                        # 文档目录
-│   ├── README.md               # 文档索引
-│   ├── quick-start.md          # 快速开始
-│   ├── settings-guide.md       # 设置指南
-│   ├── account-config-guide.md # 账号配置
-│   ├── gitlab-quick-start.md   # GitLab快速开始
-│   ├── modules-guide.md        # 模块使用指南
-│   ├── gitlab-dev-guide.md     # GitLab开发指南
-│   ├── gitlab-features.md      # GitLab功能清单
-│   ├── features-summary.md     # 功能总结
-│   ├── disabled-style-guide.md # 禁用样式说明
-│   ├── dark-theme-guide.md     # 深色主题说明
-│   ├── build-guide.md          # 打包说明
-│   └── version-guide.md        # 版本管理指南
-├── scripts/                     # 脚本目录
-│   └── build.py                # 打包脚本
-├── venv/                        # 虚拟环境
-├── .gitignore                   # Git忽略配置
-├── README.md                    # 项目说明
-├── requirements.txt             # 依赖清单
-└── run.py                       # 启动脚本
-```
-
-
-
-## 运行程序
-
-### 开发模式
-
-```bash
-# 激活虚拟环境
-.\venv\Scripts\Activate.ps1
-
-# 运行程序
-python run.py
-```
-
-### 直接运行
-
-```bash
-python run.py
-```
-
-或者直接运行主文件：
-
-```bash
-python query_tool/main.py
-```
-
-### 1. 配置账号密码（首次使用必须）
-
-首次使用程序时，需要先配置账号密码：
-
-- 点击菜单栏右侧的"⚙️"图标按钮
-- 在弹出的对话框中输入账号密码
-- 可选择"测试连接"验证账号是否有效
-- 点击"保存"按钮保存配置
-
-如果未配置账号密码，查询时会自动提示您配置。
-
-详细说明请参考：[docs/account-config-guide.md](docs/account-config-guide.md)
-
-### 2. 查询设备信息
-
-- 在左侧输入框输入设备SN（每行一个）
-- 或在右侧输入框输入设备ID（每行一个）
-- 点击"查询"按钮开始查询
-- 查询结果会实时显示在下方表格中
-
-### 3. 唤醒设备
-
-- 勾选需要唤醒的设备
-- 点击"批量唤醒"按钮
-- 或点击单个设备行的"唤醒"按钮
-
-### 4. 导出数据
-
-- 点击"浏览"按钮选择保存目录
-- 点击"导出"按钮导出CSV文件
-- 文件名自动带时间戳，避免覆盖
-
-### 5. GitLab 日志导出（新功能）
-
-- 点击菜单栏的"Git日志"按钮切换到日志页面
-- 填写 GitLab 服务器地址和 Token
-- 点击"连接"按钮连接服务器
-- 选择项目、分支、提交者（可选）
-- 设置时间范围和关键词（可选）
-- 选择保存路径
-- 点击"导出"按钮导出 Excel 文件
-
-### 6. 其他功能
-
-- 双击表格单元格修改固件信息，右键表格展开更多操作
-- 点击"清空"按钮清除所有输入和结果
-- 支持全选/取消全选设备
-- 页面切换自动保存状态
-
-## 配置说明
-
-程序配置信息保存在 Windows 注册表中：
-- 路径: `HKEY_CURRENT_USER\Software\TPQueryTool`
-- 包含: 账号密码、Token缓存、导出路径、日志配置等
-
-### 账号密码配置
-
-- 首次使用必须配置账号密码
-- 点击菜单栏右侧的"⚙️"图标按钮配置
-- 支持运维账号和固件账号独立配置
-- 配置会保存到注册表，下次自动使用
-- 支持测试连接功能，验证账号是否有效
-- 密码使用Base64编码存储，非明文
-- 固定使用生产环境
-- 未配置时查询会自动提示
-
-详细说明请参考：[docs/account-config-guide.md](docs/account-config-guide.md)
-
-### 日志配置
-
-- 支持调试信息记录到文件
-- 日志文件路径：`C:\Users\<用户名>\.TPQueryTool\logs\`
-- 日志文件命名：`app_YYYYMMDD.log`（按日期自动分割）
-- 日志轮转：单文件最大10MB，保留3个备份
-- 控制台只显示WARNING及以上级别
-- 可在设置页面启用/禁用文件日志，实时生效
-
-详细说明请参考：[docs/settings-guide.md](docs/settings-guide.md)
-
-## 技术栈
-
-- **GUI框架**: PyQt5
-- **网络请求**: requests
-- **验证码识别**: ddddocr
-- **并发处理**: ThreadPoolExecutor
-- **数据存储**: Windows Registry
-
 ## 注意事项
 
-1. 首次运行需要联网获取Token
-2. Token有效期为2小时，程序会在到期前自动刷新
-3. 建议使用30个并发线程，平衡速度和稳定性
-4. 导出的CSV文件使用UTF-8编码，Excel可直接打开
-
-## 常见问题
-
-### Q: 打包后体积过大？
-A: 参考 [docs/build-guide.md](docs/build-guide.md) 文档进行优化，可减小到30-60MB
-
-### Q: 图标不显示？
-A: 修改icon_res.qrc后需要重新运行 `pyrcc5 icon_res.qrc -o icon_res.py`
-
-### Q: 查询失败？
-A: 检查网络连接和账号密码是否正确
-
-### Q: 虚拟环境激活失败？
-A: PowerShell需要管理员权限或执行 `Set-ExecutionPolicy RemoteSigned`
-
-## 更新日志
-
-### V3.2.0 (2026-03-31)
-- 新增深色/浅色主题切换功能，点击菜单栏 ☀/🌙 按钮即可切换
-- 首次启动自动跟随 Windows 系统主题偏好
-- 主题偏好保存到注册表，下次启动自动恢复
-- 重构主题架构：theme_manager（颜色Token）+ style_manager（QSS生成）双层设计
-- 修复多处弹窗控件在浅色模式下显示异常的问题
-- 修复新增固件按钮点击时主线程阻塞卡顿问题
-- 修复关闭窗口时定时器未停止的问题
-
-### V3.1.1 (2026-03-25)
-- 修复电池电量查询接口2小时后Token过期导致失败的问题
-
-### V3.1.0 (2026-03-24)
-- 新增设备电池电量数据采集功能
-- 修复已知问题
-
-### V3.0.2 (2026-02-26)
-- 修复固件信息查询失败问题
-
-### V3.0.0 (2026-02-25)
-- 账号配置系统升级：运维账号和固件账号独立配置
-- 自动更新功能：后台检测、下载、安装，支持静默/提示两种模式
-- 文件哈希验证：确保下载文件完整性和安全性
-- 固件查询Session超时优化：从2小时改为30分钟，提升稳定性
-- 下载重试机制：10次重试，5秒间隔，提升网络不稳定环境下的成功率
-- 界面优化：深色主题统一、状态栏实时显示、版本信息双击查看详情
-
-### V2.0.0 (2026-01-22)
-- 新增GitLab日志导出功能：支持按项目、分支、提交者、时间范围筛选
-- 项目结构重组：代码、资源、文档、脚本分离，提升可维护性
-- 注册表名称更新为TPQueryTool
-
-### V1.1.0 (2026-01-17)
-- 新增账号密码配置功能
-- 新增设置界面
-- 新增测试连接功能
-- 移除硬编码账号密码，提升安全性
-
-### V1.0.0 (2026-01-15)
-- 初始版本发布
-- 支持批量查询设备信息（SN/ID）
-- 支持批量唤醒设备
-- 支持导出CSV数据
+1. 调试页和命令页依赖 Seetong 云端登录
+2. 调试与批量命令能力依赖 `query_tool/dll` 下的动态库
+3. `GetSystemCfg` 下载文件默认按 `下载目录/SN/文件名` 保存
+4. 命令页运行中支持取消，取消后状态会显示为“已取消”
 
 ## 许可证
 
 本项目仅供内部使用
-
-## 联系方式
-
-如有问题请联系开发团队
