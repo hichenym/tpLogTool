@@ -114,6 +114,7 @@ def build_nuitka(debug=False):
 
         # === 包含项目资源文件 ===
         f"--include-data-dir={os.path.join('resources', 'icons')}=resources/icons",
+        f"--include-data-dir={os.path.join('query_tool', 'dll')}=query_tool/dll",
     ]
 
     # 控制台窗口

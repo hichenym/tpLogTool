@@ -27,10 +27,23 @@ class FirmwareAccountConfig:
 
 
 @dataclass
+class SeetongAccountConfig:
+    """Seetong 账号配置"""
+    username: str = ''
+    password: str = ''
+
+
+@dataclass
 class AppConfig:
     """应用配置"""
     export_path: str = ''
     phone_history: List[str] = field(default_factory=list)
+    debug_shortcuts: List[str] = field(default_factory=list)
+    last_debug_sn: str = ''
+    debug_download_path: str = ''
+    last_log_sn: str = ''
+    log_download_path: str = ''
+    log_commands: List[str] = field(default_factory=list)
     last_page_index: int = 0
     theme: str = 'dark'  # 'dark' 或 'light'
 
@@ -156,18 +169,71 @@ class ConfigManager:
             logger.error(f"保存固件账号配置失败: {e}")
             print(f"保存固件配置失败: {e}")
             return False
+
+    def load_seetong_account_config(self) -> SeetongAccountConfig:
+        """加载 Seetong 账号配置"""
+        from query_tool.utils.logger import logger
+
+        logger.debug("加载 Seetong 账号配置")
+        username = self._get_value('seetong_username', '')
+        password_encoded = self._get_value('seetong_password', '')
+
+        password = ''
+        if password_encoded:
+            try:
+                password = base64.b64decode(password_encoded.encode()).decode()
+            except (ValueError, UnicodeDecodeError) as e:
+                logger.error(f"Seetong 密码解码失败: {e}")
+                print(f"密码解码失败: {e}")
+
+        if username:
+            logger.info(f"Seetong 账号配置已加载: {username}")
+        else:
+            logger.debug("Seetong 账号未配置")
+
+        return SeetongAccountConfig(username=username, password=password)
+
+    def save_seetong_account_config(self, config: SeetongAccountConfig) -> bool:
+        """保存 Seetong 账号配置"""
+        from query_tool.utils.logger import logger
+
+        logger.debug(f"保存 Seetong 账号配置: {config.username}")
+        try:
+            self._set_value('seetong_username', config.username)
+            password_encoded = base64.b64encode(config.password.encode()).decode()
+            self._set_value('seetong_password', password_encoded)
+            logger.info(f"Seetong 账号配置已保存: {config.username}")
+            return True
+        except Exception as e:
+            logger.error(f"保存 Seetong 账号配置失败: {e}")
+            print(f"保存 Seetong 配置失败: {e}")
+            return False
     
     def load_app_config(self) -> AppConfig:
         """加载应用配置"""
         export_path = self._get_value('export_path', '')
         phone_history_str = self._get_value('phone_history', '')
         phone_history = phone_history_str.split('|')[:5] if phone_history_str else []
+        debug_shortcuts_str = self._get_value('debug_shortcuts', '')
+        debug_shortcuts = [item for item in debug_shortcuts_str.split('|') if item] if debug_shortcuts_str else []
+        last_debug_sn = self._get_value('last_debug_sn', '')
+        debug_download_path = self._get_value('debug_download_path', '')
+        last_log_sn = self._get_value('last_log_sn', '')
+        log_download_path = self._get_value('log_download_path', '')
+        log_commands_str = self._get_value('log_commands', '')
+        log_commands = [item for item in log_commands_str.split('|') if item] if log_commands_str else []
         last_page_index = int(self._get_value('last_page_index', '0'))
         theme = self._get_value('theme', 'dark')
         
         return AppConfig(
             export_path=export_path,
             phone_history=phone_history,
+            debug_shortcuts=debug_shortcuts,
+            last_debug_sn=last_debug_sn,
+            debug_download_path=debug_download_path,
+            last_log_sn=last_log_sn,
+            log_download_path=log_download_path,
+            log_commands=log_commands,
             last_page_index=last_page_index,
             theme=theme
         )
@@ -178,6 +244,14 @@ class ConfigManager:
             self._set_value('export_path', config.export_path)
             phone_history_str = '|'.join(config.phone_history[:5])
             self._set_value('phone_history', phone_history_str)
+            debug_shortcuts_str = '|'.join(config.debug_shortcuts[:50])
+            self._set_value('debug_shortcuts', debug_shortcuts_str)
+            self._set_value('last_debug_sn', config.last_debug_sn)
+            self._set_value('debug_download_path', config.debug_download_path)
+            self._set_value('last_log_sn', config.last_log_sn)
+            self._set_value('log_download_path', config.log_download_path)
+            log_commands_str = '|'.join(config.log_commands[:50])
+            self._set_value('log_commands', log_commands_str)
             self._set_value('last_page_index', str(config.last_page_index))
             self._set_value('theme', config.theme)
             return True
@@ -271,6 +345,18 @@ def save_firmware_account_config(username, password):
     """保存固件账号配置"""
     config = FirmwareAccountConfig(username=username, password=password)
     return config_manager.save_firmware_account_config(config)
+
+
+def get_seetong_account_config():
+    """获取 Seetong 账号配置"""
+    config = config_manager.load_seetong_account_config()
+    return config.username, config.password
+
+
+def save_seetong_account_config(username, password):
+    """保存 Seetong 账号配置"""
+    config = SeetongAccountConfig(username=username, password=password)
+    return config_manager.save_seetong_account_config(config)
 
 
 def get_registry_value(key_name, value_name, default=None):

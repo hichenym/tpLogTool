@@ -62,6 +62,7 @@ def build_exe():
         '--collect-all ddddocr '
         '--collect-binaries onnxruntime '
         '--collect-data onnxruntime '
+        '--add-data "./query_tool/dll;query_tool/dll" '
         'run.py'
     )
     print(f"\n执行命令: {cmd}")

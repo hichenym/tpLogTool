@@ -1,114 +1,87 @@
 # 图标资源说明
 
-本目录包含应用程序使用的所有图标资源，按功能分组管理。
+本目录包含项目使用的图标资源，统一按功能归类到 `resources/icons` 下，避免在 `resources` 根目录散落图片文件。
 
-## 📁 目录结构
+## 目录结构
 
-```
-icon/
-├── app/              # 应用图标
-│   ├── logo.png      # 应用Logo (PNG格式)
-│   └── logo.ico      # 应用图标 (ICO格式，用于窗口标题栏)
-│
-├── common/           # 通用操作图标
-│   ├── search.png    # 查询按钮
-│   ├── clean.png     # 清空按钮
-│   ├── export.png    # 导出按钮
-│   └── save.png      # 保存按钮 (预留)
-│
-├── device/           # 设备操作图标
-│   ├── werk_up.png       # 单个设备唤醒
-│   └── werk_up_all.png   # 批量设备唤醒
-│
-├── system/           # 系统设置图标
-│   ├── setting.png   # 设置按钮
-│   ├── device.png    # 设备页面图标
-│   ├── user.png      # 账号页面图标
-│   └── git.png       # GIT页面图标
-│
-└── gitlab/           # GitLab功能图标
-    ├── gitlab.png    # GitLab Logo
-    ├── connect.png   # 连接服务器
-    ├── disconnect.png # 断开连接
-    ├── browser.png   # 浏览文件
-    └── export.png    # 导出日志
+```text
+resources/icons/
+├── app/       # 应用图标
+├── common/    # 通用按钮与状态图标
+├── device/    # 设备相关功能图标
+├── gitlab/    # GitLab 页面图标
+└── system/    # 左侧页面入口图标
 ```
 
-## 🎨 图标使用说明
+## 当前分组
 
-### 应用图标 (app/)
-- **logo.png**: 主窗口图标，显示在任务栏和窗口标题栏
-- **logo.ico**: Windows 应用程序图标
+### `app/`
+- `logo.png`: 应用 Logo
+- `logo.ico`: Windows 窗口与打包图标
 
-### 通用操作 (common/)
-- **search.png**: 用于"查询"按钮（状态页、设备页）
-- **clean.png**: 用于"清空"按钮（状态页）
-- **export.png**: 用于"导出"按钮（状态页）
-- **save.png**: 预留，暂未使用
+### `common/`
+- `search.png`: 查询
+- `clean.png`: 清空
+- `export.png`: 导出
+- `save.png`: 保存
+- `add.png`: 新增
+- `delete.png`: 删除
+- `edit.png`: 编辑
+- `run.png`: 执行
+- `send.png`: 发送
+- `expand.png`: 展开/收起
+- `timestamp.png`: 时间戳开关
+- `connect.png`: 登录
+- `connectting.png`: 连接中/取消
+- `disconnect.png`: 注销
+- `dir.png`: 目录选择
+- `ok.png`: 确认
+- `cancel.png`: 取消
 
-### 设备操作 (device/)
-- **werk_up.png**: 单个设备唤醒按钮（状态页表格中）
-- **werk_up_all.png**: 批量唤醒按钮（状态页）
+### `device/`
+- `battery.png`: 电池查询
+- `collect.png`: 采集/命令入口
+- `firmware.png`: 固件页面
+- `nat.png`: NAT
+- `reboot.png`: 重启
+- `reflash.png`: 刷机
+- `upgrade.png`: 升级
+- `werk_up.png`: 单设备唤醒
+- `werk_up_all.png`: 批量唤醒
 
-### 系统设置 (system/)
-- **setting.png**: 设置按钮（主窗口菜单栏右侧）
-- **device.png**: 设备页面图标（菜单按钮）
-- **user.png**: 账号页面图标（菜单按钮）
-- **git.png**: GIT页面图标（菜单按钮）
+### `gitlab/`
+- `gitlab.png`: GitLab 页面
+- `connect.png`: GitLab 连接
+- `disconnect.png`: GitLab 断开
+- `browser.png`: 浏览
+- `export.png`: 导出
 
-### GitLab功能 (gitlab/)
-- **gitlab.png**: GitLab Logo
-- **connect.png**: 连接GitLab服务器按钮
-- **disconnect.png**: 断开连接按钮
-- **browser.png**: 浏览文件按钮
-- **export.png**: 导出日志按钮
+### `system/`
+- `setting.png`: 设置页
+- `device.png`: 设备页
+- `git.png`: Git 页
+- `user.png`: 账号页
+- `record.png`: 记录页
+- `console.png`: 调试页
+- `cmd.png`: 命令页
 
-## 📝 使用方法
+## 使用方式
 
-在代码中引用图标时，使用 Qt 资源系统路径：
+代码中统一使用 Qt 资源路径 `:/icons/...`：
 
 ```python
-# 应用图标
-QIcon(":/icon/app/logo.png")
-
-# 通用操作
-QIcon(":/icon/common/search.png")
-QIcon(":/icon/common/clean.png")
-QIcon(":/icon/common/export.png")
-
-# 设备操作
-QIcon(":/icon/device/werk_up.png")
-QIcon(":/icon/device/werk_up_all.png")
-
-# 系统设置
-QIcon(":/icon/system/setting.png")
-QIcon(":/icon/system/device.png")
-QIcon(":/icon/system/user.png")
-QIcon(":/icon/system/git.png")
-
-# GitLab功能
-QIcon(":/icon/gitlab/gitlab.png")
-QIcon(":/icon/gitlab/connect.png")
-QIcon(":/icon/gitlab/disconnect.png")
-QIcon(":/icon/gitlab/browser.png")
-QIcon(":/icon/gitlab/export.png")
+QIcon(":/icons/common/run.png")
+QIcon(":/icons/common/edit.png")
+QIcon(":/icons/system/console.png")
+QIcon(":/icons/system/cmd.png")
 ```
 
-## 🔄 添加新图标
+## 新增图标流程
 
-1. 将图标文件放入对应的分组目录
-2. 在 `icon_res.qrc` 文件中添加引用
-3. 运行命令重新编译资源文件：
-   ```bash
-   pyrcc5 icon_res.qrc -o icon_res.py
-   ```
-4. 在代码中使用新图标
+1. 将图标放入对应分类目录。
+2. 在 `resources/icon_res.qrc` 中增加 `<file>` 项。
+3. 重新生成 `resources/icon_res.py`：
 
-## 📐 图标规范
-
-- **格式**: PNG (推荐) 或 ICO
-- **尺寸**: 
-  - 按钮图标: 16x16 或 18x18 像素
-  - 应用图标: 32x32, 48x48, 256x256 (多尺寸)
-- **背景**: 透明背景
-- **颜色**: 适配深色主题，建议使用浅色图标
+```bash
+pyrcc5 resources/icon_res.qrc -o resources/icon_res.py
+```

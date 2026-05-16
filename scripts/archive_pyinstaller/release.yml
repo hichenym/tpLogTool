@@ -105,6 +105,7 @@ jobs:
             --collect-all ddddocr `
             --collect-binaries onnxruntime `
             --collect-data onnxruntime `
+            --add-data "./query_tool/dll;query_tool/dll" `
             run.py
           
           Write-Host "`n打包完成，检查生成的文件..."

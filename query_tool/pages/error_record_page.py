@@ -192,7 +192,7 @@ class DeviceInfoDialog(QDialog):
         self.table.setColumnWidth(0, self._key_col_width)
 
 
-@register_page("记录", order=3, icon=":/icons/system/record.png")
+@register_page("记录", order=5, icon=":/icons/system/record.png")
 class ErrorRecordPage(BasePage):
     """错误码记录查询页面"""
 

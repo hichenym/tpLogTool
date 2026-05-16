@@ -86,7 +86,7 @@ class FirmwareQueryThread(QThread):
             self.error_signal.emit(f"查询出错: {str(e)}")
 
 
-@register_page("固件", order=2, icon=":/icons/device/firmware.png")
+@register_page("固件", order=4, icon=":/icons/device/firmware.png")
 class FirmwarePage(BasePage):
     """固件查询页面"""
     

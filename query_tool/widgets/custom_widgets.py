@@ -13,7 +13,8 @@ from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
 from PyQt5.QtGui import QCursor, QIcon
 from query_tool.utils.config import (
     get_account_config, save_account_config,
-    get_firmware_account_config, save_firmware_account_config
+    get_firmware_account_config, save_firmware_account_config,
+    get_seetong_account_config, save_seetong_account_config,
 )
 from query_tool.utils.device_query import DeviceQuery
 from query_tool.utils.style_manager import StyleManager
@@ -88,6 +89,51 @@ def show_question_box(parent, title, text):
     QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
     
     return msg_box.exec_()
+
+
+def prompt_configure_account(parent, title, text, initial_tab=0):
+    """
+    显示统一样式的账号配置提示框，并在确认后打开设置对话框。
+
+    Args:
+        parent: 父窗口
+        title: 弹窗标题
+        text: 弹窗内容
+        initial_tab: 设置对话框初始标签页
+
+    Returns:
+        bool: 是否已打开设置对话框
+    """
+    msg_box = QMessageBox(parent)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    msg_box.setIcon(QMessageBox.Question)
+    msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+    msg_box.setDefaultButton(QMessageBox.No)
+
+    yes_btn = msg_box.button(QMessageBox.Yes)
+    no_btn = msg_box.button(QMessageBox.No)
+
+    if yes_btn:
+        yes_btn.setText("")
+        yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
+        yes_btn.setIconSize(QSize(20, 20))
+        yes_btn.setFixedSize(60, 32)
+
+    if no_btn:
+        no_btn.setText("")
+        no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+        no_btn.setIconSize(QSize(20, 20))
+        no_btn.setFixedSize(60, 32)
+
+    QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
+
+    if msg_box.exec_() != QMessageBox.Yes:
+        return False
+
+    dialog = SettingsDialog(parent, initial_tab=initial_tab)
+    dialog.exec_()
+    return True
 
 
 class VersionLabel(QLabel):
@@ -248,6 +294,9 @@ class SettingsDialog(QDialog):
         
         # 加载固件账号配置
         self.firmware_username, self.firmware_password = get_firmware_account_config()
+
+        # 加载 Seetong 账号配置
+        self.seetong_username, self.seetong_password = get_seetong_account_config()
         
         # 加载日志配置
         from query_tool.utils.config import get_log_config
@@ -314,7 +363,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(button_layout)
     
     def create_account_tab(self):
-        """创建账号配置标签页（包含运维账号和固件账号）"""
+        """创建账号配置标签页（包含运维、Seetong 和固件账号）"""
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
         tab_layout.setSpacing(0)
@@ -337,16 +386,24 @@ class SettingsDialog(QDialog):
             "运维账号",
             self.device_username,
             self.device_password,
-            is_device=True
+            account_type="device"
         )
         scroll_layout.addWidget(device_group)
         
         # 固件账号组
+        seetong_group = self.create_account_group(
+            "Seetong账号",
+            self.seetong_username,
+            self.seetong_password,
+            account_type="seetong"
+        )
+        scroll_layout.addWidget(seetong_group)
+
         firmware_group = self.create_account_group(
             "固件账号",
             self.firmware_username,
             self.firmware_password,
-            is_device=False
+            account_type="firmware"
         )
         scroll_layout.addWidget(firmware_group)
         
@@ -357,7 +414,7 @@ class SettingsDialog(QDialog):
         
         return tab
     
-    def create_account_group(self, title, username, password, is_device=True):
+    def create_account_group(self, title, username, password, account_type="device"):
         """创建账号配置组"""
         group = QGroupBox(title)
         group.setStyleSheet(StyleManager.get_GROUP_BOX())
@@ -405,19 +462,22 @@ class SettingsDialog(QDialog):
         test_btn = QPushButton("验证")
         test_btn.setFixedSize(90, 28)
         test_btn.clicked.connect(
-            lambda: self.on_test_account_connection(username_input, password_input, is_device, test_btn)
+            lambda: self.on_test_account_connection(username_input, password_input, account_type, test_btn)
         )
         action_layout.addWidget(test_btn)
         
         group_layout.addLayout(action_layout)
         
         # 保存输入框引用
-        if is_device:
+        if account_type == "device":
             self.device_username_input = username_input
             self.device_password_input = password_input
-        else:
+        elif account_type == "firmware":
             self.firmware_username_input = username_input
             self.firmware_password_input = password_input
+        else:
+            self.seetong_username_input = username_input
+            self.seetong_password_input = password_input
         
         return group
     
@@ -662,7 +722,7 @@ class SettingsDialog(QDialog):
         else:
             password_input.setEchoMode(QLineEdit.Password)
     
-    def on_test_account_connection(self, username_input, password_input, is_device, test_btn):
+    def on_test_account_connection(self, username_input, password_input, account_type, test_btn):
         """测试账号连接"""
         from PyQt5.QtWidgets import QApplication
         
@@ -687,7 +747,7 @@ class SettingsDialog(QDialog):
         QApplication.processEvents()
         
         try:
-            if is_device:
+            if account_type == "device":
                 # 测试运维账号
                 if self.main_window and hasattr(self.main_window, 'show_progress'):
                     self.main_window.show_progress("正在测试运维账号连接...")
@@ -703,7 +763,7 @@ class SettingsDialog(QDialog):
                 else:
                     if self.main_window and hasattr(self.main_window, 'show_error'):
                         self.main_window.show_error("无法获取访问令牌，请检查账号密码")
-            else:
+            elif account_type == "firmware":
                 # 测试固件账号
                 if self.main_window and hasattr(self.main_window, 'show_progress'):
                     self.main_window.show_progress("正在测试固件账号连接...")
@@ -717,6 +777,20 @@ class SettingsDialog(QDialog):
                 else:
                     if self.main_window and hasattr(self.main_window, 'show_error'):
                         self.main_window.show_error(f"固件账号连接失败：{message}")
+            else:
+                # 测试 Seetong 账号
+                if self.main_window and hasattr(self.main_window, 'show_progress'):
+                    self.main_window.show_progress("正在测试 Seetong 账号连接...")
+
+                from query_tool.utils.siot_debug import validate_seetong_login
+                success, message = validate_seetong_login(username, password)
+
+                if success:
+                    if self.main_window and hasattr(self.main_window, 'show_success'):
+                        self.main_window.show_success("Seetong 账号验证成功！")
+                else:
+                    if self.main_window and hasattr(self.main_window, 'show_error'):
+                        self.main_window.show_error(f"Seetong 账号连接失败：{message}")
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'show_error'):
                 self.main_window.show_error(f"测试失败：{str(e)}")
@@ -736,6 +810,10 @@ class SettingsDialog(QDialog):
         # 获取固件账号
         firmware_username = self.firmware_username_input.text().strip()
         firmware_password = self.firmware_password_input.text().strip()
+
+        # 获取 Seetong 账号
+        seetong_username = self.seetong_username_input.text().strip()
+        seetong_password = self.seetong_password_input.text().strip()
         
         # 检查运维账号是否部分填写（只填了账号或只填了密码）
         if (device_username and not device_password) or (not device_username and device_password):
@@ -748,6 +826,12 @@ class SettingsDialog(QDialog):
             if self.main_window and hasattr(self.main_window, 'show_warning'):
                 self.main_window.show_warning("固件账号和密码必须同时填写或同时为空")
             return
+
+        # 检查 Seetong 账号是否部分填写（只填了账号或只填了密码）
+        if (seetong_username and not seetong_password) or (not seetong_username and seetong_password):
+            if self.main_window and hasattr(self.main_window, 'show_warning'):
+                self.main_window.show_warning("Seetong 账号和密码必须同时填写或同时为空")
+            return
         
         # 保存运维账号到注册表（允许为空）
         env = 'pro'  # 固定使用生产环境
@@ -755,8 +839,11 @@ class SettingsDialog(QDialog):
         
         # 保存固件账号到注册表（允许为空）
         firmware_saved = save_firmware_account_config(firmware_username, firmware_password)
+
+        # 保存 Seetong 账号到注册表（允许为空）
+        seetong_saved = save_seetong_account_config(seetong_username, seetong_password)
         
-        if device_saved and firmware_saved:
+        if device_saved and firmware_saved and seetong_saved:
             if self.main_window and hasattr(self.main_window, 'show_success'):
                 self.main_window.show_success("配置已保存！")
             # 保存成功后同步用户版本信息
@@ -770,5 +857,7 @@ class SettingsDialog(QDialog):
                     error_msg += "运维账号 "
                 if not firmware_saved:
                     error_msg += "固件账号 "
+                if not seetong_saved:
+                    error_msg += "Seetong账号 "
                 self.main_window.show_error(error_msg)
 

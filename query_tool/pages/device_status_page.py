@@ -741,7 +741,12 @@ class DeviceStatusPage(BasePage):
         port_mapping_action = QAction(QIcon(":/icons/device/nat.png"), "端口穿透", self)
         port_mapping_action.triggered.connect(lambda: self.on_port_mapping_single(row))
         menu.addAction(port_mapping_action)
-        
+
+        # 调试连接
+        debug_action = QAction(QIcon(":/icons/system/console.png"), "连接调试", self)
+        debug_action.triggered.connect(lambda: self.on_debug_single(row))
+        menu.addAction(debug_action)
+
         # 添加分隔符
         menu.addSeparator()
         
@@ -767,7 +772,29 @@ class DeviceStatusPage(BasePage):
         
         # 显示菜单
         menu.exec_(self.result_table.viewport().mapToGlobal(pos))
-    
+
+    def on_debug_single(self, row):
+        """切换到调试页并连接当前设备"""
+        sn_item = self.result_table.item(row, 3)
+        if not sn_item:
+            self.show_warning("未获取到设备SN")
+            return
+
+        sn = sn_item.text().strip()
+        if not sn:
+            self.show_warning("设备SN为空，无法连接调试")
+            return
+
+        main_window = self.window()
+        if not hasattr(main_window, "open_debug_page_for_sn"):
+            self.show_warning("当前窗口不支持跳转到调试页")
+            return
+
+        if main_window.open_debug_page_for_sn(sn):
+            self.show_info(f"正在切换到调试页连接设备: {sn}")
+        else:
+            self.show_warning("未找到调试页面")
+
     def on_reboot_single(self, row):
         """单个设备重启"""
         # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳

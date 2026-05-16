@@ -123,6 +123,7 @@ jobs:
             --include-package-data=ddddocr `
             --include-package-data=onnxruntime `
             --include-data-dir=resources/icons=resources/icons `
+            --include-data-dir=query_tool/dll=query_tool/dll `
             run.py
           
           Write-Host "`n检查生成的文件..."

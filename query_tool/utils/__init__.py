@@ -2,7 +2,14 @@
 工具模块
 提供配置管理、设备查询、线程管理等工具
 """
-from .config import config_manager, get_account_config, save_account_config, REGISTRY_PATH
+from .config import (
+    config_manager,
+    get_account_config,
+    save_account_config,
+    get_seetong_account_config,
+    save_seetong_account_config,
+    REGISTRY_PATH,
+)
 from .device_query import DeviceQuery, wake_device, check_device_online, wake_device_smart
 from .button_manager import ButtonManager, ButtonGroup
 from .message_manager import MessageManager, MessageType
@@ -28,6 +35,8 @@ __all__ = [
     'config_manager',
     'get_account_config',
     'save_account_config',
+    'get_seetong_account_config',
+    'save_seetong_account_config',
     'REGISTRY_PATH',
     'DeviceQuery',
     'wake_device',

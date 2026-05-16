@@ -219,8 +219,8 @@ class MainWindow(QMainWindow):
         if index < 0 or index >= len(self.pages):
             return
         
-        page_names = ["设备状态", "固件管理", "GitLab日志"]
-        page_name = page_names[index] if index < len(page_names) else f"页面{index}"
+        page_configs = PageRegistry.get_all_pages()
+        page_name = page_configs[index]['name'] if index < len(page_configs) else f"页面{index}"
         logger.debug(f"切换到页面: {page_name}")
         
         self.stacked_widget.setCurrentIndex(index)
@@ -236,6 +236,26 @@ class MainWindow(QMainWindow):
         app_config = config_manager.load_app_config()
         app_config.last_page_index = index
         config_manager.save_app_config(app_config)
+
+    def get_page_by_name(self, page_name):
+        """按页面名称获取页面实例和索引"""
+        page_configs = PageRegistry.get_all_pages()
+        for index, page_config in enumerate(page_configs):
+            if page_config.get('name') == page_name and index < len(self.pages):
+                return index, self.pages[index]
+        return -1, None
+
+    def open_debug_page_for_sn(self, sn):
+        """切换到调试页并按 SN 发起连接"""
+        index, page = self.get_page_by_name("调试")
+        if page is None:
+            return False
+
+        self.switch_page(index)
+        if hasattr(page, "connect_to_device_sn"):
+            page.connect_to_device_sn(sn)
+            return True
+        return False
     
     def on_settings_clicked(self):
         """设置按钮点击"""
@@ -320,12 +340,24 @@ class MainWindow(QMainWindow):
         from query_tool.utils.message_manager import MessageManager, MessageType
         msg_manager = MessageManager(self.status_label)
         msg_manager.show(message, MessageType.SUCCESS, duration)
+
+    def show_warning(self, message, duration=3000):
+        """显示警告消息"""
+        from query_tool.utils.message_manager import MessageManager, MessageType
+        msg_manager = MessageManager(self.status_label)
+        msg_manager.show(message, MessageType.WARNING, duration)
     
     def show_error(self, message, duration=5000):
         """显示错误消息"""
         from query_tool.utils.message_manager import MessageManager, MessageType
         msg_manager = MessageManager(self.status_label)
         msg_manager.show(message, MessageType.ERROR, duration)
+
+    def show_progress(self, message):
+        """显示进度消息"""
+        from query_tool.utils.message_manager import MessageManager, MessageType
+        msg_manager = MessageManager(self.status_label)
+        msg_manager.show(message, MessageType.PROGRESS, None)
     
     def center_on_screen(self):
         """将窗口居中显示"""

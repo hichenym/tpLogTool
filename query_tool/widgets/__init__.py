@@ -8,7 +8,8 @@ from .custom_widgets import (
     ClickableLineEdit,
     SettingsDialog,
     show_message_box,
-    show_question_box
+    show_question_box,
+    prompt_configure_account,
 )
 from .edit_firmware_dialog import EditFirmwareDialog
 from .reboot_dialog import RebootDialog
@@ -27,6 +28,7 @@ __all__ = [
     'SettingsDialog',
     'show_message_box',
     'show_question_box',
+    'prompt_configure_account',
     'EditFirmwareDialog',
     'RebootDialog',
     'BatchRebootDialog',
