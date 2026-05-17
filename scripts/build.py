@@ -3,8 +3,10 @@ Nuitka 打包脚本
 将项目编译为原生 C 代码，防止反编译
 
 使用方法:
-    python scripts/build.py          # 正常打包
-    python scripts/build.py --debug  # 保留控制台窗口（调试用）
+    python scripts/build.py                 # 正常打包（发布模式）
+    python scripts/build.py --debug         # 保留控制台窗口（调试用）
+    python scripts/build.py --fast          # 增量打包（开发模式，更快）
+    python scripts/build.py --fast --debug  # 增量打包并保留控制台
 
 前置条件:
     1. pip install nuitka ordered-set zstandard
@@ -21,6 +23,10 @@ from datetime import datetime
 # 项目根目录
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
+
+RELEASE_OUTPUT_DIR = "dist"
+FAST_OUTPUT_DIR = os.path.join("dist", "fast")
+APP_NAME = "TPQueryTool"
 
 
 def update_build_date():
@@ -41,15 +47,15 @@ def update_build_date():
     return current_date
 
 
-def clean_build():
+def clean_build(output_dir=RELEASE_OUTPUT_DIR):
     """清理旧的构建产物"""
     dirs_to_clean = [
         "run.build",
         "run.dist",
         "run.onefile-build",
-        os.path.join("dist", "run.build"),
-        os.path.join("dist", "run.dist"),
-        os.path.join("dist", "run.onefile-build"),
+        os.path.join(output_dir, "run.build"),
+        os.path.join(output_dir, "run.dist"),
+        os.path.join(output_dir, "run.onefile-build"),
     ]
     for relative_path in dirs_to_clean:
         path = os.path.join(PROJECT_ROOT, relative_path)
@@ -82,26 +88,28 @@ def get_sdk_dll_include_args():
     return include_args
 
 
-def build_nuitka(debug=False):
+def build_nuitka(debug=False, fast=False):
     """执行 Nuitka 打包"""
     print("\n开始 Nuitka 编译打包...")
-    print("（首次编译较慢，约 5-15 分钟，请耐心等待）\n")
+    if fast:
+        print("（开发增量模式：保留构建目录，跳过 onefile 封装，以加快重复打包）\n")
+    else:
+        print("（首次编译较慢，约 5-15 分钟，请耐心等待）\n")
 
     # 动态读取版本号
     from query_tool.version import get_version
     ver = get_version()
     version_str = f"{ver[0]}.{ver[1]}.{ver[2]}.0"
     sdk_dll_args = get_sdk_dll_include_args()
+    output_dir = FAST_OUTPUT_DIR if fast else RELEASE_OUTPUT_DIR
 
     cmd = [
         sys.executable, "-m", "nuitka",
 
         # === 输出配置 ===
         "--standalone",                          # 独立发布，包含所有依赖
-        "--onefile",                             # 打包为单个 exe
-        "--onefile-no-dll",                      # onefile 下使用可执行文件而不是 run.dll，便于内部子进程重启
-        "--output-dir=dist",                     # 输出目录
-        "--output-filename=TPQueryTool.exe",     # 输出文件名
+        f"--output-dir={output_dir}",            # 输出目录
+        f"--output-filename={APP_NAME}.exe",     # 输出文件名
 
         # === Windows 配置 ===
         f"--windows-icon-from-ico={os.path.join('resources', 'icons', 'app', 'logo.ico')}",
@@ -149,6 +157,16 @@ def build_nuitka(debug=False):
         f"--include-data-dir={os.path.join('resources', 'icons')}=resources/icons",
     ]
 
+    if fast:
+        print(f"[FAST] 输出目录: {os.path.join(PROJECT_ROOT, output_dir)}")
+        print("[FAST] 跳过清理旧构建，保留 Nuitka 中间产物以复用缓存")
+        print("[FAST] 跳过 BUILD_DATE 更新时间，避免无意义的全量失效")
+    else:
+        cmd.extend([
+            "--onefile",                         # 打包为单个 exe
+            "--onefile-no-dll",                  # onefile 下使用可执行文件而不是 run.dll，便于内部子进程重启
+        ])
+
     cmd.extend(sdk_dll_args)
 
     # 控制台窗口
@@ -168,7 +186,12 @@ def build_nuitka(debug=False):
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
 
     if result.returncode == 0:
-        exe_path = os.path.join(PROJECT_ROOT, "dist", "TPQueryTool.exe")
+        exe_path = os.path.join(PROJECT_ROOT, output_dir, f"{APP_NAME}.exe")
+        if fast and not os.path.exists(exe_path):
+            dist_dir_path = os.path.join(PROJECT_ROOT, output_dir, f"{APP_NAME}.dist")
+            candidate = os.path.join(dist_dir_path, f"{APP_NAME}.exe")
+            if os.path.exists(candidate):
+                exe_path = candidate
         if os.path.exists(exe_path):
             size_mb = os.path.getsize(exe_path) / (1024 * 1024)
             print(f"\n[OK] 打包成功!")
@@ -186,6 +209,7 @@ def build_nuitka(debug=False):
 def main():
     """主函数"""
     debug = "--debug" in sys.argv
+    fast = "--fast" in sys.argv
 
     print("=" * 50)
     print("TPQueryTool - Nuitka 打包脚本")
@@ -199,18 +223,25 @@ def main():
         print("[ERROR] 未安装 Nuitka，请执行: pip install nuitka ordered-set zstandard")
         sys.exit(1)
 
-    # 更新编译日期
-    build_date = update_build_date()
+    if fast:
+        print("[FAST] 开发增量模式已启用")
+        print(f"[FAST] 中间产物目录将保留在: {os.path.join(PROJECT_ROOT, FAST_OUTPUT_DIR)}")
+    else:
+        # 更新编译日期
+        update_build_date()
 
     # 导入版本信息
     from query_tool.version import get_version_string
     print(f"[OK] 当前版本: {get_version_string()}")
 
-    # 清理旧构建
-    clean_build()
+    if not fast:
+        # 清理旧构建
+        clean_build(output_dir=RELEASE_OUTPUT_DIR)
+    else:
+        print("[FAST] 跳过 clean_build()，尽量复用已有构建结果")
 
     # 执行打包
-    success = build_nuitka(debug=debug)
+    success = build_nuitka(debug=debug, fast=fast)
 
     if success:
         print("\n" + "=" * 50)
@@ -220,7 +251,7 @@ def main():
         print("\n如果编译失败，常见排查步骤:")
         print("  1. 确认已安装 C 编译器 (MinGW64 或 MSVC)")
         print("  2. 尝试加 --debug 参数查看详细错误")
-        print("  3. 先不加 --onefile 测试: 去掉脚本中的 --onefile 行")
+        print("  3. 开发时可先执行: python scripts/build.py --fast")
         sys.exit(1)
 
 

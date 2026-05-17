@@ -209,7 +209,7 @@ class BatchLogFetchThread(QThread):
                 )
                 for future in done_futures:
                     result = future.result()
-                    total_files += int(result.get("success_count") or 0)
+                    total_files += int(result.get("downloaded_file_count") or 0)
                     if result.get("status") == "完成":
                         success_devices += 1
                     elif result.get("status") == "部分完成":
@@ -265,11 +265,13 @@ class BatchLogFetchThread(QThread):
                 "status": "已取消",
                 "success_count": 0,
                 "failed_count": 0,
+                "downloaded_file_count": 0,
                 "files": [],
                 "detail": "已取消",
             }
         success_count = 0
         failed_count = 0
+        downloaded_file_count = 0
         file_entries = []
         details = []
         connect_details = []
@@ -285,7 +287,13 @@ class BatchLogFetchThread(QThread):
             )
         except Exception as exc:
             if self._stop_event.is_set():
-                return self._build_cancelled_result(sn, success_count, failed_count, file_entries)
+                return self._build_cancelled_result(
+                    sn,
+                    success_count,
+                    failed_count,
+                    downloaded_file_count,
+                    file_entries,
+                )
             normalized_message = self._normalize_error_detail(str(exc))
             detail_message = "设备离线" if self._is_device_offline_message(normalized_message) else normalized_message
             status_text = self._map_failure_status(normalized_message)
@@ -295,6 +303,7 @@ class BatchLogFetchThread(QThread):
                 "status": status_text,
                 "success_count": success_count,
                 "failed_count": failed_count + 1,
+                "downloaded_file_count": downloaded_file_count,
                 "files": file_entries,
                 "detail": detail_message,
             }
@@ -306,6 +315,7 @@ class BatchLogFetchThread(QThread):
                 "status": "已取消",
                 "success_count": success_count,
                 "failed_count": failed_count,
+                "downloaded_file_count": downloaded_file_count,
                 "files": file_entries,
                 "detail": "已取消",
             }
@@ -350,6 +360,7 @@ class BatchLogFetchThread(QThread):
                         if command_result.get("saved_file"):
                             file_entries.append(command_result["saved_file"])
                             success_count += 1
+                            downloaded_file_count += 1
                             details.append(f"{command_result['saved_file']}: 成功")
                         else:
                             failed_count += 1
@@ -361,6 +372,7 @@ class BatchLogFetchThread(QThread):
                             details.append(f"{command}: {command_result.get('message') or '获取失败'}")
                     else:
                         if command_result.get("success"):
+                            success_count += 1
                             details.append(f"{command}: {command_result.get('message') or '已执行'}")
                         else:
                             failed_count += 1
@@ -379,7 +391,13 @@ class BatchLogFetchThread(QThread):
                 )
         except Exception as exc:
             if self._stop_event.is_set():
-                return self._build_cancelled_result(sn, success_count, failed_count, file_entries)
+                return self._build_cancelled_result(
+                    sn,
+                    success_count,
+                    failed_count,
+                    downloaded_file_count,
+                    file_entries,
+                )
             normalized_message = self._normalize_error_detail(str(exc))
             detail_message = "设备离线" if self._is_device_offline_message(normalized_message) else normalized_message
             status_text = self._map_failure_status(normalized_message)
@@ -394,6 +412,7 @@ class BatchLogFetchThread(QThread):
                 "status": status_text,
                 "success_count": success_count,
                 "failed_count": failed_count + 1,
+                "downloaded_file_count": downloaded_file_count,
                 "files": file_entries,
                 "detail": "\n".join(detail_lines),
             }
@@ -410,7 +429,13 @@ class BatchLogFetchThread(QThread):
                     time.sleep(0.2)
 
         if self._stop_event.is_set():
-            return self._build_cancelled_result(sn, success_count, failed_count, file_entries)
+            return self._build_cancelled_result(
+                sn,
+                success_count,
+                failed_count,
+                downloaded_file_count,
+                file_entries,
+            )
 
         if success_count > 0 and failed_count == 0:
             final_status = "完成"
@@ -426,6 +451,7 @@ class BatchLogFetchThread(QThread):
             "status": final_status,
             "success_count": success_count,
             "failed_count": failed_count,
+            "downloaded_file_count": downloaded_file_count,
             "files": file_entries,
             "detail": final_detail,
         }
@@ -442,13 +468,14 @@ class BatchLogFetchThread(QThread):
             }
         )
 
-    def _build_cancelled_result(self, sn, success_count, failed_count, files):
+    def _build_cancelled_result(self, sn, success_count, failed_count, downloaded_file_count, files):
         self._emit_device(sn, "已取消", success_count, failed_count, files, "已取消")
         return {
             "sn": sn,
             "status": "已取消",
             "success_count": success_count,
             "failed_count": failed_count,
+            "downloaded_file_count": downloaded_file_count,
             "files": list(files),
             "detail": "已取消",
         }

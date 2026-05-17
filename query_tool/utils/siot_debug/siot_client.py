@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import ctypes
 import os
 import sys
 from pathlib import Path
 
-from .config import SDK_BIN_DIR
+from .config import SDK_BIN_DIR, resolve_sdk_bin_dir
 
 
 class SiotError(RuntimeError):
@@ -61,8 +63,8 @@ class TPSIOT_DeviceMessage(ctypes.Structure):
 
 
 class SdkLibraries:
-    def __init__(self, sdk_bin_dir: Path = SDK_BIN_DIR) -> None:
-        self.sdk_bin_dir = Path(sdk_bin_dir)
+    def __init__(self, sdk_bin_dir: Path | None = None) -> None:
+        self.sdk_bin_dir = resolve_sdk_bin_dir(sdk_bin_dir or SDK_BIN_DIR)
         self._configure_search_path()
         self.lib = self._load_library("libsiot.dll")
         self.crypt = self._load_library("libtps_crypt.dll")

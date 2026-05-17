@@ -8,6 +8,8 @@ import threading
 from pathlib import Path
 from typing import Sequence
 
+from .config import resolve_sdk_bin_dir
+
 
 def dispatch_internal_command(argv: Sequence[str]) -> int | None:
     if not argv:
@@ -26,6 +28,7 @@ def dispatch_internal_command(argv: Sequence[str]) -> int | None:
 
 
 def _load_sdk_library(sdk_bin_dir: Path):
+    sdk_bin_dir = resolve_sdk_bin_dir(sdk_bin_dir)
     if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
         os.add_dll_directory(str(sdk_bin_dir))
     lib_name = "libsiot.dll" if sys.platform == "win32" else "libsiot.so"

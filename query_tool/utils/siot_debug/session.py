@@ -30,6 +30,7 @@ from .config import (
     DEFAULT_QUERY_DEVICE_DELAY_S,
     DEFAULT_TEXT_RESULT_SETTLE_S,
     DEVICE_GATEWAY_ID,
+    resolve_sdk_bin_dir,
 )
 from .models import CloudCredentials, CommandResult, DeviceCredentials, ParsedPayload, ProgressCallback, TransferProgress
 from .protocol import (
@@ -1033,7 +1034,7 @@ class DeviceSession:
         proc = subprocess.Popen(
             build_internal_command(
                 "--siot-helper-prepare",
-                str(SDK_BIN_DIR),
+                str(resolve_sdk_bin_dir(SDK_BIN_DIR)),
                 json.dumps(params, separators=(",", ":")),
                 self.device.sn,
                 self.device.username,
@@ -1083,7 +1084,7 @@ class DeviceSession:
         proc = subprocess.run(
             build_internal_command(
                 "--siot-helper-probe",
-                str(SDK_BIN_DIR),
+                str(resolve_sdk_bin_dir(SDK_BIN_DIR)),
                 json.dumps(probe_params, separators=(",", ":")),
             ),
             capture_output=True,
