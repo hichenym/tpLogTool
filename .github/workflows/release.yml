@@ -3,45 +3,50 @@ name: Build and Release (Nuitka)
 on:
   push:
     tags:
-      - 'v*'  # 当推送 v3.0.0, v3.0.1 等标签时触发
+      - "v*"
 
 jobs:
   build:
     runs-on: windows-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          cache: 'pip'
-      
+          python-version: "3.10"
+          cache: "pip"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt --no-cache-dir
-          pip install nuitka ordered-set zstandard
-      
+
       - name: Extract version from tag
         id: version
         shell: pwsh
         run: |
           $tag = "${{ github.ref }}"
           $fullVersion = $tag -replace 'refs/tags/v', ''
-          # 提取纯数字版本号（去掉 -debug, -rc1 等后缀）
           $version = ($fullVersion -split '-')[0]
-          # 保留后缀标识（debug, rc1 等）
           $suffix = ''
           if ($fullVersion -match '-(.+)$') { $suffix = $Matches[1] }
+          $suffixLower = $suffix.ToLowerInvariant()
+          $isDebug = if ($suffixLower.Contains('debug')) { 'true' } else { 'false' }
+
           echo "version=$version" >> $env:GITHUB_OUTPUT
           echo "full_version=$fullVersion" >> $env:GITHUB_OUTPUT
           echo "suffix=$suffix" >> $env:GITHUB_OUTPUT
+          echo "is_debug=$isDebug" >> $env:GITHUB_OUTPUT
           echo "tag=$($tag -replace 'refs/tags/', '')" >> $env:GITHUB_OUTPUT
-          Write-Host "Version: $version, Suffix: $suffix, Full: $fullVersion"
-      
+
+          Write-Host "Version: $version"
+          Write-Host "Suffix: $suffix"
+          Write-Host "Debug build: $isDebug"
+          Write-Host "Full tag version: $fullVersion"
+
       - name: Update version.py
         shell: pwsh
         run: |
@@ -51,16 +56,16 @@ jobs:
           $minor = $parts[1] -replace '[^0-9]', ''
           $patch = $parts[2] -replace '[^0-9]', ''
           $buildDate = Get-Date -Format "yyyyMMdd"
-          
+
           $content = Get-Content "query_tool/version.py" -Raw -Encoding UTF8
           $content = $content -replace 'VERSION_MAJOR = \d+', "VERSION_MAJOR = $major"
           $content = $content -replace 'VERSION_MINOR = \d+', "VERSION_MINOR = $minor"
           $content = $content -replace 'VERSION_PATCH = \d+', "VERSION_PATCH = $patch"
           $content = $content -replace 'BUILD_DATE = "\d+"', "BUILD_DATE = `"$buildDate`""
           $content | Set-Content "query_tool/version.py" -Encoding UTF8 -NoNewline
-          
+
           Write-Host "Updated version.py to V$version ($buildDate)"
-      
+
       - name: Inject secrets
         shell: pwsh
         env:
@@ -83,62 +88,25 @@ jobs:
       - name: Build with Nuitka
         shell: pwsh
         run: |
-          Write-Host "开始 Nuitka 编译..."
+          Write-Host "Starting Nuitka build..."
           Write-Host "Python: $(python --version)"
           Write-Host "Nuitka: $(python -m nuitka --version)"
-          
-          python -m nuitka `
-            --standalone `
-            --onefile `
-            --output-dir=dist `
-            --output-filename=TPQueryTool.exe `
-            --windows-icon-from-ico=./resources/icons/app/logo.ico `
-            --windows-console-mode=disable `
-            --windows-company-name=TPQueryTool `
-            --windows-product-name=TPQueryTool `
-            --windows-file-description="TP Query Tool" `
-            --windows-product-version="${{ steps.version.outputs.version }}.0" `
-            --windows-file-version="${{ steps.version.outputs.version }}.0" `
-            --assume-yes-for-downloads `
-            --jobs=4 `
-            --enable-plugin=pyqt5 `
-            --include-module=ddddocr `
-            --include-module=onnxruntime `
-            --include-module=cv2 `
-            --include-module=numpy `
-            --include-module=lark_oapi `
-            --include-module=lark_oapi.api.bitable.v1 `
-            --include-package=websockets `
-            --include-module=websockets.legacy `
-            --include-module=json `
-            --include-module=requests `
-            --include-module=bs4 `
-            --include-module=coloredlogs `
-            --include-module=PIL `
-            --include-package=query_tool `
-            --include-package=query_tool.pages `
-            --include-package=query_tool.utils `
-            --include-package=query_tool.widgets `
-            --include-package=resources `
-            --include-package-data=ddddocr `
-            --include-package-data=onnxruntime `
-            --include-data-dir=resources/icons=resources/icons `
-            --include-data-dir=query_tool/dll=query_tool/dll `
-            run.py
-          
-          Write-Host "`n检查生成的文件..."
+          python -c "import ssl; print('OpenSSL:', ssl.OPENSSL_VERSION)"
+          python scripts/build.py
+
+          Write-Host "`nChecking build outputs..."
           Get-ChildItem dist
-          
+
           if (Test-Path "dist/TPQueryTool.exe") {
               $file = Get-Item "dist/TPQueryTool.exe"
-              Write-Host "`n✓ Nuitka 打包成功: TPQueryTool.exe"
-              Write-Host "文件大小: $([math]::Round($file.Length / 1MB, 2)) MB"
+              Write-Host "`nBuild succeeded: TPQueryTool.exe"
+              Write-Host "File size: $([math]::Round($file.Length / 1MB, 2)) MB"
           } else {
-              Write-Host "`n✗ 错误: 找不到 TPQueryTool.exe"
+              Write-Host "`nBuild failed: TPQueryTool.exe not found"
               Get-ChildItem dist -Recurse
               exit 1
           }
-      
+
       - name: Get file size
         id: filesize
         shell: pwsh
@@ -148,7 +116,7 @@ jobs:
           $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
           echo "size_mb=$sizeMB" >> $env:GITHUB_OUTPUT
           Write-Host "File size: $sizeMB MB"
-      
+
       - name: Calculate file hash
         id: filehash
         shell: pwsh
@@ -159,13 +127,25 @@ jobs:
           echo "sha256=$sha256" >> $env:GITHUB_OUTPUT
           Write-Host "SHA256: $sha256"
           "$sha256  TPQueryTool.exe" | Set-Content "dist/TPQueryTool.exe.sha256" -Encoding ASCII
-      
+
+      - name: Upload debug build artifact
+        if: ${{ steps.version.outputs.is_debug == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: TPQueryTool-${{ steps.version.outputs.full_version }}
+          path: |
+            dist/TPQueryTool.exe
+            dist/TPQueryTool.exe.sha256
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Extract changelog from version.py
+        if: ${{ steps.version.outputs.is_debug != 'true' }}
         id: changelog
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          
+
           python -c @"
           import re, sys
           version = '$version'
@@ -186,14 +166,15 @@ jobs:
               f.write(changelog)
           print('Changelog extracted successfully')
           "@
-          
+
           if (Test-Path "CHANGELOG.txt") {
               echo "changelog_found=true" >> $env:GITHUB_OUTPUT
           } else {
               echo "changelog_found=false" >> $env:GITHUB_OUTPUT
           }
-      
+
       - name: Generate version.json
+        if: ${{ steps.version.outputs.is_debug != 'true' }}
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
@@ -203,7 +184,7 @@ jobs:
           $sha256 = "${{ steps.filehash.outputs.sha256 }}"
           $tag = "${{ steps.version.outputs.tag }}"
           $repo = "${{ github.repository }}"
-          
+
           $changelogItems = @()
           if (Test-Path "CHANGELOG.txt") {
               $changelog = Get-Content "CHANGELOG.txt" -Encoding UTF8
@@ -215,7 +196,7 @@ jobs:
               $changelogItems = @("请查看 Release 页面获取完整更新日志")
           }
           $changelogJson = $changelogItems | ConvertTo-Json -Compress
-          
+
           $analyticsJson = '{}'
           if (Test-Path "version.json") {
               $existing = Get-Content "version.json" -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -223,7 +204,7 @@ jobs:
                   $analyticsJson = $existing.analytics | ConvertTo-Json -Compress
               }
           }
-          
+
           $versionJson = @"
           {
             "version": "$version",
@@ -241,11 +222,12 @@ jobs:
             "analytics": $analyticsJson
           }
           "@
-          
+
           $versionJson | Set-Content "version.json" -Encoding UTF8
           Write-Host "Generated version.json"
-      
+
       - name: Generate Release Notes
+        if: ${{ steps.version.outputs.is_debug != 'true' }}
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
@@ -253,53 +235,53 @@ jobs:
           $fileSize = "${{ steps.filesize.outputs.size_mb }}"
           $tag = "${{ steps.version.outputs.tag }}"
           $repo = "${{ github.repository }}"
-          
+
           $releaseNotes = @"
-          ## 🎉 查询工具 V$version
-          
+          ## 查询工具 V$version
+
           **编译日期**: $buildDate
           **文件大小**: $fileSize MB
           **SHA256**: ``${{ steps.filehash.outputs.sha256 }}``
-          **编译方式**: Nuitka (原生编译)
-          
-          ### 📦 下载
-          
-          - [**下载 TPQueryTool.exe**](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe)
+          **编译方式**: Nuitka
+
+          ### 下载
+
+          - [下载 TPQueryTool.exe](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe)
           - [TPQueryTool.exe.sha256](https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256)
           - [version.json](https://github.com/$repo/releases/download/$tag/version.json)
-          
-          ### 🔒 文件校验
-          
+
+          ### 文件校验
+
           ````powershell
           `$hash = (Get-FileHash -Algorithm SHA256 TPQueryTool.exe).Hash.ToLower()
-          if (`$hash -eq "${{ steps.filehash.outputs.sha256 }}") { Write-Host "✓ 校验通过" } else { Write-Host "✗ 校验失败" }
+          if (`$hash -eq "${{ steps.filehash.outputs.sha256 }}") { Write-Host "校验通过" } else { Write-Host "校验失败" }
           ````
-          
-          ### 📝 更新说明
-          
+
+          ### 更新说明
+
           "@
-          
+
           if (Test-Path "CHANGELOG.txt") {
               $changelog = Get-Content "CHANGELOG.txt" -Raw -Encoding UTF8
               $releaseNotes += $changelog
           }
-          
+
           $releaseNotes += @"
-          
-          
-          ### 🚀 使用方法
-          
+
+          ### 使用方法
+
           1. 下载 ``TPQueryTool.exe``
           2. 直接运行（无需安装）
           3. 首次运行请配置账号信息
-          
+
           ---
           *此版本由 GitHub Actions + Nuitka 自动构建*
           "@
-          
+
           $releaseNotes | Set-Content "RELEASE_NOTES.md" -Encoding UTF8
-      
+
       - name: Create Release
+        if: ${{ steps.version.outputs.is_debug != 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -311,8 +293,9 @@ jobs:
           prerelease: ${{ steps.version.outputs.suffix != '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Commit version.json to repository
+        if: ${{ steps.version.outputs.is_debug != 'true' }}
         shell: bash
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"

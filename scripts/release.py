@@ -1,25 +1,30 @@
 """
-快速发布脚本
-用于创建版本标签并触发 GitHub Actions 自动构建
+Quick release helper.
+
+Creates and pushes a Git tag to trigger the GitHub Actions workflow.
+Supports both release tags like ``v3.0.1`` and build-only debug tags
+like ``v3.0.1-debug``.
 """
+
+from __future__ import annotations
+
 import os
-import sys
-import subprocess
 import re
-
-# 添加项目根目录到路径
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
+import subprocess
+import sys
 
 
-def get_current_version():
-    """从 version.py 获取当前版本"""
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+
+
+def get_current_version() -> str:
     from query_tool.version import VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH
+
     return f"{VERSION_MAJOR}.{VERSION_MINOR}.{VERSION_PATCH}"
 
 
-def run_command(cmd, check=True):
-    """执行命令并返回输出"""
+def run_command(cmd: str, check: bool = True) -> tuple[bool, str, str]:
     try:
         result = subprocess.run(
             cmd,
@@ -27,67 +32,71 @@ def run_command(cmd, check=True):
             capture_output=True,
             text=True,
             check=check,
-            cwd=project_root
+            cwd=PROJECT_ROOT,
         )
-        return result.returncode == 0, result.stdout.strip(), result.stderr.strip()
-    except subprocess.CalledProcessError as e:
-        return False, e.stdout, e.stderr
+        return True, result.stdout.strip(), result.stderr.strip()
+    except subprocess.CalledProcessError as exc:
+        return False, (exc.stdout or "").strip(), (exc.stderr or "").strip()
 
 
-def check_git_status():
-    """检查 Git 状态"""
+def check_git_status() -> tuple[bool, str]:
     success, stdout, _ = run_command("git status --porcelain")
     if not success:
         return False, "无法获取 Git 状态"
-    
     if stdout:
-        return False, "有未提交的更改，请先提交所有更改"
-    
+        return False, "有未提交的更改，请先提交后再打 tag"
     return True, "工作区干净"
 
 
-def get_existing_tags():
-    """获取现有标签"""
+def get_existing_tags() -> list[str]:
     success, stdout, _ = run_command("git tag")
     if not success:
         return []
-    return [tag.strip() for tag in stdout.split('\n') if tag.strip()]
+    return [tag.strip() for tag in stdout.splitlines() if tag.strip()]
 
 
-def validate_version(version):
-    """验证版本号格式"""
-    pattern = r'^\d+\.\d+\.\d+$'
-    return re.match(pattern, version) is not None
+def validate_version(version: str) -> bool:
+    return re.fullmatch(r"\d+\.\d+\.\d+", version) is not None
 
 
-def create_and_push_tag(version):
-    """创建并推送标签"""
-    tag = f"v{version}"
-    
-    # 创建标签
+def build_tag(version: str, debug_build: bool) -> str:
+    return f"v{version}-debug" if debug_build else f"v{version}"
+
+
+def create_and_push_tag(tag: str) -> tuple[bool, str]:
     print(f"\n创建标签: {tag}")
-    success, stdout, stderr = run_command(f'git tag -a {tag} -m "Release {tag}"')
+    success, _, stderr = run_command(f'git tag -a {tag} -m "Release {tag}"')
     if not success:
         return False, f"创建标签失败: {stderr}"
-    
-    # 推送标签
-    print(f"推送标签到远程仓库...")
-    success, stdout, stderr = run_command(f"git push origin {tag}")
+
+    print("推送标签到远程仓库...")
+    success, _, stderr = run_command(f"git push origin {tag}")
     if not success:
-        # 如果推送失败，删除本地标签
         run_command(f"git tag -d {tag}", check=False)
         return False, f"推送标签失败: {stderr}"
-    
+
     return True, f"标签 {tag} 已成功推送"
 
 
-def main():
-    """主函数"""
+def choose_build_mode() -> bool:
+    print("\n选择构建模式：")
+    print("  1. 正式发布（vX.Y.Z）")
+    print("  2. 调试验证（vX.Y.Z-debug，只打包不发布）")
+
+    while True:
+        choice = input("请输入 1 或 2: ").strip()
+        if choice == "1":
+            return False
+        if choice == "2":
+            return True
+        print("输入无效，请输入 1 或 2。")
+
+
+def main() -> None:
     print("=" * 60)
     print("TPQueryTool - 快速发布脚本")
     print("=" * 60)
-    
-    # 检查 Git 状态
+
     print("\n检查 Git 状态...")
     success, message = check_git_status()
     if not success:
@@ -95,118 +104,89 @@ def main():
         print("\n请先提交所有更改：")
         print("  git add .")
         print('  git commit -m "your message"')
-        sys.exit(1)
+        raise SystemExit(1)
     print(f"[OK] {message}")
-    
-    # 获取当前版本
+
     current_version = get_current_version()
     print(f"\n当前版本: V{current_version}")
-    
-    # 获取现有标签
+
     existing_tags = get_existing_tags()
     if existing_tags:
-        print(f"\n现有标签:")
-        for tag in existing_tags[-5:]:  # 显示最近 5 个标签
+        print("\n现有标签:")
+        for tag in existing_tags[-5:]:
             print(f"  - {tag}")
         if len(existing_tags) > 5:
             print(f"  ... 共 {len(existing_tags)} 个标签")
-    
-    # 询问版本号
-    print("\n" + "=" * 60)
-    print("请输入要发布的版本号（格式：x.y.z）")
+
+    print("\n请输入要使用的版本号，格式为 x.y.z")
     print(f"建议版本号: {current_version}")
-    print("=" * 60)
-    
+
     while True:
-        version_input = input("\n版本号 (直接回车使用建议版本): ").strip()
-        
-        # 如果直接回车，使用当前版本
-        if not version_input:
-            version = current_version
+        version_input = input("\n版本号（直接回车使用建议版本）: ").strip()
+        version = version_input or current_version
+        if validate_version(version):
             break
-        
-        # 验证版本号格式
-        if not validate_version(version_input):
-            print("[ERROR] 版本号格式错误，请使用 x.y.z 格式（如 3.0.1）")
-            continue
-        
-        version = version_input
-        break
-    
-    tag = f"v{version}"
-    
-    # 检查标签是否已存在
+        print("[ERROR] 版本号格式错误，请使用 x.y.z，例如 3.0.1")
+
+    debug_build = choose_build_mode()
+    tag = build_tag(version, debug_build)
+
     if tag in existing_tags:
         print(f"\n[ERROR] 标签 {tag} 已存在")
-        response = input("是否删除现有标签并重新创建? (y/n): ").strip().lower()
-        if response != 'y':
-            print("已取消发布")
-            sys.exit(0)
-        
-        # 删除本地和远程标签
+        response = input("是否删除现有标签并重新创建？(y/n): ").strip().lower()
+        if response != "y":
+            print("已取消")
+            raise SystemExit(0)
+
         print(f"\n删除本地标签 {tag}...")
         run_command(f"git tag -d {tag}", check=False)
-        
+
         print(f"删除远程标签 {tag}...")
         run_command(f"git push origin :refs/tags/{tag}", check=False)
-    
-    # 确认发布
+
     print("\n" + "=" * 60)
-    print(f"准备发布版本: {tag}")
+    print(f"准备推送标签: {tag}")
     print("=" * 60)
-    print("\n发布后将自动触发 GitHub Actions 构建流程：")
-    print("  1. 更新版本号和编译日期")
-    print("  2. 打包 Windows 可执行文件")
-    print("  3. 创建 GitHub Release")
-    print("  4. 上传 exe 和 version.json")
-    print("  5. 生成发布说明")
-    print("\n构建时间约 6-9 分钟")
-    print("=" * 60)
-    
-    response = input("\n确认发布? (y/n): ").strip().lower()
-    if response != 'y':
-        print("已取消发布")
-        sys.exit(0)
-    
-    # 创建并推送标签
-    success, message = create_and_push_tag(version)
-    
-    if success:
-        print("\n" + "=" * 60)
-        print("[OK] 发布成功!")
-        print("=" * 60)
-        print(f"\n{message}")
-        print("\nGitHub Actions 构建已触发，请访问以下链接查看进度：")
-        
-        # 尝试获取远程仓库 URL
-        success, remote_url, _ = run_command("git config --get remote.origin.url")
-        if success and remote_url:
-            # 转换 SSH URL 为 HTTPS URL
-            if remote_url.startswith("git@github.com:"):
-                repo_path = remote_url.replace("git@github.com:", "").replace(".git", "")
-                actions_url = f"https://github.com/{repo_path}/actions"
-                release_url = f"https://github.com/{repo_path}/releases/tag/{tag}"
-                print(f"  Actions: {actions_url}")
-                print(f"  Release: {release_url}")
-        
-        print("\n提示：")
-        print("  - 构建完成后，Release 页面会自动更新")
-        print("  - version.json 会自动生成并上传")
-        print("  - 如需修改 Release 说明，可在 Release 页面编辑")
+    if debug_build:
+        print("\n这次将触发 GitHub Actions 调试构建：")
+        print("  1. 编译并打包 exe")
+        print("  2. 上传 Actions Artifact")
+        print("  3. 不创建 GitHub Release")
+        print("  4. 不生成或提交 version.json")
     else:
+        print("\n这次将触发 GitHub Actions 正式发布：")
+        print("  1. 编译并打包 exe")
+        print("  2. 创建 GitHub Release")
+        print("  3. 生成并上传 version.json")
+        print("  4. 提交 version.json 回仓库")
+
+    response = input("\n确认继续？(y/n): ").strip().lower()
+    if response != "y":
+        print("已取消")
+        raise SystemExit(0)
+
+    success, message = create_and_push_tag(tag)
+    if not success:
         print("\n" + "=" * 60)
-        print("[ERROR] 发布失败")
+        print("[ERROR] 触发失败")
         print("=" * 60)
         print(f"\n{message}")
-        sys.exit(1)
+        raise SystemExit(1)
+
+    print("\n" + "=" * 60)
+    print("[OK] 已触发工作流")
+    print("=" * 60)
+    print(f"\n{message}")
+    print("\nGitHub Actions 已开始运行，可到仓库 Actions 页面查看进度。")
+    if debug_build:
+        print("构建完成后，请到本次 workflow 的 Artifacts 下载打包结果。")
+    else:
+        print("构建完成后，可到 Releases 页面下载正式发布产物。")
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n已取消发布")
-        sys.exit(0)
-    except Exception as e:
-        print(f"\n[ERROR] 发生错误: {e}")
-        sys.exit(1)
+        print("\n\n已取消")
+        raise SystemExit(0)

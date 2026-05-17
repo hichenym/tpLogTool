@@ -137,9 +137,14 @@ def build_nuitka(debug=False, fast=False):
         "--include-module=websockets.legacy",
         "--include-module=json",
         "--include-module=requests",
+        "--include-module=ssl",
+        "--include-module=_ssl",
+        "--include-module=urllib.request",
+        "--include-module=http.client",
         "--include-module=bs4",
         "--include-module=coloredlogs",
         "--include-module=PIL",
+        "--include-package=certifi",
 
         # === 包含项目模块 ===
         "--include-package=query_tool",
