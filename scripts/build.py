@@ -29,6 +29,14 @@ FAST_OUTPUT_DIR = os.path.join("dist", "fast")
 APP_NAME = "TPQueryTool"
 
 
+def configure_stdio():
+    """Use UTF-8 for console output so CI logs work on non-UTF8 consoles."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def update_build_date():
     """更新 version.py 中的编译日期"""
     import re
@@ -213,6 +221,7 @@ def build_nuitka(debug=False, fast=False):
 
 def main():
     """主函数"""
+    configure_stdio()
     debug = "--debug" in sys.argv
     fast = "--fast" in sys.argv
 
