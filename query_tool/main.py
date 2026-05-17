@@ -111,8 +111,8 @@ class MainWindow(QMainWindow):
     def _apply_initial_window_size(self):
         """根据屏幕分辨率自适应设置窗口初始大小。"""
         available = self._get_available_geometry()
-        target_width = max(self.minimumWidth(), min(980, int(available.width() * 0.76)))
-        target_height = max(self.minimumHeight(), min(620, int(available.height() * 0.78)))
+        target_width = max(self.minimumWidth(), min(1100, int(available.width() * 0.76)))
+        target_height = max(self.minimumHeight(), min(720, int(available.height() * 0.78)))
         self.resize(min(target_width, available.width()), min(target_height, available.height()))
     
     def init_ui(self):

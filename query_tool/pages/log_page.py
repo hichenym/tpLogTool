@@ -31,6 +31,7 @@ from PyQt5.QtWidgets import (
     QStyle,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
 )
 
@@ -266,6 +267,7 @@ class BatchLogFetchThread(QThread):
                 "success_count": 0,
                 "failed_count": 0,
                 "downloaded_file_count": 0,
+                "total_commands": 0,
                 "files": [],
                 "detail": "已取消",
             }
@@ -276,8 +278,20 @@ class BatchLogFetchThread(QThread):
         details = []
         connect_details = []
         connected_ok = False
+        commands = [self._normalize_command(raw) for raw in self.commands]
+        commands = [command for command in commands if command]
+        total_commands = len(commands)
 
-        self._emit_device(sn, "查询设备密码中", success_count, failed_count, file_entries, "正在获取设备密码")
+        self._emit_device(
+            sn,
+            "查询设备密码中",
+            success_count,
+            failed_count,
+            file_entries,
+            "正在获取设备密码",
+            total_commands=total_commands,
+            downloaded_file_count=downloaded_file_count,
+        )
         try:
             credentials, _ = resolve_device_credentials(
                 sn,
@@ -297,30 +311,59 @@ class BatchLogFetchThread(QThread):
             normalized_message = self._normalize_error_detail(str(exc))
             detail_message = "设备离线" if self._is_device_offline_message(normalized_message) else normalized_message
             status_text = self._map_failure_status(normalized_message)
-            self._emit_device(sn, status_text, success_count, failed_count + 1, file_entries, detail_message)
+            self._emit_device(
+                sn,
+                status_text,
+                success_count,
+                failed_count + 1,
+                file_entries,
+                detail_message,
+                total_commands=total_commands,
+                downloaded_file_count=downloaded_file_count,
+            )
             return {
                 "sn": sn,
                 "status": status_text,
                 "success_count": success_count,
                 "failed_count": failed_count + 1,
                 "downloaded_file_count": downloaded_file_count,
+                "total_commands": total_commands,
                 "files": file_entries,
                 "detail": detail_message,
             }
 
         if self._stop_event.is_set():
-            self._emit_device(sn, "已取消", success_count, failed_count, file_entries, "已取消")
+            self._emit_device(
+                sn,
+                "已取消",
+                success_count,
+                failed_count,
+                file_entries,
+                "已取消",
+                total_commands=total_commands,
+                downloaded_file_count=downloaded_file_count,
+            )
             return {
                 "sn": sn,
                 "status": "已取消",
                 "success_count": success_count,
                 "failed_count": failed_count,
                 "downloaded_file_count": downloaded_file_count,
+                "total_commands": total_commands,
                 "files": file_entries,
                 "detail": "已取消",
             }
 
-        self._emit_device(sn, "连接设备中", success_count, failed_count, file_entries, "正在登录设备")
+        self._emit_device(
+            sn,
+            "连接设备中",
+            success_count,
+            failed_count,
+            file_entries,
+            "正在登录设备",
+            total_commands=total_commands,
+            downloaded_file_count=downloaded_file_count,
+        )
         process = None
         event_queue = None
         try:
@@ -338,20 +381,21 @@ class BatchLogFetchThread(QThread):
             )
             connected_ok = True
 
-            for index, raw_command in enumerate(self.commands, 1):
+            for index, command in enumerate(commands, 1):
                 if self._stop_event.is_set():
                     break
-                command = self._normalize_command(raw_command)
-                if not command:
-                    continue
 
                 self._emit_device(
                     sn,
-                    f"执行中 {index}/{len(self.commands)}",
+                    f"执行中 {index}/{total_commands}",
                     success_count,
                     failed_count,
                     file_entries,
                     f"执行命令: {command}",
+                    total_commands=total_commands,
+                    current_command_index=index,
+                    current_command=command,
+                    downloaded_file_count=downloaded_file_count,
                 )
 
                 try:
@@ -383,11 +427,15 @@ class BatchLogFetchThread(QThread):
 
                 self._emit_device(
                     sn,
-                    f"执行中 {index}/{len(self.commands)}",
+                    f"执行中 {index}/{total_commands}",
                     success_count,
                     failed_count,
                     file_entries,
                     "\n".join(details),
+                    total_commands=total_commands,
+                    current_command_index=index,
+                    current_command=command,
+                    downloaded_file_count=downloaded_file_count,
                 )
         except Exception as exc:
             if self._stop_event.is_set():
@@ -406,20 +454,39 @@ class BatchLogFetchThread(QThread):
             else:
                 detail_lines = list(connect_details)
                 self._append_unique_detail(detail_lines, detail_message)
-            self._emit_device(sn, status_text, success_count, failed_count + 1, file_entries, "\n".join(detail_lines))
+            self._emit_device(
+                sn,
+                status_text,
+                success_count,
+                failed_count + 1,
+                file_entries,
+                "\n".join(detail_lines),
+                total_commands=total_commands,
+                downloaded_file_count=downloaded_file_count,
+            )
             return {
                 "sn": sn,
                 "status": status_text,
                 "success_count": success_count,
                 "failed_count": failed_count + 1,
                 "downloaded_file_count": downloaded_file_count,
+                "total_commands": total_commands,
                 "files": file_entries,
                 "detail": "\n".join(detail_lines),
             }
         finally:
             if process is not None and connected_ok:
                 try:
-                    self._emit_device(sn, "正在注销", success_count, failed_count, file_entries, "\n".join(details) or "正在断开设备连接")
+                    self._emit_device(
+                        sn,
+                        "正在注销",
+                        success_count,
+                        failed_count,
+                        file_entries,
+                        "\n".join(details) or "正在断开设备连接",
+                        total_commands=total_commands,
+                        downloaded_file_count=downloaded_file_count,
+                    )
                     self._send_payload(process, {"action": "disconnect"})
                     self._drain_until_disconnected(event_queue, timeout_s=5.0)
                 except Exception as exc:
@@ -445,28 +512,38 @@ class BatchLogFetchThread(QThread):
             final_status = "失败"
 
         final_detail = "\n".join(details) if details else "执行完成"
-        self._emit_device(sn, final_status, success_count, failed_count, file_entries, final_detail)
+        self._emit_device(
+            sn,
+            final_status,
+            success_count,
+            failed_count,
+            file_entries,
+            final_detail,
+            total_commands=total_commands,
+            downloaded_file_count=downloaded_file_count,
+        )
         return {
             "sn": sn,
             "status": final_status,
             "success_count": success_count,
             "failed_count": failed_count,
             "downloaded_file_count": downloaded_file_count,
+            "total_commands": total_commands,
             "files": file_entries,
             "detail": final_detail,
         }
 
-    def _emit_device(self, sn, status, success_count, failed_count, files, detail):
-        self.device_updated.emit(
-            {
-                "sn": sn,
-                "status": status,
-                "success_count": success_count,
-                "failed_count": failed_count,
-                "files": list(files),
-                "detail": detail,
-            }
-        )
+    def _emit_device(self, sn, status, success_count, failed_count, files, detail, **extra):
+        payload = {
+            "sn": sn,
+            "status": status,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "files": list(files),
+            "detail": detail,
+        }
+        payload.update(extra)
+        self.device_updated.emit(payload)
 
     def _build_cancelled_result(self, sn, success_count, failed_count, downloaded_file_count, files):
         self._emit_device(sn, "已取消", success_count, failed_count, files, "已取消")
@@ -832,18 +909,22 @@ class LogPage(BasePage):
     """日志批量拉取页面。"""
 
     MAX_WORKERS = 20
-    RESULT_HEADERS = ("SN", "状态", "文件", "详情")
+    RESULT_ROW_HEIGHT = 34
+    RESULT_HEADERS = ("SN", "状态", "概览")
+    RESULT_MIN_WIDTHS = {0: 170, 1: 110, 2: 220}
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.page_name = "命令"
         self.download_root = self._default_download_root()
         self._row_map = {}
+        self._device_payloads = {}
         self.worker_thread = None
         self.fetch_running = False
         self.fetch_canceling = False
         self._commands_updating = False
         self.command_editing = False
+        self._resizing_columns = False
         self.init_ui()
         self.load_config()
 
@@ -953,30 +1034,71 @@ class LogPage(BasePage):
         result_layout.setContentsMargins(10, 15, 10, 10)
         result_layout.setSpacing(3)
 
+        summary_row = QHBoxLayout()
+        summary_row.setContentsMargins(0, 0, 0, 0)
+        summary_row.setSpacing(10)
+
         self.summary_label = QLabel("等待开始")
         self.summary_label.setContentsMargins(0, 0, 0, 0)
         self.summary_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
-        result_layout.addWidget(self.summary_label)
+        summary_row.addWidget(self.summary_label, 7)
+
+        self.detail_header_label = QLabel("设备执行详情")
+        self.detail_header_label.setContentsMargins(0, 0, 0, 0)
+        self.detail_header_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
+        summary_row.addWidget(self.detail_header_label, 4)
+
+        result_layout.addLayout(summary_row)
 
         self.result_table = QTableWidget(0, len(self.RESULT_HEADERS))
         self.result_table.setHorizontalHeaderLabels(list(self.RESULT_HEADERS))
         self.result_table.verticalHeader().setVisible(True)
         self.result_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.result_table.verticalHeader().setDefaultSectionSize(self.result_table.verticalHeader().defaultSectionSize())
+        self.result_table.verticalHeader().setDefaultSectionSize(self.RESULT_ROW_HEIGHT)
         self.result_table.verticalHeader().setFixedWidth(36)
         self.result_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.result_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.result_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.result_table.setWordWrap(True)
+        self.result_table.setWordWrap(False)
         self.result_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
         self.result_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
         self.result_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Interactive)
-        self.result_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
-        self.result_table.setItemDelegateForColumn(2, RichTextItemDelegate(self.result_table))
-        self.result_table.setItemDelegateForColumn(3, RichTextItemDelegate(self.result_table))
+        self.result_table.horizontalHeader().setStretchLastSection(False)
+        self.result_table.horizontalHeader().sectionResized.connect(self.on_result_section_resized)
         self.result_table.itemDoubleClicked.connect(self.on_result_item_double_clicked)
+        self.result_table.itemSelectionChanged.connect(self.on_result_selection_changed)
         StyleManager.apply_to_widget(self.result_table, "TABLE")
-        result_layout.addWidget(self.result_table, 1)
+
+        result_content = QHBoxLayout()
+        result_content.setContentsMargins(0, 0, 0, 0)
+        result_content.setSpacing(10)
+
+        table_panel = QFrame()
+        table_panel.setFrameShape(QFrame.NoFrame)
+        table_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
+        table_layout = QVBoxLayout(table_panel)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(0)
+        table_layout.addWidget(self.result_table, 1)
+
+        detail_panel = QFrame()
+        detail_panel.setFrameShape(QFrame.NoFrame)
+        detail_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
+        detail_layout = QVBoxLayout(detail_panel)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(0)
+
+        self.detail_view = QTextEdit()
+        self.detail_view.setReadOnly(True)
+        self.detail_view.setAcceptRichText(True)
+        self.detail_view.setMinimumWidth(300)
+        self.detail_view.setStyleSheet(self._get_text_edit_stylesheet())
+        self.detail_view.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        detail_layout.addWidget(self.detail_view, 1)
+
+        result_content.addWidget(table_panel, 7)
+        result_content.addWidget(detail_panel, 4)
+        result_layout.addLayout(result_content, 1)
 
         page_layout.addWidget(self.query_group, 0)
         page_layout.addWidget(self.result_group, 1)
@@ -999,6 +1121,7 @@ class LogPage(BasePage):
     def on_page_show(self):
         self.show_info("命令页面")
         QTimer.singleShot(0, self._apply_result_column_widths)
+        self._update_detail_view()
 
     def on_command_edit_button_clicked(self):
         if self.command_editing:
@@ -1095,11 +1218,24 @@ class LogPage(BasePage):
         if row is None:
             return
 
+        self._device_payloads[sn] = {
+            "sn": sn,
+            "status": str(payload.get("status") or ""),
+            "files": list(payload.get("files") or []),
+            "detail": str(payload.get("detail") or ""),
+            "success_count": int(payload.get("success_count") or 0),
+            "failed_count": int(payload.get("failed_count") or 0),
+            "downloaded_file_count": int(payload.get("downloaded_file_count") or 0),
+            "total_commands": int(payload.get("total_commands") or 0),
+            "current_command_index": int(payload.get("current_command_index") or 0),
+            "current_command": str(payload.get("current_command") or ""),
+        }
+
         status_text = str(payload.get("status") or "")
         file_text = "\n".join(payload.get("files") or [])
-        detail_text = str(payload.get("detail") or "")
+        overview_text = self._build_overview_text(payload)
         self.result_table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
-        values = [sn, status_text, file_text, detail_text]
+        values = [sn, status_text, overview_text]
 
         for column, value in enumerate(values):
             item = self.result_table.item(row, column)
@@ -1107,17 +1243,15 @@ class LogPage(BasePage):
                 item = QTableWidgetItem()
                 self.result_table.setItem(row, column, item)
             item.setText(value)
-            item.setToolTip(value)
-            item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+            item.setToolTip(value if column < 2 else (overview_text if not file_text else f"{overview_text}\n{file_text}"))
+            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             self._apply_item_color(item, column, value)
 
-        file_item = self.result_table.item(row, 2)
-        detail_item = self.result_table.item(row, 3)
-        if file_item is not None:
-            file_item.setData(RICH_TEXT_ROLE, self._build_file_segments(payload.get("files") or []))
-        if detail_item is not None:
-            detail_item.setData(RICH_TEXT_ROLE, self._build_detail_segments(detail_text))
-        self.result_table.resizeRowToContents(row)
+        self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
+
+        current_row = self.result_table.currentRow()
+        if current_row == row:
+            self._update_detail_view(sn)
 
     def on_result_item_double_clicked(self, item):
         if item is None:
@@ -1127,6 +1261,15 @@ class LogPage(BasePage):
             return
         QApplication.clipboard().setText(text)
         self.show_success("已复制单元格内容", 1200)
+
+    def on_result_selection_changed(self):
+        row = self.result_table.currentRow()
+        if row < 0:
+            self._update_detail_view()
+            return
+        sn_item = self.result_table.item(row, 0)
+        sn = sn_item.text().strip() if sn_item is not None else ""
+        self._update_detail_view(sn)
 
     def on_summary_ready(self, summary: dict):
         if summary.get("cancelled"):
@@ -1194,19 +1337,26 @@ class LogPage(BasePage):
 
     def _prepare_result_table(self, sn_list):
         self._row_map = {}
+        self._device_payloads = {}
         self.result_table.setRowCount(0)
         for row, sn in enumerate(sn_list):
             self.result_table.insertRow(row)
             self._row_map[sn] = row
             self.result_table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
-            initial_values = [sn, "等待执行", "", ""]
+            initial_values = [sn, "等待执行", ""]
             for column, value in enumerate(initial_values):
                 item = QTableWidgetItem(value)
-                item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 self._apply_item_color(item, column, value)
-                if column in (2, 3):
+                if column == 2:
                     item.setData(RICH_TEXT_ROLE, [])
                 self.result_table.setItem(row, column, item)
+            self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
+        if sn_list:
+            self.result_table.selectRow(0)
+            self._update_detail_view(sn_list[0])
+        else:
+            self._update_detail_view()
         self._apply_result_column_widths()
 
     def _set_running_state(self, running: bool):
@@ -1246,6 +1396,46 @@ class LogPage(BasePage):
         super().showEvent(event)
         QTimer.singleShot(0, self._apply_result_column_widths)
 
+    def on_result_section_resized(self, logical_index, _old_size, _new_size):
+        if self._resizing_columns or not hasattr(self, "result_table"):
+            return
+
+        viewport_width = self.result_table.viewport().width()
+        if viewport_width <= 0:
+            return
+
+        self._resizing_columns = True
+        try:
+            widths = [self.result_table.columnWidth(index) for index in range(self.result_table.columnCount())]
+            minimum = self.RESULT_MIN_WIDTHS.get(logical_index, 80)
+            widths[logical_index] = max(minimum, widths[logical_index])
+
+            total_width = sum(widths)
+            if total_width > viewport_width:
+                excess = total_width - viewport_width
+                for index in range(self.result_table.columnCount()):
+                    if index == logical_index or excess <= 0:
+                        continue
+                    min_width = self.RESULT_MIN_WIDTHS.get(index, 80)
+                    shrinkable = max(0, widths[index] - min_width)
+                    if shrinkable <= 0:
+                        continue
+                    shrink = min(shrinkable, excess)
+                    widths[index] -= shrink
+                    excess -= shrink
+
+                if excess > 0:
+                    widths[logical_index] = max(minimum, widths[logical_index] - excess)
+
+            remaining = viewport_width - sum(widths)
+            if remaining > 0:
+                widths[2] += remaining
+
+            for index, width in enumerate(widths):
+                self.result_table.setColumnWidth(index, width)
+        finally:
+            self._resizing_columns = False
+
     def refresh_theme(self):
         if hasattr(self, "query_group"):
             self.query_group.setStyleSheet(self._get_compact_group_box_stylesheet())
@@ -1269,6 +1459,10 @@ class LogPage(BasePage):
             self.fetch_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         if hasattr(self, "download_path_label"):
             self.download_path_label.setStyleSheet(self._get_download_path_label_stylesheet())
+        if hasattr(self, "detail_header_label"):
+            self.detail_header_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
+        if hasattr(self, "detail_view"):
+            self.detail_view.setStyleSheet(self._get_text_edit_stylesheet())
         if hasattr(self, "result_table"):
             StyleManager.apply_to_widget(self.result_table, "TABLE")
             for row in range(self.result_table.rowCount()):
@@ -1277,11 +1471,13 @@ class LogPage(BasePage):
                     if item is None:
                         continue
                     self._apply_item_color(item, column, item.text())
-                    if column == 2:
-                        item.setData(RICH_TEXT_ROLE, self._build_file_segments(item.text().splitlines()))
-                    elif column == 3:
-                        item.setData(RICH_TEXT_ROLE, self._build_detail_segments(item.text()))
             self.result_table.viewport().update()
+        current_row = self.result_table.currentRow() if hasattr(self, "result_table") else -1
+        if current_row >= 0:
+            sn_item = self.result_table.item(current_row, 0)
+            self._update_detail_view(sn_item.text().strip() if sn_item is not None else "")
+        else:
+            self._update_detail_view()
 
     @staticmethod
     def _parse_sn_input(text: str):
@@ -1374,17 +1570,139 @@ class LogPage(BasePage):
         if viewport_width <= 0:
             return
 
-        total_ratio = 2 + 1 + 2 + 6
+        total_ratio = 3 + 2 + 4
         unit = max(1, viewport_width // total_ratio)
-        sn_width = max(140, unit * 2)
-        status_width = max(90, unit * 1)
-        file_width = max(160, unit * 2)
-        detail_width = max(260, viewport_width - sn_width - status_width - file_width)
+        sn_width = max(self.RESULT_MIN_WIDTHS[0], unit * 3)
+        status_width = max(self.RESULT_MIN_WIDTHS[1], unit * 2)
+        overview_width = max(self.RESULT_MIN_WIDTHS[2], viewport_width - sn_width - status_width)
         self.result_table.setColumnWidth(0, sn_width)
         self.result_table.setColumnWidth(1, status_width)
-        self.result_table.setColumnWidth(2, file_width)
-        self.result_table.setColumnWidth(3, detail_width)
-        self.result_table.resizeRowsToContents()
+        self.result_table.setColumnWidth(2, overview_width)
+        for row in range(self.result_table.rowCount()):
+            self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
+
+    @staticmethod
+    def _summarize_multiline_text(lines, empty_text=""):
+        normalized = [str(line).strip() for line in lines if str(line).strip()]
+        if not normalized:
+            return empty_text
+
+        first = normalized[0]
+        if len(first) > 44:
+            first = f"{first[:41]}..."
+        if len(normalized) == 1:
+            return first
+        return f"{first} 等{len(normalized)}条"
+
+    def _build_overview_text(self, payload: dict) -> str:
+        total_commands = int(payload.get("total_commands") or 0)
+        success_count = int(payload.get("success_count") or 0)
+        failed_count = int(payload.get("failed_count") or 0)
+        downloaded_file_count = int(payload.get("downloaded_file_count") or 0)
+        current_command_index = int(payload.get("current_command_index") or 0)
+        status_text = str(payload.get("status") or "").strip()
+
+        lines = []
+        if status_text.startswith("执行中") and total_commands > 0:
+            progress = current_command_index or min(total_commands, success_count + failed_count + 1)
+            lines.append(f"执行进度 {min(progress, total_commands)}/{total_commands}")
+        elif status_text in ("完成", "部分完成", "失败", "已取消") and total_commands > 0:
+            lines.append(f"执行情况 {success_count}/{total_commands}")
+        elif total_commands > 0 and (success_count > 0 or failed_count > 0):
+            lines.append(f"执行情况 {success_count}/{total_commands}")
+        else:
+            lines.append("-")
+
+        if downloaded_file_count > 0:
+            lines.append(f"下载情况 {downloaded_file_count}")
+        return "  |  ".join(lines)
+
+    def _update_detail_view(self, sn: str = ""):
+        if not hasattr(self, "detail_view"):
+            return
+
+        payload = self._device_payloads.get((sn or "").strip())
+        if not payload:
+            self.detail_view.setHtml(
+                f'<div style="color: {t("text_secondary")};"><b>设备执行详情</b><br/><br/>选择一台设备后，可在这里查看完整执行详情。</div>'
+            )
+            return
+
+        files = list(payload.get("files") or [])
+        detail_text = str(payload.get("detail") or "").strip()
+        file_html = self._render_detail_section(self._build_file_segments(files), "暂无文件结果")
+        detail_html = self._render_detail_section(self._build_detail_segments(detail_text), "暂无执行详情")
+        self.detail_view.setHtml(
+            f"""
+            <div style="color: {t('text_primary')};">
+                <div><b>设备执行详情</b></div>
+                <br/>
+                <div><b>SN:</b> {html.escape(str(payload.get('sn') or ''))}</div>
+                <div><b>状态:</b> <span style="color: {self._status_color(str(payload.get('status') or ''))};">
+                    {html.escape(str(payload.get('status') or ''))}
+                </span></div>
+                <br/>
+                <div><b>文件:</b></div>
+                {file_html}
+                <br/>
+                <div><b>执行详情:</b></div>
+                {detail_html}
+            </div>
+            """
+        )
+
+    def _render_detail_section(self, segments, empty_text: str) -> str:
+        if not segments:
+            return f'<div style="color: {t("text_secondary")};">{html.escape(empty_text)}</div>'
+        return "".join(self._render_detail_line_html(str(segment["text"]), str(segment["color"])) for segment in segments)
+
+    def _render_detail_line_html(self, text: str, fallback_color: str) -> str:
+        line = str(text or "")
+        if line.startswith("执行命令: "):
+            command_text = line[len("执行命令: "):]
+            return (
+                f'<div style="white-space: pre-wrap;">'
+                f'<span style="color: {fallback_color};">执行命令: </span>'
+                f'<span style="color: {t("status_online")};">{html.escape(command_text)}</span>'
+                f'</div>'
+            )
+        command_part, separator, rest = line.partition(": ")
+        if separator and self._looks_like_command_text(command_part):
+            command_color = t("status_online")
+            if self._detail_line_color(rest) == t("status_offline"):
+                command_color = t("status_offline")
+            return (
+                f'<div style="color: {command_color}; white-space: pre-wrap;">{html.escape(command_part)}</div>'
+                f'<div style="color: {fallback_color}; white-space: pre-wrap;">{html.escape(rest)}</div>'
+            )
+        if separator and line.startswith("执行命令: "):
+            return (
+                f'<div style="color: {fallback_color}; white-space: pre-wrap;">{html.escape(command_part + separator)}</div>'
+                f'<div style="color: {fallback_color}; white-space: pre-wrap;">{html.escape(rest)}</div>'
+            )
+        if separator and not self._looks_like_command_text(command_part) and "\n" in rest:
+            return (
+                f'<div style="color: {fallback_color}; white-space: pre-wrap;">{html.escape(command_part + separator)}</div>'
+                f'<div style="color: {fallback_color}; white-space: pre-wrap;">{html.escape(rest)}</div>'
+            )
+        if self._looks_like_command_text(line.strip()):
+            command_color = t("status_online")
+            if self._detail_line_color(line) == t("status_offline"):
+                command_color = t("status_offline")
+            return (
+                f'<div style="white-space: pre-wrap;">'
+                f'<span style="color: {command_color};">{html.escape(line)}</span>'
+                f'</div>'
+            )
+        return (
+            f'<div style="color: {fallback_color}; white-space: pre-wrap;">'
+            f'{html.escape(line)}</div>'
+        )
+
+    @staticmethod
+    def _looks_like_command_text(text: str) -> bool:
+        normalized = str(text or "").strip().lower()
+        return normalized.startswith(("syscmd ", "syscmdex ", "getsystemcfg ", "start"))
 
     @staticmethod
     def _status_color(status: str) -> str:
