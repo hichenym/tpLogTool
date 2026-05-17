@@ -759,7 +759,7 @@ class DebugPage(BasePage):
 
         self.connect_btn = QPushButton()
         self.connect_btn.clicked.connect(self.on_connect_button_clicked)
-        self.connect_btn.setFixedSize(32, 28)
+        self.connect_btn.setFixedSize(72, 28)
         self.connect_btn.setIconSize(QSize(16, 16))
 
         login_panel_layout.addWidget(sn_label)
@@ -843,7 +843,7 @@ class DebugPage(BasePage):
         self.command_input.history_next_requested.connect(self.on_history_next_requested_from_input)
 
         self.send_btn = QPushButton()
-        self.send_btn.setFixedSize(28, 28)
+        self.send_btn.setFixedSize(84, 28)
         self.send_btn.setIcon(QIcon(":/icons/common/send.png"))
         self.send_btn.setIconSize(QSize(16, 16))
         self.send_btn.setToolTip("发送命令")
@@ -901,6 +901,7 @@ class DebugPage(BasePage):
         page_layout.addWidget(command_group, 1)
 
         self.on_command_type_changed()
+        self.update_send_button()
         self.update_connect_button()
 
     def init_worker(self):
@@ -1081,8 +1082,8 @@ class DebugPage(BasePage):
         self.console_edit.set_input_locked(False)
         self.command_input.setEnabled(True)
         self.command_type_combo.setEnabled(True)
-        self.send_btn.setEnabled(True)
         self.update_shortcut_controls()
+        self.update_send_button()
         self.update_connect_button()
         self.append_output("已取消连接")
         self.show_info("已取消连接")
@@ -1316,9 +1317,9 @@ class DebugPage(BasePage):
         self.console_edit.set_input_locked(True)
         self.command_input.setEnabled(False)
         self.command_type_combo.setEnabled(False)
-        self.send_btn.setEnabled(False)
         self.add_shortcut_btn.setEnabled(False)
         self.toggle_shortcut_btn.setEnabled(False)
+        self.update_send_button()
         self.console_edit.append_command(command)
         self.request_command.emit(backend_command, self.default_timeout_ms, self.download_root)
         if source != "auto":
@@ -1341,8 +1342,8 @@ class DebugPage(BasePage):
         self.console_edit.set_input_locked(False)
         self.command_input.setEnabled(True)
         self.command_type_combo.setEnabled(True)
-        self.send_btn.setEnabled(True)
         self.update_shortcut_controls()
+        self.update_send_button()
         self.append_output("连接成功")
         self.show_success(f"设备 {context.get('sn', '')} 连接成功")
         self._submit_command("start", source="auto", record_history=False)
@@ -1357,8 +1358,8 @@ class DebugPage(BasePage):
         self.console_edit.set_input_locked(False)
         self.command_input.setEnabled(True)
         self.command_type_combo.setEnabled(True)
-        self.send_btn.setEnabled(True)
         self.update_shortcut_controls()
+        self.update_send_button()
         self.append_output(message, color=t("status_offline"))
         self.show_error(f"连接失败: {message}")
 
@@ -1373,8 +1374,8 @@ class DebugPage(BasePage):
         self.console_edit.set_input_locked(False)
         self.command_input.setEnabled(True)
         self.command_type_combo.setEnabled(True)
-        self.send_btn.setEnabled(True)
         self.update_shortcut_controls()
+        self.update_send_button()
         self.append_output(message)
         self.show_info(message)
         QTimer.singleShot(0, self._start_pending_connect)
@@ -1395,8 +1396,8 @@ class DebugPage(BasePage):
             self.console_edit.set_input_locked(False)
             self.command_input.setEnabled(True)
             self.command_type_combo.setEnabled(True)
-            self.send_btn.setEnabled(True)
             self.update_shortcut_controls()
+            self.update_send_button()
             if self.last_command_source in ("console", "auto"):
                 self.console_edit.setFocus(Qt.OtherFocusReason)
                 self.console_edit._move_cursor_to_end()
@@ -1515,23 +1516,34 @@ class DebugPage(BasePage):
         self.add_shortcut_btn.setEnabled(can_add)
         self.toggle_shortcut_btn.setEnabled(not self.connecting and not self.command_running)
 
+    def update_send_button(self):
+        if self.command_running:
+            self.send_btn.setEnabled(False)
+            self.send_btn.setText("取消")
+            self.send_btn.setToolTip("命令执行中")
+            return
+
+        self.send_btn.setEnabled(not self.connecting)
+        self.send_btn.setText("发送")
+        self.send_btn.setToolTip("发送命令")
+
     def update_connect_button(self):
         if self.canceling_connect:
             self.connect_btn.setEnabled(False)
-            self.connect_btn.setText("")
+            self.connect_btn.setText("取消")
             self.connect_btn.setIcon(QIcon(":/icons/common/connectting.png"))
             self.connect_btn.setToolTip("取消中...")
             return
 
         if self.connecting:
             self.connect_btn.setEnabled(True)
-            self.connect_btn.setText("")
+            self.connect_btn.setText("取消")
             self.connect_btn.setIcon(QIcon(":/icons/common/connectting.png"))
             self.connect_btn.setToolTip("取消")
             return
 
         self.connect_btn.setEnabled(True)
-        self.connect_btn.setText("")
+        self.connect_btn.setText("登出" if self.connected else "登录")
         self.connect_btn.setIcon(
             QIcon(":/icons/common/disconnect.png") if self.connected else QIcon(":/icons/common/connect.png")
         )
@@ -1546,8 +1558,8 @@ class DebugPage(BasePage):
         self.console_edit.set_input_locked(connecting or self.command_running)
         self.command_input.setEnabled(not connecting and not self.command_running)
         self.command_type_combo.setEnabled(not connecting and not self.command_running)
-        self.send_btn.setEnabled(not connecting and not self.command_running)
         self.update_shortcut_controls()
+        self.update_send_button()
         self.update_connect_button()
 
     def cleanup(self):

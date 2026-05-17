@@ -67,9 +67,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("查询工具")
-        self.setGeometry(100, 100, 1080, 680)
         self.setMinimumSize(600, 450)
         self.setWindowIcon(QIcon(":/icons/app/logo.png"))
+        self._apply_initial_window_size()
         
         # 页面实例
         self.pages = []
@@ -99,6 +99,21 @@ class MainWindow(QMainWindow):
         self._periodic_update_timer = QTimer(self)
         self._periodic_update_timer.timeout.connect(self._periodic_update_check)
         self._periodic_update_timer.start(6 * 60 * 60 * 1000)  # 6 小时
+
+    def _get_available_geometry(self):
+        """获取当前可用屏幕区域，避开任务栏。"""
+        app = QApplication.instance()
+        screen = app.primaryScreen() if app else None
+        if screen is not None:
+            return screen.availableGeometry()
+        return QDesktopWidget().availableGeometry()
+
+    def _apply_initial_window_size(self):
+        """根据屏幕分辨率自适应设置窗口初始大小。"""
+        available = self._get_available_geometry()
+        target_width = max(self.minimumWidth(), min(980, int(available.width() * 0.76)))
+        target_height = max(self.minimumHeight(), min(620, int(available.height() * 0.78)))
+        self.resize(min(target_width, available.width()), min(target_height, available.height()))
     
     def init_ui(self):
         """初始化UI"""
@@ -361,11 +376,11 @@ class MainWindow(QMainWindow):
     
     def center_on_screen(self):
         """将窗口居中显示"""
-        screen = QDesktopWidget().screenGeometry()
+        screen = self._get_available_geometry()
         window = self.geometry()
         x = (screen.width() - window.width()) // 2
         y = (screen.height() - window.height()) // 2
-        self.move(x, y)
+        self.move(screen.x() + max(0, x), screen.y() + max(0, y))
     
     def load_config(self):
         """加载配置"""
@@ -942,6 +957,8 @@ def main():
     logger.info(f"操作系统: {platform.system()} {platform.release()}")
     
     try:
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         app = QApplication(sys.argv)
         
         # 在创建任何控件之前，先从注册表读取并应用保存的主题

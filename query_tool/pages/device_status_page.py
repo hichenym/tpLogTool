@@ -470,7 +470,7 @@ class DeviceStatusPage(BasePage):
         # 连接单击事件
         self.result_table.cellClicked.connect(self.on_cell_clicked)
         
-        self.result_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.result_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.result_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         group_layout.addWidget(self.result_table)
         

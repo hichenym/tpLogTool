@@ -932,10 +932,10 @@ class LogPage(BasePage):
         self.choose_download_path_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.choose_download_path_btn.clicked.connect(self.choose_download_directory)
 
-        self.fetch_btn = QPushButton("")
+        self.fetch_btn = QPushButton("发送")
         self.fetch_btn.setIcon(QIcon(":/icons/common/run.png"))
         self.fetch_btn.setIconSize(QSize(16, 16))
-        self.fetch_btn.setFixedSize(36, 28)
+        self.fetch_btn.setFixedSize(72, 28)
         self.fetch_btn.setToolTip("执行命令")
         self.fetch_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.fetch_btn.clicked.connect(self.on_fetch_clicked)
@@ -1230,9 +1230,11 @@ class LogPage(BasePage):
 
     def _update_fetch_button_state(self):
         if self.fetch_running:
+            self.fetch_btn.setText("取消")
             self.fetch_btn.setIcon(QIcon(":/icons/common/connectting.png"))
             self.fetch_btn.setToolTip("停止中..." if self.fetch_canceling else "停止执行")
         else:
+            self.fetch_btn.setText("发送")
             self.fetch_btn.setIcon(QIcon(":/icons/common/run.png"))
             self.fetch_btn.setToolTip("执行命令")
 
