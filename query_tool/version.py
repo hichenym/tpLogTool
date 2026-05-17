@@ -6,10 +6,10 @@ from datetime import datetime
 # 版本号配置
 VERSION_MAJOR = 3  # 主版本号：重大功能更新或架构变更
 VERSION_MINOR = 5  # 次版本号：新增功能或较大改进
-VERSION_PATCH = 0  # 修订号：Bug修复或小改进
+VERSION_PATCH = 1  # 修订号：Bug修复或小改进
 
 # 自动获取编译日期
-BUILD_DATE = "20260516"
+BUILD_DATE = "20260517"
 
 def get_version():
     """获取版本号元组"""
@@ -36,6 +36,10 @@ def get_build_date_formatted():
 
 # 版本历史（仅记录用户感知的重要更新、功能改进和bug修复）
 VERSION_HISTORY = """
+
+V3.5.1 (20260517)
+- 修复调试和命令页功能错误
+- 窗口界面自适应
 
 V3.5.0 (20260516)
 - 新增设备调试功能
