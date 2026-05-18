@@ -427,8 +427,19 @@ class DeviceSession:
             raise SiotError("cloud credentials are missing")
 
         with self._state_lock:
-            if self._siot_conn:
+            if self._siot_conn and self._signal_connected:
                 return
+            if self._siot_conn and not self._signal_connected:
+                try:
+                    self.lib.TPSIOT_Close(self._siot_conn)
+                finally:
+                    self._siot_conn = None
+            if self._peer_conn and not self._peer_connected:
+                try:
+                    self.lib.TPSRTC_DisconnectPeer(self._peer_conn)
+                finally:
+                    self._peer_conn = None
+            self.lib.TPSRTC_Cleanup()
 
             self._signal_ready.clear()
             self._configure_rtc_properties(self.cloud_credentials)
@@ -810,6 +821,8 @@ class DeviceSession:
     def _heartbeat_loop(self) -> None:
         while not self._stop_event.wait(HEARTBEAT_INTERVAL_S):
             try:
+                if not self._signal_connected or not self._authenticated or not self._peer_connected:
+                    self._ensure_ready()
                 self._send_heartbeat()
             except Exception as exc:  # pragma: no cover
                 logging.warning("Heartbeat failed: %s", exc)
@@ -831,7 +844,7 @@ class DeviceSession:
             self._siot_conn,
             TPSIOT_PROTOCOL_TCP,
             self.device.sn.encode("utf-8"),
-            DEVICE_GATEWAY_ID.encode("utf-8"),
+            self._current_gateway_id.encode("utf-8"),
             ctypes.cast(buffer, ctypes.c_void_p),
             len(packed),
             b"",
@@ -852,6 +865,7 @@ class DeviceSession:
 
         if event in (TPSIOT_CONN_HANDSHAKED_FAILED, TPSIOT_CONN_FAILED, TPSIOT_CONN_CLOSED):
             self._signal_connected = False
+            self._authenticated = False
             self._peer_connected = False
             self._signal_ready.set()
             logging.warning("Signaling event failed/closed: event=%s err=%s", event, err_code)
@@ -872,6 +886,8 @@ class DeviceSession:
 
         message = ctypes.cast(data_ptr, ctypes.POINTER(TPSIOT_DeviceMessage)).contents
         if message.feedbackCode == TPSIOT_FB_UNREACHABLE_DEVICE:
+            self._authenticated = False
+            self._peer_connected = False
             logging.warning("Device is unreachable via signaling")
             self._status_ready.set()
             self._auth_ready.set()
