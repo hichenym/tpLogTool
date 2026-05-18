@@ -1,8 +1,9 @@
 """
-SIOT helper launcher.
+SIOT internal command launcher.
 
-独立的内部命令入口，供发布版优先作为 sidecar helper 使用，
-减少 GUI 主程序在 onefile 模式下频繁自拉起自身。
+开发态兼容入口，用于直接运行内部 SIOT 命令。
+发布版已切换为单 exe 模式，由 `run.py` 统一分发内部命令，
+不再单独构建 sidecar helper 可执行文件。
 """
 from __future__ import annotations
 
