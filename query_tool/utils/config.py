@@ -41,6 +41,7 @@ class AppConfig:
     export_path: str = ''
     phone_history: List[str] = field(default_factory=list)
     debug_shortcuts: List[str] = field(default_factory=list)
+    debug_shortcuts_initialized: bool = False
     last_debug_sn: str = ''
     debug_download_path: str = ''
     last_log_sn: str = ''
@@ -223,7 +224,8 @@ class ConfigManager:
         phone_history_str = self._get_value('phone_history', '')
         phone_history = phone_history_str.split('|')[:5] if phone_history_str else []
         debug_shortcuts_str = self._get_value('debug_shortcuts', '')
-        debug_shortcuts = [item for item in debug_shortcuts_str.split('|') if item] if debug_shortcuts_str else []
+        debug_shortcuts = self._decode_string_list(debug_shortcuts_str)
+        debug_shortcuts_initialized = self._get_value('debug_shortcuts_initialized', '0') == '1'
         last_debug_sn = self._get_value('last_debug_sn', '')
         debug_download_path = self._get_value('debug_download_path', '')
         last_log_sn = self._get_value('last_log_sn', '')
@@ -237,6 +239,7 @@ class ConfigManager:
             export_path=export_path,
             phone_history=phone_history,
             debug_shortcuts=debug_shortcuts,
+            debug_shortcuts_initialized=debug_shortcuts_initialized,
             last_debug_sn=last_debug_sn,
             debug_download_path=debug_download_path,
             last_log_sn=last_log_sn,
@@ -252,8 +255,9 @@ class ConfigManager:
             self._set_value('export_path', config.export_path)
             phone_history_str = '|'.join(config.phone_history[:5])
             self._set_value('phone_history', phone_history_str)
-            debug_shortcuts_str = '|'.join(config.debug_shortcuts[:50])
+            debug_shortcuts_str = json.dumps(config.debug_shortcuts[:50], ensure_ascii=False)
             self._set_value('debug_shortcuts', debug_shortcuts_str)
+            self._set_value('debug_shortcuts_initialized', '1' if config.debug_shortcuts_initialized else '0')
             self._set_value('last_debug_sn', config.last_debug_sn)
             self._set_value('debug_download_path', config.debug_download_path)
             self._set_value('last_log_sn', config.last_log_sn)
@@ -327,6 +331,22 @@ class ConfigManager:
                 except Exception as e:
                     from query_tool.utils.logger import logger
                     logger.debug(f"关闭注册表键失败: {e}")
+
+    @staticmethod
+    def _decode_string_list(raw_value):
+        """兼容读取 JSON 数组和旧版竖线分隔列表。"""
+        if not raw_value:
+            return []
+        text = str(raw_value).strip()
+        if not text:
+            return []
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, list):
+            return [str(item) for item in payload if str(item).strip()]
+        return [item for item in text.split('|') if item]
         
         return None, None
 

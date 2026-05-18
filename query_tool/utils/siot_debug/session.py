@@ -21,7 +21,7 @@ from query_tool.utils.runtime_credential_cache import (
     save_cached_cloud_credentials,
 )
 
-from .command_catalog import is_getsystemcfg_command, is_syscmd_family_command
+from .command_catalog import is_getsystemcfg_command, is_startlogp2p_command, is_syscmd_family_command, parse_startlogp2p_level
 from .config import (
     CLOUD_ACCESS_URL,
     CLOUD_AUTH_BASIC,
@@ -38,6 +38,11 @@ from .config import (
     resolve_sdk_bin_dir,
 )
 from .models import CloudCredentials, CommandResult, DeviceCredentials, ParsedPayload, ProgressCallback, TransferProgress
+
+
+def _safe_log_text(value) -> str:
+    text = str(value or "")
+    return text.encode("utf-8", errors="backslashreplace").decode("utf-8")
 from .protocol import (
     PAYLOAD_TYPE_JSON,
     build_auth_xml,
@@ -379,6 +384,8 @@ class DeviceSession:
 
         self._active_waiter: Optional[_CommandWaiter] = None
         self._waiter_lock = threading.Lock()
+        self._stream_log_listener: Optional[Callable[[str], None]] = None
+        self._stream_log_enabled = False
 
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._status_callback: Optional[Callable[[str], None]] = None
@@ -470,15 +477,16 @@ class DeviceSession:
         command: str,
         timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
         progress_callback: Optional[ProgressCallback] = None,
+        stream_log_callback: Optional[Callable[[str], None]] = None,
     ) -> CommandResult:
         command = command.strip()
         if not command:
             raise SiotError("empty command")
-        if not (is_syscmd_family_command(command) or is_getsystemcfg_command(command)):
+        if not (is_syscmd_family_command(command) or is_getsystemcfg_command(command) or is_startlogp2p_command(command)):
             return CommandResult(command=command, command_kind="ignored", success=False, display_text="")
 
         self._ensure_ready()
-        return self._execute_p2p_command(command, timeout_ms, progress_callback)
+        return self._execute_p2p_command(command, timeout_ms, progress_callback, stream_log_callback)
 
     def _ensure_ready(self) -> None:
         if self.device is None or self.cloud_credentials is None:
@@ -678,6 +686,7 @@ class DeviceSession:
         command: str,
         timeout_ms: int,
         progress_callback: Optional[ProgressCallback],
+        stream_log_callback: Optional[Callable[[str], None]],
     ) -> CommandResult:
         if not self._peer_conn:
             raise SiotError("peer connection is not ready")
@@ -699,12 +708,15 @@ class DeviceSession:
             expects_file=is_file_command,
             progress_callback=progress_callback,
         )
+        log_level = parse_startlogp2p_level(command)
+        enable_stream_log = is_startlogp2p_command(command) and log_level is not None and log_level != 0
+        disable_stream_log = is_startlogp2p_command(command) and log_level == 0
 
         with self._waiter_lock:
             self._active_waiter = waiter
 
         try:
-            logging.info("Executing device command via P2P: %s", command)
+            logging.info("Executing device command via P2P: %s", _safe_log_text(command))
             ret = self.lib.TPSRTC_SendData(
                 self._peer_conn,
                 ctypes.cast(send_buffer, ctypes.c_void_p),
@@ -729,14 +741,38 @@ class DeviceSession:
                         settle_remaining = settle_deadline - time.monotonic()
                         waiter.event.wait(timeout=min(0.1, max(settle_remaining, 0.0)))
                         waiter.event.clear()
-                    return waiter.build_result()
+                    result = waiter.build_result()
+                    if enable_stream_log:
+                        self._stream_log_listener = stream_log_callback
+                        self._stream_log_enabled = True
+                        result.keep_listening = True
+                    elif disable_stream_log:
+                        self._stream_log_listener = None
+                        self._stream_log_enabled = False
+                    return result
 
                 if is_file_command and waiter.file_finished:
-                    return waiter.build_result()
+                    result = waiter.build_result()
+                    if enable_stream_log:
+                        self._stream_log_listener = stream_log_callback
+                        self._stream_log_enabled = True
+                        result.keep_listening = True
+                    elif disable_stream_log:
+                        self._stream_log_listener = None
+                        self._stream_log_enabled = False
+                    return result
 
                 if is_file_command and waiter.file_started:
                     if time.monotonic() - waiter.last_progress >= FILE_IDLE_SETTLE_S:
-                        return waiter.build_result()
+                        result = waiter.build_result()
+                        if enable_stream_log:
+                            self._stream_log_listener = stream_log_callback
+                            self._stream_log_enabled = True
+                            result.keep_listening = True
+                        elif disable_stream_log:
+                            self._stream_log_listener = None
+                            self._stream_log_enabled = False
+                        return result
 
                 if not is_file_command and waiter.has_ack_only():
                     settle_s = DEFAULT_EMPTY_RESULT_SETTLE_S
@@ -746,9 +782,25 @@ class DeviceSession:
                         return waiter.build_result()
 
                 if lowered == "syscmd start" and waiter.responses:
-                    return waiter.build_result()
+                    result = waiter.build_result()
+                    if enable_stream_log:
+                        self._stream_log_listener = stream_log_callback
+                        self._stream_log_enabled = True
+                        result.keep_listening = True
+                    elif disable_stream_log:
+                        self._stream_log_listener = None
+                        self._stream_log_enabled = False
+                    return result
 
-            return waiter.build_result()
+            result = waiter.build_result()
+            if enable_stream_log:
+                self._stream_log_listener = stream_log_callback
+                self._stream_log_enabled = True
+                result.keep_listening = True
+            elif disable_stream_log:
+                self._stream_log_listener = None
+                self._stream_log_enabled = False
+            return result
         finally:
             with self._waiter_lock:
                 if self._active_waiter is waiter:
@@ -866,6 +918,24 @@ class DeviceSession:
                 waiter = self._active_waiter
             if waiter is not None:
                 waiter.feed(parsed)
+                return
+            self._handle_stream_log_payload(parsed)
+
+    def _handle_stream_log_payload(self, parsed: ParsedPayload) -> None:
+        if not self._stream_log_enabled:
+            return
+        if parsed.message_type != "SYSTEM_LOG_MESSAGE":
+            return
+        text = extract_printable_text(parsed).strip()
+        if not text:
+            return
+        listener = self._stream_log_listener
+        if listener is None:
+            return
+        try:
+            listener(text)
+        except Exception:
+            logging.exception("Stream log callback failed")
 
     def _handle_auth_response(self, parsed: ParsedPayload) -> None:
         if parsed.msg_flag and parsed.msg_flag != "0":
@@ -1105,6 +1175,8 @@ class DeviceSession:
         self._device_online = False
         self._device_is_4g = False
         self._status_callback = None
+        self._stream_log_listener = None
+        self._stream_log_enabled = False
 
     def __enter__(self) -> "DeviceSession":
         return self

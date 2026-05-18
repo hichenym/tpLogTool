@@ -35,7 +35,9 @@ from query_tool.utils.siot_debug import (
     DEFAULT_COMMAND_TIMEOUT_MS,
     SiotDebugWorker,
     is_getsystemcfg_command,
+    is_startlogp2p_command,
     is_syscmd_family_command,
+    parse_startlogp2p_level,
 )
 from query_tool.widgets.custom_widgets import prompt_configure_account, set_dark_title_bar
 
@@ -227,6 +229,9 @@ class DraggableShortcutButton(QPushButton):
 class DebugConsoleEdit(QTextEdit):
     """支持在交互区直接输入并发送命令的控制台文本框。"""
 
+    MAX_ENTRIES = 3000
+    MAX_STREAM_LOG_BLOCKS = 1000
+
     command_submitted = pyqtSignal(str)
     history_prev_requested = pyqtSignal()
     history_next_requested = pyqtSignal()
@@ -308,6 +313,7 @@ class DebugConsoleEdit(QTextEdit):
                     "label": label,
                 }
             )
+        self._trim_entries()
         self._rebuild_document_with_scroll_restore()
 
     def append_command(self, command: str):
@@ -319,6 +325,7 @@ class DebugConsoleEdit(QTextEdit):
                 "kind": "command",
             }
         )
+        self._trim_entries()
         self._rebuild_document_with_scroll_restore()
 
     def commit_command_submission(self, command: str):
@@ -331,6 +338,7 @@ class DebugConsoleEdit(QTextEdit):
                 "kind": "command",
             }
         )
+        self._trim_entries()
         self._input_locked = True
         self._browse_mode = False
         self._rebuild_document_with_scroll_restore()
@@ -349,6 +357,7 @@ class DebugConsoleEdit(QTextEdit):
                 "kind": "command",
             }
         )
+        self._trim_entries()
 
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.End)
@@ -384,6 +393,7 @@ class DebugConsoleEdit(QTextEdit):
                 "progress_id": progress_id,
             }
         )
+        self._trim_entries()
         self._rebuild_document_with_scroll_restore()
         self.scroll_to_prompt()
 
@@ -576,6 +586,63 @@ class DebugConsoleEdit(QTextEdit):
         if current_input:
             cursor.insertText(current_input, input_fmt)
 
+    def _trim_entries(self):
+        overflow = len(self._entries) - self.MAX_ENTRIES
+        if overflow > 0:
+            del self._entries[:overflow]
+
+    def append_stream_log_batch(self, message: str):
+        if not message:
+            return
+        v_scroll = self.verticalScrollBar().value()
+        h_scroll = self.horizontalScrollBar().value()
+        should_follow = self._is_scrolled_to_bottom() and not self._browse_mode
+        current_input = self.current_input() if self._input_enabled else ""
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.End)
+
+        if self._input_enabled:
+            cursor.setPosition(self._input_prompt_start)
+            cursor.movePosition(QTextCursor.End, QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+
+        timestamp_fmt = QTextCharFormat()
+        timestamp_fmt.setForeground(QColor(t("text_hint")))
+        content_fmt = QTextCharFormat()
+        content_fmt.setForeground(QColor(t("text_primary")))
+
+        for line in (message or "").splitlines() or [""]:
+            if self._show_timestamps:
+                cursor.insertText(f"{self._format_timestamp(datetime.now())} ", timestamp_fmt)
+            cursor.insertText(line, content_fmt)
+            cursor.insertBlock()
+
+        self._trim_stream_blocks()
+        self._input_prompt_start = cursor.position()
+        if self._input_enabled:
+            self._render_input_prompt(cursor, current_input)
+        else:
+            self._input_start = self._input_prompt_start
+
+        self.setTextCursor(cursor)
+        if should_follow:
+            self.scroll_to_prompt()
+        else:
+            self.verticalScrollBar().setValue(v_scroll)
+            self.horizontalScrollBar().setValue(h_scroll)
+
+    def _trim_stream_blocks(self):
+        doc = self.document()
+        excess = doc.blockCount() - self.MAX_STREAM_LOG_BLOCKS
+        if excess <= 0:
+            return
+        cursor = QTextCursor(doc)
+        cursor.movePosition(QTextCursor.Start)
+        for _ in range(excess):
+            cursor.select(QTextCursor.BlockUnderCursor)
+            cursor.removeSelectedText()
+            cursor.deleteChar()
+
     def _replace_current_input(self, text: str):
         cursor = self.textCursor()
         cursor.setPosition(self._input_start)
@@ -744,6 +811,12 @@ class DebugPage(BasePage):
 
     MAX_SHORTCUTS = 50
     MAX_HISTORY = 100
+    DEFAULT_SHORTCUT_COMMANDS = [
+        'startlogp2p 31',
+        'startlogp2p 0',
+        'ls /mnt/nand/',
+        'echo "70 27" > /tmp/battery_power',
+    ]
     SHORTCUT_EXPANDED_HEIGHT = 96
     SHORTCUT_CHIP_HEIGHT = 24
     SHORTCUT_MIN_BUTTON_WIDTH = 78
@@ -778,6 +851,17 @@ class DebugPage(BasePage):
         self._timestamp_on_icon = QIcon(":/icons/common/timestamp.png")
         self._timestamp_off_icon = self._create_gray_icon(":/icons/common/timestamp.png")
         self._console_suppress_until = 0.0
+        self._pending_output_entries = []
+        self._pending_stream_log_entries = []
+        self._stream_log_active = False
+        self._pending_stream_log_state = None
+        self._last_command_failed = False
+        self._output_flush_timer = QTimer(self)
+        self._output_flush_timer.setInterval(120)
+        self._output_flush_timer.timeout.connect(self._flush_pending_output)
+        self._stream_log_flush_timer = QTimer(self)
+        self._stream_log_flush_timer.setInterval(180)
+        self._stream_log_flush_timer.timeout.connect(self._flush_pending_stream_logs)
 
         self.init_ui()
         self.init_worker()
@@ -854,10 +938,25 @@ class DebugPage(BasePage):
         connect_frame_layout.addWidget(download_panel, 1)
         connect_layout.addWidget(connect_frame)
 
-        command_group = QGroupBox("交互")
+        command_group = QGroupBox()
         command_layout = QVBoxLayout(command_group)
         command_layout.setContentsMargins(10, 15, 10, 10)
         command_layout.setSpacing(8)
+
+        command_header = QHBoxLayout()
+        command_header.setContentsMargins(0, 0, 0, 0)
+        command_header.setSpacing(8)
+
+        command_title_label = QLabel("交互")
+        command_title_label.setStyleSheet(f"color: {t('text_primary')}; font-weight: 600;")
+
+        command_hint_label = QLabel("（交互卡顿时右键清空一下窗口）")
+        command_hint_label.setStyleSheet(f"color: {t('text_hint')};")
+
+        command_header.addWidget(command_title_label)
+        command_header.addWidget(command_hint_label)
+        command_header.addStretch(1)
+        command_layout.addLayout(command_header)
 
         self.console_edit = DebugConsoleEdit()
         self.console_edit.setStyleSheet(self._get_console_stylesheet())
@@ -943,6 +1042,18 @@ class DebugPage(BasePage):
         self.shortcut_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.shortcut_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.shortcut_scroll.setStyleSheet(StyleManager.get_SCROLL_AREA())
+        self.shortcut_scroll.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.shortcut_scroll.customContextMenuRequested.connect(self.on_shortcut_scroll_context_menu)
+        self.shortcut_scroll.viewport().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.shortcut_scroll.viewport().customContextMenuRequested.connect(self.on_shortcut_scroll_context_menu)
+
+        self.shortcut_hint_label = QLabel(
+            "长按快捷按钮拖动排序，右键按钮编辑/删除，右键空白区恢复默认/清空",
+            self.shortcut_scroll.viewport(),
+        )
+        self.shortcut_hint_label.setObjectName("shortcutHintLabel")
+        self.shortcut_hint_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.shortcut_hint_label.setStyleSheet(self._get_shortcut_hint_stylesheet())
 
         self.shortcut_container = QWidget()
         self.shortcut_flow_layout = FlowLayout(self.shortcut_container, margin=0, h_spacing=4, v_spacing=4)
@@ -951,6 +1062,7 @@ class DebugPage(BasePage):
         self.shortcut_container.customContextMenuRequested.connect(self.on_shortcut_blank_context_menu)
 
         self.shortcut_scroll.setWidget(self.shortcut_container)
+        self.shortcut_hint_label.lower()
         shortcut_layout.addWidget(self.shortcut_scroll)
         command_layout.addWidget(self.shortcut_frame, 0)
 
@@ -975,6 +1087,7 @@ class DebugPage(BasePage):
         self.worker.connect_failed.connect(self.on_connect_failed)
         self.worker.disconnected.connect(self.on_disconnected)
         self.worker.command_output.connect(self.append_output)
+        self.worker.stream_log_output.connect(self.append_stream_log_output)
         self.worker.command_progress.connect(self.on_command_progress)
         self.worker.command_failed.connect(self.on_command_failed)
         self.worker.command_finished.connect(self.on_command_finished)
@@ -990,6 +1103,13 @@ class DebugPage(BasePage):
         self.sn_input.setText((app_config.last_debug_sn or "").strip())
         self.download_root = self._normalize_download_root(app_config.debug_download_path)
         self.update_download_path_label()
+        if not app_config.debug_shortcuts_initialized:
+            if app_config.debug_shortcuts:
+                app_config.debug_shortcuts_initialized = True
+            else:
+                app_config.debug_shortcuts = list(self.DEFAULT_SHORTCUT_COMMANDS)
+                app_config.debug_shortcuts_initialized = True
+            config_manager.save_app_config(app_config)
         self.shortcut_commands = [
             normalized
             for cmd in app_config.debug_shortcuts[:self.MAX_SHORTCUTS]
@@ -1004,6 +1124,7 @@ class DebugPage(BasePage):
         app_config.last_debug_sn = self.sn_input.text().strip()
         app_config.debug_download_path = self.download_root
         app_config.debug_shortcuts = self.shortcut_commands[:self.MAX_SHORTCUTS]
+        app_config.debug_shortcuts_initialized = True
         config_manager.save_app_config(app_config)
 
     def on_sn_input_changed(self, _text):
@@ -1221,6 +1342,12 @@ class DebugPage(BasePage):
         self.save_config()
         self.show_success("快捷方式已清空", 1500)
 
+    def on_restore_default_shortcuts_clicked(self):
+        self.shortcut_commands = list(self.DEFAULT_SHORTCUT_COMMANDS[:self.MAX_SHORTCUTS])
+        self.refresh_shortcut_buttons()
+        self.save_config()
+        self.show_success("已恢复默认快捷方式", 1500)
+
     def on_shortcut_reorder_requested(self, dragged_command, target_command):
         if dragged_command not in self.shortcut_commands or target_command not in self.shortcut_commands:
             return
@@ -1284,13 +1411,29 @@ class DebugPage(BasePage):
         if isinstance(child, QPushButton):
             return
 
+        self._show_shortcut_blank_context_menu(self.shortcut_container.mapToGlobal(pos))
+
+    def on_shortcut_scroll_context_menu(self, pos):
+        viewport = self.shortcut_scroll.viewport()
+        global_pos = viewport.mapToGlobal(pos)
+        container_pos = self.shortcut_container.mapFromGlobal(global_pos)
+        child = self.shortcut_container.childAt(container_pos)
+        if isinstance(child, QPushButton):
+            return
+
+        self._show_shortcut_blank_context_menu(global_pos)
+
+    def _show_shortcut_blank_context_menu(self, global_pos):
         menu = QMenu(self.shortcut_container)
         menu.setStyleSheet(self._get_shortcut_context_menu_stylesheet())
+        restore_action = menu.addAction("恢复默认快捷方式")
         clear_action = menu.addAction("清空快捷方式")
         clear_action.setEnabled(bool(self.shortcut_commands))
-        selected_action = menu.exec_(self.shortcut_container.mapToGlobal(pos))
+        selected_action = menu.exec_(global_pos)
 
-        if selected_action == clear_action:
+        if selected_action == restore_action:
+            self.on_restore_default_shortcuts_clicked()
+        elif selected_action == clear_action:
             self.on_clear_shortcuts_clicked()
 
     def on_history_prev_requested_from_input(self):
@@ -1367,9 +1510,11 @@ class DebugPage(BasePage):
             return
 
         backend_command = self._build_backend_command(command)
+        self._queue_stream_log_state_update(backend_command)
         if record_history:
             self._record_history(command)
         self.last_command_source = source
+        self._last_command_failed = False
         self.command_running = True
         should_freeze_command_bar = source != "console"
         if should_freeze_command_bar:
@@ -1418,6 +1563,8 @@ class DebugPage(BasePage):
         self.connected = False
         self.connecting = False
         self.current_context = {}
+        self._pending_stream_log_state = None
+        self._last_command_failed = False
         self.sn_input.setEnabled(True)
         self.update_connect_button()
         self.console_edit.set_input_enabled(False)
@@ -1434,6 +1581,13 @@ class DebugPage(BasePage):
         self.connecting = False
         self.command_running = False
         self.current_context = {}
+        self._stream_log_active = False
+        self._pending_stream_log_state = None
+        self._last_command_failed = False
+        self._pending_output_entries = []
+        self._pending_stream_log_entries = []
+        self._output_flush_timer.stop()
+        self._stream_log_flush_timer.stop()
         self.sn_input.setEnabled(True)
         self.update_connect_button()
         self.console_edit.set_input_enabled(False)
@@ -1447,6 +1601,7 @@ class DebugPage(BasePage):
         QTimer.singleShot(0, self._start_pending_connect)
 
     def on_command_failed(self, message):
+        self._last_command_failed = True
         self.append_output(message, color=t("status_offline"))
         self.show_error(message)
 
@@ -1457,6 +1612,10 @@ class DebugPage(BasePage):
 
     def on_command_finished(self):
         self.command_running = False
+        if self._pending_stream_log_state is not None and not self._last_command_failed:
+            self._stream_log_active = self._pending_stream_log_state
+        self._pending_stream_log_state = None
+        self._last_command_failed = False
         if self.connected:
             if not self.console_edit._input_enabled:
                 self.console_edit.set_input_enabled(True)
@@ -1469,21 +1628,85 @@ class DebugPage(BasePage):
                 self.update_send_button()
             if self.last_command_source in ("console", "auto"):
                 self.console_edit.setFocus(Qt.OtherFocusReason)
-                self.console_edit.scroll_to_prompt()
+                if not self._stream_log_active:
+                    self.console_edit.scroll_to_prompt()
             else:
                 self.command_input.setFocus(Qt.OtherFocusReason)
 
     def on_console_clear_requested(self):
         self._console_suppress_until = time.monotonic() + 0.2
         self.console_edit.clear_console()
+        self._pending_output_entries = []
+        self._pending_stream_log_entries = []
+        self._output_flush_timer.stop()
+        self._stream_log_flush_timer.stop()
 
     def append_output(self, text, color=None):
         if not text:
             return
         if time.monotonic() < self._console_suppress_until:
             return
-        self.console_edit.append_message(text, color=color)
+        self._pending_output_entries.append((str(text), color))
+        if len(self._pending_output_entries) >= 20:
+            self._flush_pending_output()
+            return
+        if not self._output_flush_timer.isActive():
+            self._output_flush_timer.start()
+
+    def append_stream_log_output(self, text):
+        if not text:
+            return
+        if time.monotonic() < self._console_suppress_until:
+            return
+        self._pending_stream_log_entries.append(str(text))
+        if len(self._pending_stream_log_entries) >= 10:
+            self._flush_pending_stream_logs()
+            return
+        if not self._stream_log_flush_timer.isActive():
+            self._stream_log_flush_timer.start()
+
+    def _flush_pending_output(self):
+        if time.monotonic() < self._console_suppress_until:
+            self._pending_output_entries = []
+            self._output_flush_timer.stop()
+            return
+        if not self._pending_output_entries:
+            self._output_flush_timer.stop()
+            return
+        should_follow = self.console_edit._is_scrolled_to_bottom() and not self.console_edit._browse_mode
+        pending = self._pending_output_entries
+        self._pending_output_entries = []
+        self._output_flush_timer.stop()
+        for text, color in pending:
+            self.console_edit.append_message(text, color=color)
+        if self._stream_log_active:
+            if should_follow:
+                self.console_edit.scroll_to_prompt()
+            return
         self.console_edit.scroll_to_prompt()
+
+    def _flush_pending_stream_logs(self):
+        if time.monotonic() < self._console_suppress_until:
+            self._pending_stream_log_entries = []
+            self._stream_log_flush_timer.stop()
+            return
+        if not self._pending_stream_log_entries:
+            self._stream_log_flush_timer.stop()
+            return
+        pending = self._pending_stream_log_entries
+        self._pending_stream_log_entries = []
+        self._stream_log_flush_timer.stop()
+        self.console_edit.append_stream_log_batch("\n".join(pending))
+
+    def _queue_stream_log_state_update(self, command: str):
+        if not is_startlogp2p_command(command):
+            self._pending_stream_log_state = None
+            return
+        log_level = parse_startlogp2p_level(command)
+        if log_level is None:
+            self._pending_stream_log_state = None
+            return
+        self._pending_stream_log_state = log_level != 0
 
     def _should_suppress_output(self, message):
         message = (message or "").strip()
@@ -1507,7 +1730,7 @@ class DebugPage(BasePage):
         prefix = self.current_command_prefix()
         if not prefix or not command:
             return command
-        if is_syscmd_family_command(command) or is_getsystemcfg_command(command):
+        if is_syscmd_family_command(command) or is_getsystemcfg_command(command) or is_startlogp2p_command(command):
             return command
         if command == prefix or command.startswith(f"{prefix} "):
             return command
@@ -1576,6 +1799,7 @@ class DebugPage(BasePage):
         scroll_bar = self.shortcut_scroll.verticalScrollBar()
         scroll_bar.setPageStep(viewport_height)
         scroll_bar.setRange(0, max(0, content_height - viewport_height))
+        self._update_shortcut_hint_position()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1655,9 +1879,32 @@ class DebugPage(BasePage):
             self.command_type_combo.setStyleSheet(StyleManager.get_COMBOBOX())
         if hasattr(self, "download_path_label"):
             self.download_path_label.setStyleSheet(self._get_download_path_label_stylesheet())
+        if hasattr(self, "shortcut_hint_label"):
+            self.shortcut_hint_label.setStyleSheet(self._get_shortcut_hint_stylesheet())
         if hasattr(self, "shortcut_scroll"):
             self.shortcut_scroll.setStyleSheet(StyleManager.get_SCROLL_AREA())
         self.refresh_shortcut_buttons()
+
+    def _update_shortcut_hint_position(self):
+        if not hasattr(self, "shortcut_hint_label") or not hasattr(self, "shortcut_scroll"):
+            return
+        label_size = self.shortcut_hint_label.sizeHint()
+        self.shortcut_hint_label.setGeometry(2, 2, label_size.width(), label_size.height())
+
+    @staticmethod
+    def _get_shortcut_hint_stylesheet():
+        return f"""
+        QLabel#shortcutHintLabel {{
+            color: {t('text_hint')};
+            background: transparent;
+            border: none;
+            padding: 0px;
+            margin: 0px;
+        }}
+        QLabel#shortcutHintLabel:hover {{
+            border: none;
+        }}
+        """
 
     @staticmethod
     def _default_download_root() -> str:

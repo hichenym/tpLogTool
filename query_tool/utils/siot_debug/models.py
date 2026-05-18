@@ -59,6 +59,7 @@ class CommandResult:
     streamed_packets: int = 0
     content_suppressed: bool = False
     responses: List[ParsedPayload] = field(default_factory=list)
+    keep_listening: bool = False
 
 
 ProgressCallback = Callable[[TransferProgress], None]

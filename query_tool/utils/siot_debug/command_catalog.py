@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,22 @@ def is_syscmd_family_command(command: str) -> bool:
 
 def is_getsystemcfg_command(command: str) -> bool:
     return get_command_keyword(command) == "GetSystemCfg"
+
+
+def is_startlogp2p_command(command: str) -> bool:
+    return get_command_keyword(command) == "startlogp2p"
+
+
+def parse_startlogp2p_level(command: str) -> Optional[int]:
+    if not is_startlogp2p_command(command):
+        return None
+    parts = command.strip().split(None, 1)
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[1].strip(), 10)
+    except ValueError:
+        return None
 
 
 def build_catalog_text() -> str:

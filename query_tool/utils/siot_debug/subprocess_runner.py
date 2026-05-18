@@ -5,15 +5,90 @@ import logging
 import re
 import shlex
 import sys
+import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
-from .command_catalog import is_getsystemcfg_command, is_syscmd_family_command, is_syscmdex_command
+from .command_catalog import is_getsystemcfg_command, is_startlogp2p_command, is_syscmd_family_command, is_syscmdex_command, parse_startlogp2p_level
 from .config import APP_LOG_DIR, DEFAULT_COMMAND_TIMEOUT_MS, RUN_LOG_PATH
 from .models import CommandResult, DeviceCredentials, TransferProgress
 from .session import DeviceSession
 
 CONNECT_WAKEUP_ATTEMPTS = 1
+STREAM_LOG_FLUSH_INTERVAL_S = 0.2
+STREAM_LOG_MAX_BATCH = 50
+class _StreamLogEmitter:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._buffer = []
+        self._last_flush_at = 0.0
+        self._file_path = None
+        self._file_handle = None
+
+    def start(self, device_sn: str, download_root: str):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_sn = (device_sn or "unknown").strip() or "unknown"
+        root = Path(download_root).expanduser() if (download_root or "").strip() else APP_LOG_DIR
+        stream_log_dir = root / safe_sn
+        stream_log_dir.mkdir(parents=True, exist_ok=True)
+        self.stop(flush=False)
+        self._file_path = stream_log_dir / f"{safe_sn}_serial_{timestamp}.log"
+        self._file_handle = self._file_path.open("a", encoding="utf-8", buffering=1)
+        self._last_flush_at = 0.0
+        return str(self._file_path)
+
+    def emit(self, message: str):
+        text = str(message or "").strip()
+        if not text:
+            return
+        payload = None
+        now = time.monotonic()
+        self._write_lines(text)
+        with self._lock:
+            self._buffer.append(text)
+            if len(self._buffer) >= STREAM_LOG_MAX_BATCH or (now - self._last_flush_at) >= STREAM_LOG_FLUSH_INTERVAL_S:
+                payload = "\n".join(self._buffer)
+                self._buffer.clear()
+                self._last_flush_at = now
+        if payload:
+            _emit("output", message=payload, stream_log=True)
+
+    def flush(self):
+        payload = None
+        with self._lock:
+            if self._buffer:
+                payload = "\n".join(self._buffer)
+                self._buffer.clear()
+                self._last_flush_at = time.monotonic()
+        if payload:
+            _emit("output", message=payload, stream_log=True)
+
+    def stop(self, flush: bool = True):
+        if flush:
+            self.flush()
+        file_path = self._file_path
+        handle = self._file_handle
+        self._file_handle = None
+        self._file_path = None
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception:
+                pass
+        return str(file_path) if file_path else ""
+
+    def _write_lines(self, text: str):
+        handle = self._file_handle
+        if handle is None:
+            return
+        try:
+            handle.write(text + "\n")
+        except Exception:
+            logging.exception("Write stream log file failed")
+
+
+_STREAM_LOG_EMITTER = _StreamLogEmitter()
 
 
 def _configure_runtime_logging():
@@ -209,12 +284,23 @@ def _handle_command(session: DeviceSession, payload: dict):
         _emit("command_finished")
         return
 
-    if not (is_syscmd_family_command(command) or is_getsystemcfg_command(command)):
-        _emit("command_failed", message="当前仅支持 syscmd / syscmdEx / GetSystemCfg 命令。")
+    if not (is_syscmd_family_command(command) or is_getsystemcfg_command(command) or is_startlogp2p_command(command)):
+        _emit("command_failed", message="当前仅支持 syscmd / syscmdEx / GetSystemCfg / startlogp2p 命令。")
         _emit("command_finished")
         return
 
     try:
+        stream_log_level = parse_startlogp2p_level(command)
+        stream_log_path = ""
+        if is_startlogp2p_command(command) and stream_log_level and stream_log_level != 0:
+            stream_log_path = _STREAM_LOG_EMITTER.start(
+                session.device.sn if session.device else "unknown",
+                download_root,
+            )
+            if stream_log_path:
+                _emit("output", message=f"已开启 P2P 实时日志监听，开始写入: {stream_log_path}")
+            else:
+                _emit("output", message="已开启 P2P 实时日志监听")
         total_bytes = _try_probe_file_size(session, command) if is_getsystemcfg_command(command) else 0
         progress_emitter = _ProgressEmitter(
             progress_id=f"{command}:{time.monotonic_ns()}",
@@ -224,7 +310,10 @@ def _handle_command(session: DeviceSession, payload: dict):
             command,
             timeout_ms=timeout_ms,
             progress_callback=progress_emitter.emit,
+            stream_log_callback=_STREAM_LOG_EMITTER.emit,
         )
+        if not is_startlogp2p_command(command) or stream_log_level == 0:
+            _STREAM_LOG_EMITTER.flush()
         if _is_missing_file_result(command, result):
             _emit("command_failed", message=_format_missing_file_message(command, result))
             return
@@ -240,9 +329,22 @@ def _handle_command(session: DeviceSession, payload: dict):
         message = _format_command_result(command, result)
         if message:
             _emit("output", message=message)
+        if is_startlogp2p_command(command):
+            if stream_log_level is None:
+                _emit("command_failed", message="startlogp2p 参数无效，支持 0 / 8 / 12 / 16 / 24 / 31。")
+                return
+            if stream_log_level == 0:
+                saved_log_path = _STREAM_LOG_EMITTER.stop(flush=True)
+                if saved_log_path:
+                    _emit("output", message=f"已关闭 P2P 实时日志监听，保存成功：{saved_log_path}")
+                else:
+                    _emit("output", message="已关闭 P2P 实时日志监听")
     except Exception as exc:
+        _STREAM_LOG_EMITTER.flush()
         _emit("command_failed", message=str(exc))
     finally:
+        if not is_startlogp2p_command(command) or stream_log_level == 0:
+            _STREAM_LOG_EMITTER.flush()
         _emit("command_finished")
 
 
@@ -327,6 +429,7 @@ def main():
     finally:
         if session is not None:
             try:
+                _STREAM_LOG_EMITTER.stop(flush=True)
                 session.close()
             except Exception:
                 pass

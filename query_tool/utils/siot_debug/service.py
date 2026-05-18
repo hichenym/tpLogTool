@@ -118,6 +118,7 @@ class SiotDebugWorker(QObject):
     disconnected = pyqtSignal(str)
     connect_failed = pyqtSignal(str)
     command_output = pyqtSignal(str)
+    stream_log_output = pyqtSignal(str)
     command_progress = pyqtSignal(str, str)
     command_failed = pyqtSignal(str)
     command_finished = pyqtSignal()
@@ -339,7 +340,10 @@ class SiotDebugWorker(QObject):
             return
 
         if event == "output":
-            self.command_output.emit(message)
+            if payload.get("stream_log"):
+                self.stream_log_output.emit(message)
+            else:
+                self.command_output.emit(message)
             return
 
         if event == "progress":

@@ -78,17 +78,16 @@ def unpack_message(data: bytes, *, method: int, key: bytes, crypt_lib) -> Option
 
 
 def build_system_log_xml(command: str, channel: int = 0) -> bytes:
-    escaped_command = escape(command)
     xml = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<?xml version="1.0" encoding="GB2312" ?>\n'
         "<XML_TOPSEE>\n"
-        f'  <MESSAGE_HEADER Msg_type="SYSTEM_LOG_MESSAGE" Msg_code="1" Msg_flag="0" Msg_chn="{channel}"/>\n'
+        '  <MESSAGE_HEADER Msg_type="SYSTEM_LOG_MESSAGE" Msg_code="1" Msg_flag="0"/>\n'
         "  <MESSAGE_BODY>\n"
-        f"    <cmd>{escaped_command}</cmd>\n"
+        f"    <cmd>{command}</cmd>\n"
         "  </MESSAGE_BODY>\n"
         "</XML_TOPSEE>"
     )
-    return xml.encode("utf-8")
+    return xml.encode("gb2312", errors="ignore")
 
 
 def build_auth_xml(password: str, sn: str, username: str, crypt_lib) -> bytes:
