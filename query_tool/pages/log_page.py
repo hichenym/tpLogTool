@@ -20,6 +20,7 @@ from PyQt5.QtGui import QDesktopServices, QIcon, QTextDocument
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -33,6 +34,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from .base_page import BasePage
@@ -910,8 +912,8 @@ class LogPage(BasePage):
 
     MAX_WORKERS = 20
     RESULT_ROW_HEIGHT = 34
-    RESULT_HEADERS = ("SN", "状态", "概览")
-    RESULT_MIN_WIDTHS = {0: 170, 1: 110, 2: 220}
+    RESULT_HEADERS = ("选择", "SN", "状态", "概览")
+    RESULT_MIN_WIDTHS = {0: 56, 1: 170, 2: 110, 3: 220}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -925,6 +927,8 @@ class LogPage(BasePage):
         self._commands_updating = False
         self.command_editing = False
         self._resizing_columns = False
+        self._result_checkbox_updating = False
+        self._current_run_mode = "execute"
         self.init_ui()
         self.load_config()
 
@@ -1031,24 +1035,18 @@ class LogPage(BasePage):
         self.result_group = QGroupBox("执行结果")
         self.result_group.setStyleSheet(StyleManager.get_GROUP_BOX())
         result_layout = QVBoxLayout(self.result_group)
-        result_layout.setContentsMargins(10, 15, 10, 10)
-        result_layout.setSpacing(3)
-
-        summary_row = QHBoxLayout()
-        summary_row.setContentsMargins(0, 0, 0, 0)
-        summary_row.setSpacing(10)
+        result_layout.setContentsMargins(10, 4, 10, 10)
+        result_layout.setSpacing(0)
 
         self.summary_label = QLabel("等待开始")
         self.summary_label.setContentsMargins(0, 0, 0, 0)
         self.summary_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
-        summary_row.addWidget(self.summary_label, 7)
+        self.summary_label.setVisible(False)
 
         self.detail_header_label = QLabel("设备执行详情")
         self.detail_header_label.setContentsMargins(0, 0, 0, 0)
         self.detail_header_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
-        summary_row.addWidget(self.detail_header_label, 4)
-
-        result_layout.addLayout(summary_row)
+        self.detail_header_label.setVisible(False)
 
         self.result_table = QTableWidget(0, len(self.RESULT_HEADERS))
         self.result_table.setHorizontalHeaderLabels(list(self.RESULT_HEADERS))
@@ -1060,9 +1058,10 @@ class LogPage(BasePage):
         self.result_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.result_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.result_table.setWordWrap(False)
-        self.result_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
+        self.result_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.result_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
         self.result_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Interactive)
+        self.result_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
         self.result_table.horizontalHeader().setStretchLastSection(False)
         self.result_table.horizontalHeader().sectionResized.connect(self.on_result_section_resized)
         self.result_table.itemDoubleClicked.connect(self.on_result_item_double_clicked)
@@ -1078,8 +1077,45 @@ class LogPage(BasePage):
         table_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
         table_layout = QVBoxLayout(table_panel)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        table_layout.setSpacing(0)
+        table_layout.setSpacing(6)
+
+        table_action_row = QHBoxLayout()
+        table_action_row.setContentsMargins(0, 0, 0, 0)
+        table_action_row.setSpacing(8)
+        self.result_select_all_checkbox = QCheckBox("全选")
+        self.result_select_all_checkbox.setTristate(False)
+        self.result_select_all_checkbox.setEnabled(False)
+        self.result_select_all_checkbox.stateChanged.connect(self.on_result_select_all_changed)
+        table_action_row.addWidget(self.result_select_all_checkbox)
+
+        self.result_selection_label = QLabel("未选择设备")
+        self.result_selection_label.setStyleSheet(f"color: {t('text_secondary')}; border: none;")
+        table_action_row.addWidget(self.result_selection_label)
+        table_action_row.addStretch()
+
+        self.retry_btn = QPushButton("重试")
+        self.retry_btn.setIcon(QIcon(":/icons/common/run.png"))
+        self.retry_btn.setIconSize(QSize(16, 16))
+        self.retry_btn.setFixedSize(72, 28)
+        self.retry_btn.setToolTip("重试勾选的失败设备")
+        self.retry_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+        self.retry_btn.setEnabled(False)
+        self.retry_btn.clicked.connect(self.on_retry_clicked)
+        table_action_row.addWidget(self.retry_btn)
+
+        table_layout.addLayout(table_action_row)
         table_layout.addWidget(self.result_table, 1)
+
+        self.result_corner_checkbox = QCheckBox()
+        self.result_corner_checkbox.setTristate(False)
+        self.result_corner_checkbox.setToolTip("全选/取消全选")
+        self.result_corner_checkbox.setEnabled(False)
+        self.result_corner_checkbox.stateChanged.connect(self.on_corner_select_all_changed)
+        corner_widget = QWidget()
+        corner_layout = QHBoxLayout(corner_widget)
+        corner_layout.setContentsMargins(0, 0, 0, 0)
+        corner_layout.addWidget(self.result_corner_checkbox, 0, Qt.AlignCenter)
+        self.result_table.setCornerWidget(corner_widget)
 
         detail_panel = QFrame()
         detail_panel.setFrameShape(QFrame.NoFrame)
@@ -1121,7 +1157,7 @@ class LogPage(BasePage):
     def on_page_show(self):
         self.show_info("命令页面")
         QTimer.singleShot(0, self._apply_result_column_widths)
-        self._update_detail_view()
+        self._restore_current_detail_view()
 
     def on_command_edit_button_clicked(self):
         if self.command_editing:
@@ -1159,19 +1195,29 @@ class LogPage(BasePage):
             return
 
         sn_list = self._parse_sn_input(self.sn_input.toPlainText())
-        if not sn_list:
-            self.show_warning("请输入至少一个设备SN")
+        self._start_execution(sn_list, reset_table=True, run_mode="execute")
+
+    def on_retry_clicked(self):
+        if self.fetch_running:
             return
 
+        selected_sns = self._get_selected_retryable_sns()
+        if not selected_sns:
+            self.show_warning("请先勾选至少一台失败设备后再重试")
+            return
+
+        self._start_execution(selected_sns, reset_table=False, run_mode="retry")
+
+    def _collect_execution_context(self):
         commands = self.get_command_list()
         if not commands:
             self.show_warning("请至少配置一条拉日志命令")
-            return
+            return None
 
         env, device_username, device_password = get_account_config()
         if not device_username or not device_password:
             self.show_warning("请先在设置中配置运维账号")
-            return
+            return None
 
         seetong_username, seetong_password = get_seetong_account_config()
         seetong_username = (seetong_username or "").strip()
@@ -1183,23 +1229,48 @@ class LogPage(BasePage):
                 "检测到Seetong账号未配置，是否现在配置？",
                 initial_tab=0,
             )
+            return None
+
+        return {
+            "commands": commands,
+            "env": env,
+            "device_username": device_username,
+            "device_password": device_password,
+            "seetong_username": seetong_username,
+            "seetong_password": seetong_password,
+        }
+
+    def _start_execution(self, sn_list, *, reset_table: bool, run_mode: str):
+        sn_list = [sn for sn in sn_list if sn]
+        if not sn_list:
+            self.show_warning("请输入至少一个设备SN")
+            return
+
+        context = self._collect_execution_context()
+        if not context:
             return
 
         self.save_config()
-        self._prepare_result_table(sn_list)
+        self._current_run_mode = run_mode
+        if reset_table:
+            self._prepare_result_table(sn_list)
+        else:
+            self._prepare_retry_rows(sn_list)
+
         self._set_running_state(True)
-        self.summary_label.setText(f"正在批量拉取日志，共 {len(sn_list)} 台设备，线程数 {self.MAX_WORKERS}")
+        action_text = "正在重试失败设备" if run_mode == "retry" else "正在批量拉取日志"
+        self.summary_label.setText(f"{action_text}，共 {len(sn_list)} 台设备，线程数 {self.MAX_WORKERS}")
         self.show_progress(self.summary_label.text())
 
         self.worker_thread = BatchLogFetchThread(
             sn_list=sn_list,
-            commands=commands,
+            commands=context["commands"],
             download_root=self.download_root,
-            env=env,
-            device_username=device_username,
-            device_password=device_password,
-            seetong_username=seetong_username,
-            seetong_password=seetong_password,
+            env=context["env"],
+            device_username=context["device_username"],
+            device_password=context["device_password"],
+            seetong_username=context["seetong_username"],
+            seetong_password=context["seetong_password"],
             max_workers=self.MAX_WORKERS,
         )
         self.worker_thread.device_updated.connect(self.on_device_updated)
@@ -1237,13 +1308,13 @@ class LogPage(BasePage):
         self.result_table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
         values = [sn, status_text, overview_text]
 
-        for column, value in enumerate(values):
+        for column, value in enumerate(values, start=1):
             item = self.result_table.item(row, column)
             if item is None:
                 item = QTableWidgetItem()
                 self.result_table.setItem(row, column, item)
             item.setText(value)
-            item.setToolTip(value if column < 2 else (overview_text if not file_text else f"{overview_text}\n{file_text}"))
+            item.setToolTip(value if column < 3 else (overview_text if not file_text else f"{overview_text}\n{file_text}"))
             item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             self._apply_item_color(item, column, value)
 
@@ -1267,14 +1338,15 @@ class LogPage(BasePage):
         if row < 0:
             self._update_detail_view()
             return
-        sn_item = self.result_table.item(row, 0)
+        sn_item = self.result_table.item(row, 1)
         sn = sn_item.text().strip() if sn_item is not None else ""
         self._update_detail_view(sn)
 
     def on_summary_ready(self, summary: dict):
         if summary.get("cancelled"):
+            prefix = "重试已取消" if self._current_run_mode == "retry" else "执行已取消"
             message = (
-                f"执行已取消：共 {summary.get('total', 0)} 台，"
+                f"{prefix}：共 {summary.get('total', 0)} 台，"
                 f"已完成 {int(summary.get('success_devices', 0)) + int(summary.get('partial_devices', 0))} 台，"
                 f"下载文件 {summary.get('total_files', 0)} 个，"
                 f"耗时 {self._format_duration(summary.get('duration_seconds', 0.0))}"
@@ -1284,8 +1356,9 @@ class LogPage(BasePage):
             return
         completed_devices = int(summary.get("success_devices", 0)) + int(summary.get("partial_devices", 0))
         failed_devices = int(summary.get("total", 0)) - completed_devices
+        prefix = "重试完成" if self._current_run_mode == "retry" else "执行完成"
         message = (
-            f"执行完成：共 {summary.get('total', 0)} 台，"
+            f"{prefix}：共 {summary.get('total', 0)} 台，"
             f"完成 {completed_devices} 台，"
             f"失败 {failed_devices} 台，"
             f"下载文件 {summary.get('total_files', 0)} 个，"
@@ -1305,6 +1378,7 @@ class LogPage(BasePage):
             self.worker_thread.deleteLater()
             self.worker_thread = None
         self._apply_result_column_widths()
+        self._update_result_selection_state()
 
     def choose_download_directory(self):
         selected_dir = QFileDialog.getExistingDirectory(
@@ -1343,12 +1417,13 @@ class LogPage(BasePage):
             self.result_table.insertRow(row)
             self._row_map[sn] = row
             self.result_table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
+            self.result_table.setCellWidget(row, 0, self._create_result_checkbox_widget())
             initial_values = [sn, "等待执行", ""]
-            for column, value in enumerate(initial_values):
+            for column, value in enumerate(initial_values, start=1):
                 item = QTableWidgetItem(value)
                 item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 self._apply_item_color(item, column, value)
-                if column == 2:
+                if column == 3:
                     item.setData(RICH_TEXT_ROLE, [])
                 self.result_table.setItem(row, column, item)
             self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
@@ -1358,6 +1433,46 @@ class LogPage(BasePage):
         else:
             self._update_detail_view()
         self._apply_result_column_widths()
+        self._update_result_selection_state()
+
+    def _prepare_retry_rows(self, sn_list):
+        total_commands = len(self.get_command_list())
+        for sn in sn_list:
+            row = self._row_map.get(sn)
+            if row is None:
+                continue
+            self._device_payloads[sn] = {
+                "sn": sn,
+                "status": "等待执行",
+                "files": [],
+                "detail": "",
+                "success_count": 0,
+                "failed_count": 0,
+                "downloaded_file_count": 0,
+                "total_commands": total_commands,
+                "current_command_index": 0,
+                "current_command": "",
+            }
+            for column, value in ((1, sn), (2, "等待执行"), (3, "")):
+                item = self.result_table.item(row, column)
+                if item is None:
+                    item = QTableWidgetItem()
+                    self.result_table.setItem(row, column, item)
+                item.setText(value)
+                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                item.setToolTip(value)
+                if column == 3:
+                    item.setData(RICH_TEXT_ROLE, [])
+                self._apply_item_color(item, column, value)
+            self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
+
+        if sn_list:
+            first_sn = sn_list[0]
+            row = self._row_map.get(first_sn, -1)
+            if row >= 0:
+                self.result_table.selectRow(row)
+            self._update_detail_view(first_sn)
+        self._update_result_selection_state()
 
     def _set_running_state(self, running: bool):
         self.fetch_btn.setEnabled(True)
@@ -1365,6 +1480,10 @@ class LogPage(BasePage):
         self.command_edit_btn.setEnabled(not running)
         self.command_input.setEnabled(not running)
         self.sn_input.setEnabled(not running)
+        self._set_result_checkboxes_enabled(not running)
+        self.result_select_all_checkbox.setEnabled(not running and self.result_table.rowCount() > 0)
+        self.result_corner_checkbox.setEnabled(not running and self.result_table.rowCount() > 0)
+        self.retry_btn.setEnabled((not running) and self._has_selected_retryable_rows())
         self._update_fetch_button_state()
         if running:
             self.command_input.setReadOnly(True)
@@ -1429,7 +1548,7 @@ class LogPage(BasePage):
 
             remaining = viewport_width - sum(widths)
             if remaining > 0:
-                widths[2] += remaining
+                widths[-1] += remaining
 
             for index, width in enumerate(widths):
                 self.result_table.setColumnWidth(index, width)
@@ -1457,6 +1576,8 @@ class LogPage(BasePage):
             self.choose_download_path_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         if hasattr(self, "fetch_btn"):
             self.fetch_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+        if hasattr(self, "retry_btn"):
+            self.retry_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         if hasattr(self, "download_path_label"):
             self.download_path_label.setStyleSheet(self._get_download_path_label_stylesheet())
         if hasattr(self, "detail_header_label"):
@@ -1474,10 +1595,27 @@ class LogPage(BasePage):
             self.result_table.viewport().update()
         current_row = self.result_table.currentRow() if hasattr(self, "result_table") else -1
         if current_row >= 0:
-            sn_item = self.result_table.item(current_row, 0)
+            sn_item = self.result_table.item(current_row, 1)
             self._update_detail_view(sn_item.text().strip() if sn_item is not None else "")
         else:
             self._update_detail_view()
+
+    def _restore_current_detail_view(self):
+        if not hasattr(self, "result_table"):
+            return
+
+        current_row = self.result_table.currentRow()
+        if current_row < 0 and self.result_table.rowCount() > 0:
+            current_row = 0
+            self.result_table.selectRow(current_row)
+
+        if current_row < 0:
+            self._update_detail_view()
+            return
+
+        sn_item = self.result_table.item(current_row, 1)
+        sn = sn_item.text().strip() if sn_item is not None else ""
+        self._update_detail_view(sn)
 
     @staticmethod
     def _parse_sn_input(text: str):
@@ -1571,13 +1709,16 @@ class LogPage(BasePage):
             return
 
         total_ratio = 3 + 2 + 4
-        unit = max(1, viewport_width // total_ratio)
-        sn_width = max(self.RESULT_MIN_WIDTHS[0], unit * 3)
-        status_width = max(self.RESULT_MIN_WIDTHS[1], unit * 2)
-        overview_width = max(self.RESULT_MIN_WIDTHS[2], viewport_width - sn_width - status_width)
-        self.result_table.setColumnWidth(0, sn_width)
-        self.result_table.setColumnWidth(1, status_width)
-        self.result_table.setColumnWidth(2, overview_width)
+        selector_width = self.RESULT_MIN_WIDTHS[0]
+        remaining_width = max(0, viewport_width - selector_width)
+        unit = max(1, remaining_width // total_ratio)
+        sn_width = max(self.RESULT_MIN_WIDTHS[1], unit * 3)
+        status_width = max(self.RESULT_MIN_WIDTHS[2], unit * 2)
+        overview_width = max(self.RESULT_MIN_WIDTHS[3], viewport_width - selector_width - sn_width - status_width)
+        self.result_table.setColumnWidth(0, selector_width)
+        self.result_table.setColumnWidth(1, sn_width)
+        self.result_table.setColumnWidth(2, status_width)
+        self.result_table.setColumnWidth(3, overview_width)
         for row in range(self.result_table.rowCount()):
             self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
 
@@ -1635,8 +1776,6 @@ class LogPage(BasePage):
         self.detail_view.setHtml(
             f"""
             <div style="color: {t('text_primary')};">
-                <div><b>设备执行详情</b></div>
-                <br/>
                 <div><b>SN:</b> {html.escape(str(payload.get('sn') or ''))}</div>
                 <div><b>状态:</b> <span style="color: {self._status_color(str(payload.get('status') or ''))};">
                     {html.escape(str(payload.get('status') or ''))}
@@ -1736,10 +1875,112 @@ class LogPage(BasePage):
         return t("text_primary")
 
     def _apply_item_color(self, item: QTableWidgetItem, column: int, value: str):
-        if column == 1:
+        if column == 2:
             item.setForeground(self._create_brush(self._status_color(value)))
             return
         item.setForeground(self._create_brush(t("text_primary")))
+
+    def _create_result_checkbox_widget(self):
+        checkbox = QCheckBox()
+        checkbox.stateChanged.connect(self.on_result_checkbox_state_changed)
+        widget = QWidget()
+        widget.setStyleSheet("background-color: transparent;")
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(checkbox, 0, Qt.AlignCenter)
+        return widget
+
+    def _iter_result_checkboxes(self):
+        for row in range(self.result_table.rowCount()):
+            widget = self.result_table.cellWidget(row, 0)
+            if widget is None:
+                continue
+            checkbox = widget.findChild(QCheckBox)
+            if checkbox is not None:
+                yield row, checkbox
+
+    def _set_result_checkboxes_enabled(self, enabled: bool):
+        for _, checkbox in self._iter_result_checkboxes():
+            checkbox.setEnabled(bool(enabled))
+
+    def on_result_select_all_changed(self, state):
+        if self._result_checkbox_updating:
+            return
+        self._set_all_result_checkboxes(state == Qt.Checked)
+
+    def on_corner_select_all_changed(self, state):
+        if self._result_checkbox_updating:
+            return
+        self._set_all_result_checkboxes(state == Qt.Checked)
+
+    def on_result_checkbox_state_changed(self):
+        if self._result_checkbox_updating:
+            return
+        self._update_result_selection_state()
+
+    def _set_all_result_checkboxes(self, checked: bool):
+        self._result_checkbox_updating = True
+        try:
+            for _, checkbox in self._iter_result_checkboxes():
+                checkbox.setChecked(bool(checked))
+        finally:
+            self._result_checkbox_updating = False
+        self._update_result_selection_state()
+
+    def _selected_result_rows(self):
+        rows = []
+        for row, checkbox in self._iter_result_checkboxes():
+            if checkbox.isChecked():
+                rows.append(row)
+        return rows
+
+    def _is_retryable_status(self, status: str) -> bool:
+        status = (status or "").strip()
+        if not status:
+            return False
+        if status.startswith("执行中") or status in ("等待执行", "查询设备密码中", "连接设备中", "正在注销", "已取消"):
+            return False
+        return status not in ("完成", "部分完成")
+
+    def _get_selected_retryable_sns(self):
+        sn_list = []
+        for row in self._selected_result_rows():
+            status_item = self.result_table.item(row, 2)
+            sn_item = self.result_table.item(row, 1)
+            status_text = status_item.text().strip() if status_item is not None else ""
+            sn = sn_item.text().strip() if sn_item is not None else ""
+            if sn and self._is_retryable_status(status_text):
+                sn_list.append(sn)
+        return sn_list
+
+    def _has_selected_retryable_rows(self) -> bool:
+        return bool(self._get_selected_retryable_sns())
+
+    def _update_result_selection_state(self):
+        total = self.result_table.rowCount()
+        selected_rows = self._selected_result_rows()
+        selected_count = len(selected_rows)
+        retryable_count = len(self._get_selected_retryable_sns())
+
+        self._result_checkbox_updating = True
+        try:
+            enabled = (not self.fetch_running) and total > 0
+            self.result_select_all_checkbox.setEnabled(enabled)
+            self.result_corner_checkbox.setEnabled(enabled)
+            all_selected = total > 0 and selected_count == total
+            self.result_select_all_checkbox.setChecked(all_selected)
+            self.result_corner_checkbox.setChecked(all_selected)
+        finally:
+            self._result_checkbox_updating = False
+
+        if total <= 0:
+            self.result_selection_label.setText("未选择设备")
+        elif selected_count <= 0:
+            self.result_selection_label.setText(f"已选 0 / {total}")
+        else:
+            self.result_selection_label.setText(f"已选 {selected_count} / {total}，可重试 {retryable_count} 台")
+
+        self.retry_btn.setEnabled((not self.fetch_running) and retryable_count > 0)
 
     def _build_file_segments(self, lines):
         return [

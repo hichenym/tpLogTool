@@ -6,6 +6,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 APP_ENTRY = PROJECT_ROOT / "run.py"
+HELPER_ENTRY = PROJECT_ROOT / "siot_helper.py"
+HELPER_EXE_NAME = "TPQueryToolHelper.exe"
 
 
 def _is_compiled_app() -> bool:
@@ -37,8 +39,47 @@ def _get_current_program() -> str:
     return sys.executable
 
 
+def _iter_helper_executable_candidates():
+    seen = set()
+    for base in (sys.executable, sys.argv[0] if sys.argv else "", _get_current_program()):
+        if not base:
+            continue
+        try:
+            base_dir = Path(base).resolve().parent
+        except Exception:
+            continue
+        for candidate in (
+            base_dir / HELPER_EXE_NAME,
+            base_dir / f"{Path(HELPER_EXE_NAME).stem}.dist" / HELPER_EXE_NAME,
+            base_dir / "helper" / HELPER_EXE_NAME,
+            base_dir.parent / f"{Path(HELPER_EXE_NAME).stem}.dist" / HELPER_EXE_NAME,
+        ):
+            key = str(candidate).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            yield candidate
+
+
+def _resolve_helper_program() -> str | None:
+    if _is_compiled_app():
+        for candidate in _iter_helper_executable_candidates():
+            if candidate.exists():
+                return str(candidate.resolve())
+        return None
+
+    if HELPER_ENTRY.exists():
+        return str(HELPER_ENTRY)
+    return None
+
+
 def build_internal_command(*args: str) -> list[str]:
     """Build a child-process command that works in dev and packaged builds."""
+    helper_program = _resolve_helper_program()
     if _is_compiled_app():
+        if helper_program:
+            return [helper_program, *args]
         return [_get_current_program(), *args]
+    if helper_program:
+        return [sys.executable, helper_program, *args]
     return [sys.executable, str(APP_ENTRY), *args]

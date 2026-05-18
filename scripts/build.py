@@ -27,6 +27,7 @@ sys.path.insert(0, PROJECT_ROOT)
 RELEASE_OUTPUT_DIR = "dist"
 FAST_OUTPUT_DIR = os.path.join("dist", "fast")
 APP_NAME = "TPQueryTool"
+HELPER_NAME = "TPQueryToolHelper"
 
 
 def configure_stdio():
@@ -57,13 +58,22 @@ def update_build_date():
 
 def clean_build(output_dir=RELEASE_OUTPUT_DIR):
     """清理旧的构建产物"""
+    helper_entry = os.path.splitext(os.path.basename("siot_helper.py"))[0]
     dirs_to_clean = [
         "run.build",
         "run.dist",
         "run.onefile-build",
+        f"{helper_entry}.build",
+        f"{helper_entry}.dist",
+        f"{HELPER_NAME}.build",
+        f"{HELPER_NAME}.dist",
         os.path.join(output_dir, "run.build"),
         os.path.join(output_dir, "run.dist"),
         os.path.join(output_dir, "run.onefile-build"),
+        os.path.join(output_dir, f"{helper_entry}.build"),
+        os.path.join(output_dir, f"{helper_entry}.dist"),
+        os.path.join(output_dir, f"{HELPER_NAME}.build"),
+        os.path.join(output_dir, f"{HELPER_NAME}.dist"),
     ]
     for relative_path in dirs_to_clean:
         path = os.path.join(PROJECT_ROOT, relative_path)
@@ -221,6 +231,62 @@ def build_nuitka(debug=False, fast=False):
         return False
 
 
+def build_helper_nuitka(output_dir=RELEASE_OUTPUT_DIR):
+    """构建独立 SIOT helper，优先供主程序内部命令复用。"""
+    print("\n开始构建 SIOT helper...")
+
+    sdk_dll_args = get_sdk_dll_include_args()
+    cmd = [
+        sys.executable, "-m", "nuitka",
+
+        # === 输出配置 ===
+        "--standalone",
+        f"--output-dir={output_dir}",
+        f"--output-filename={HELPER_NAME}.exe",
+
+        # === Windows 配置 ===
+        "--windows-company-name=TPQueryTool",
+        "--windows-product-name=TPQueryToolHelper",
+        "--windows-file-description=TP Query Tool SIOT Helper",
+
+        # === 编译优化 ===
+        "--assume-yes-for-downloads",
+        "--jobs=4",
+
+        # === helper 依赖 ===
+        "--include-package=query_tool.utils",
+        "--include-package=query_tool.utils.siot_debug",
+        "--include-module=json",
+        "--include-module=requests",
+        "--include-module=ssl",
+        "--include-module=_ssl",
+        "--include-module=urllib.request",
+        "--include-module=http.client",
+        "--include-module=coloredlogs",
+        "--include-package=certifi",
+
+        # === 控制台窗口 ===
+        "--windows-console-mode=disable",
+    ]
+
+    cmd.extend(sdk_dll_args)
+    cmd.append("siot_helper.py")
+
+    print("执行命令:")
+    print(" ".join(cmd))
+    print()
+
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
+    helper_exe = os.path.join(PROJECT_ROOT, output_dir, f"{HELPER_NAME}.dist", f"{HELPER_NAME}.exe")
+
+    if result.returncode == 0 and os.path.exists(helper_exe):
+        print(f"[OK] helper 构建成功: {helper_exe}")
+        return True
+
+    print("[ERROR] helper 构建失败!")
+    return False
+
+
 def main():
     """主函数"""
     configure_stdio()
@@ -258,6 +324,8 @@ def main():
 
     # 执行打包
     success = build_nuitka(debug=debug, fast=fast)
+    if success:
+        success = build_helper_nuitka(output_dir=FAST_OUTPUT_DIR if fast else RELEASE_OUTPUT_DIR)
 
     if success:
         print("\n" + "=" * 50)
