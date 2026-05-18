@@ -2,14 +2,14 @@
   "version": "3.5.2",
   "build_date": "20260518",
   "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.2/TPQueryTool.exe",
-  "file_size_mb": 162.92,
-  "file_size_bytes": 170835456,
-  "file_hash": "fa3dcf5e972d1cd6c50e53cea0a9386c430c6230cf18f04a002e0c053c0072d6",
+  "file_size_mb": 163,
+  "file_size_bytes": 170917376,
+  "file_hash": "ca578059e63b173d61eabcd605151dfa2950631d528df841ab602575c64fcf96",
   "hash_algorithm": "sha256",
   "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.2/TPQueryTool.exe.sha256",
   "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.5.2",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": "请查看 Release 页面获取完整更新日志",
+  "changelog": ["支持特殊shell命令下发","支持startlogp2p命令回显日志","优化程序稳定性和性能"],
   "analytics": {"doc_id":"IVx0bqWefaVflZssxeycgHvSn5J","sheet_id":"tblyZtqCQEC43Hzl"}
 }
