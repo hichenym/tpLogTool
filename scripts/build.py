@@ -178,6 +178,8 @@ def build_nuitka(debug=False, fast=False):
         cmd.extend([
             "--onefile",                         # 打包为单个 exe
             "--onefile-no-dll",                  # onefile 下使用可执行文件而不是 run.dll，便于内部子进程重启
+            "--onefile-cache-mode=cached",       # 复用已解包运行体，减少子进程二次解包
+            "--onefile-tempdir-spec={PROGRAM_DIR}/.tpquerytool-onefile",  # 固定运行体路径，避免防火墙按临时路径重复提示
         ])
 
     cmd.extend(sdk_dll_args)
