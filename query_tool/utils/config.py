@@ -4,6 +4,8 @@
 """
 import winreg
 import base64
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import List
 
@@ -53,6 +55,12 @@ class ConfigManager:
     
     def __init__(self, registry_path=REGISTRY_PATH):
         self.registry_path = registry_path
+
+    @staticmethod
+    def _build_scoped_key(prefix, *parts):
+        joined = "|".join(str(part or "") for part in parts)
+        digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()
+        return f"{prefix}_{digest}"
     
     def _get_value(self, key, default=None):
         """从注册表读取值"""
@@ -262,18 +270,19 @@ class ConfigManager:
     def save_token_cache(self, env, username, token, refresh_token):
         """保存token缓存"""
         import time
-        from query_tool.utils.logger import logger
-        
-        logger.debug(f"保存Token缓存: {username}@{env}")
         try:
+            scoped_key = self._build_scoped_key("device_token", env, username)
+            self._set_value(f"{scoped_key}_token", token)
+            self._set_value(f"{scoped_key}_refresh_token", refresh_token)
+            self._set_value(f"{scoped_key}_timestamp", str(time.time()))
             self._set_value('env', env)
             self._set_value('username', username)
             self._set_value('token', token)
             self._set_value('refresh_token', refresh_token)
             self._set_value('timestamp', str(time.time()))
-            logger.debug(f"Token缓存已保存: {username}@{env}")
             return True
         except Exception as e:
+            from query_tool.utils.logger import logger
             logger.error(f"保存Token缓存失败: {e}")
             print(f"保存token缓存失败: {e}")
             return False
@@ -281,7 +290,6 @@ class ConfigManager:
     def load_token_cache(self, env, username):
         """加载token缓存"""
         import time
-        from query_tool.utils.logger import logger
         
         reg_key = None
         try:
@@ -292,30 +300,111 @@ class ConfigManager:
                 winreg.KEY_READ
             )
             
+            scoped_key = self._build_scoped_key("device_token", env, username)
+            token = self._get_value(f"{scoped_key}_token")
+            refresh_token = self._get_value(f"{scoped_key}_refresh_token")
+            timestamp = self._get_value(f"{scoped_key}_timestamp")
+
+            if token and timestamp and time.time() - float(timestamp) < 7200:
+                return token, refresh_token
+
             cached_env = self._get_value('env')
             cached_username = self._get_value('username')
             token = self._get_value('token')
             refresh_token = self._get_value('refresh_token')
             timestamp = self._get_value('timestamp')
-            
+
             if cached_env == env and cached_username == username:
                 if timestamp and time.time() - float(timestamp) < 7200:
-                    logger.debug(f"Token缓存命中: {username}@{env}")
                     return token, refresh_token
-                else:
-                    logger.debug(f"Token缓存已过期: {username}@{env}")
-            else:
-                logger.debug(f"Token缓存未命中: {username}@{env}")
         except (ValueError, TypeError) as e:
+            from query_tool.utils.logger import logger
             logger.debug(f"加载Token缓存失败: {e}")
         finally:
             if reg_key:
                 try:
                     winreg.CloseKey(reg_key)
                 except Exception as e:
+                    from query_tool.utils.logger import logger
                     logger.debug(f"关闭注册表键失败: {e}")
         
         return None, None
+
+    def save_seetong_cloud_cache(self, username, password, payload):
+        """保存 Seetong 云登录缓存。"""
+        import time
+        try:
+            scoped_key = self._build_scoped_key(
+                "seetong_cloud",
+                username,
+                hashlib.sha256((password or "").encode("utf-8")).hexdigest(),
+            )
+            payload_text = json.dumps(payload or {}, ensure_ascii=False)
+            payload_encoded = base64.b64encode(payload_text.encode("utf-8")).decode("ascii")
+            self._set_value(f"{scoped_key}_payload", payload_encoded)
+            self._set_value(f"{scoped_key}_timestamp", str(time.time()))
+            return True
+        except Exception as e:
+            from query_tool.utils.logger import logger
+            logger.error(f"保存 Seetong 云缓存失败: {e}")
+            return False
+
+    def load_seetong_cloud_cache(self, username, password, max_age_seconds):
+        """加载 Seetong 云登录缓存。"""
+        import time
+
+        try:
+            scoped_key = self._build_scoped_key(
+                "seetong_cloud",
+                username,
+                hashlib.sha256((password or "").encode("utf-8")).hexdigest(),
+            )
+            payload_encoded = self._get_value(f"{scoped_key}_payload")
+            timestamp = self._get_value(f"{scoped_key}_timestamp")
+            if not payload_encoded or not timestamp:
+                return None
+            if time.time() - float(timestamp) >= float(max_age_seconds):
+                return None
+            payload_text = base64.b64decode(payload_encoded.encode("ascii")).decode("utf-8")
+            payload = json.loads(payload_text)
+            if isinstance(payload, dict):
+                return payload
+        except Exception as e:
+            from query_tool.utils.logger import logger
+            logger.debug(f"加载 Seetong 云缓存失败: {e}")
+        return None
+
+    def clear_seetong_cloud_cache(self, username, password):
+        """清理 Seetong 云登录缓存。"""
+        reg_key = None
+        try:
+            scoped_key = self._build_scoped_key(
+                "seetong_cloud",
+                username,
+                hashlib.sha256((password or "").encode("utf-8")).hexdigest(),
+            )
+            reg_key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                self.registry_path,
+                0,
+                winreg.KEY_WRITE
+            )
+            for suffix in ("payload", "timestamp"):
+                try:
+                    winreg.DeleteValue(reg_key, f"{scoped_key}_{suffix}")
+                except FileNotFoundError:
+                    pass
+            return True
+        except Exception as e:
+            from query_tool.utils.logger import logger
+            logger.debug(f"清理 Seetong 云缓存失败: {e}")
+            return False
+        finally:
+            if reg_key:
+                try:
+                    winreg.CloseKey(reg_key)
+                except Exception:
+                    pass
 
 
 # 全局配置管理器实例

@@ -490,12 +490,12 @@ class BatchLogFetchThread(QThread):
                         downloaded_file_count=downloaded_file_count,
                     )
                     self._send_payload(process, {"action": "disconnect"})
-                    self._drain_until_disconnected(event_queue, timeout_s=5.0)
+                    self._drain_until_disconnected(event_queue, timeout_s=2.5)
                 except Exception as exc:
                     logger.warning(f"关闭日志设备子进程失败 {sn}: {exc}")
                 finally:
                     self._close_process(process)
-                    time.sleep(0.2)
+                    time.sleep(0.05)
 
         if self._stop_event.is_set():
             return self._build_cancelled_result(

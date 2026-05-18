@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QDateTimeEdit, QGroupBox, QFormLayout, QWidget,
     QLineEdit, QFileDialog, QMessageBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QCheckBox, QAbstractItemView
+    QHeaderView, QCheckBox, QAbstractItemView, QComboBox
 )
 from PyQt5.QtCore import Qt, QDateTime, QEvent, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QIcon
@@ -30,6 +30,13 @@ class ClickableDateTimeEdit(QDateTimeEdit):
             # 显示日历弹出窗口
             self.calendarWidget().show()
         super().mousePressEvent(event)
+
+
+class NoWheelComboBox(QComboBox):
+    """禁用鼠标滚轮切换的下拉框"""
+
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 class FileUploadThread(QThread):
@@ -85,12 +92,20 @@ class DeviceSnQueryThread(QThread):
     error = pyqtSignal(str)
     success = pyqtSignal(list)  # [{device_name, sn, model}, ...]
 
-    def __init__(self, phone, env, username, password):
+    ACCOUNT_TYPE_LABELS = {
+        "mobile": "手机号",
+        "id": "ID",
+        "username": "用户名",
+        "email": "邮箱",
+    }
+
+    def __init__(self, phone, env, username, password, account_type="mobile"):
         super().__init__()
         self.phone = phone
         self.env = env
         self.username = username
         self.password = password
+        self.account_type = account_type
 
     def run(self):
         try:
@@ -102,13 +117,14 @@ class DeviceSnQueryThread(QThread):
                 return
 
             self.progress.emit("正在查询用户信息...")
-            user_response = query.get_user_by_mobile(self.phone)
+            user_response = query.get_user_by_account(self.account_type, self.phone)
+            account_label = self.ACCOUNT_TYPE_LABELS.get(self.account_type, "账号")
             if not user_response or not user_response.get('data'):
-                self.error.emit("未找到该手机号对应的用户")
+                self.error.emit(f"未找到该{account_label}对应的用户")
                 return
             records = user_response['data'].get('records', [])
             if not records:
-                self.error.emit("未找到该手机号对应的用户")
+                self.error.emit(f"未找到该{account_label}对应的用户")
                 return
             user_id = records[0].get('id')
             if not user_id:
@@ -161,10 +177,11 @@ class DeviceSnQueryThread(QThread):
 class SnQueryDialog(QDialog):
     """设备SN查询结果对话框 - 打开时自动查询，按型号过滤"""
 
-    def __init__(self, phone='', model_filter='', parent=None):
+    def __init__(self, phone='', model_filter='', account_type="mobile", parent=None):
         super().__init__(parent)
         self.phone = phone
         self.model_filter = model_filter
+        self.account_type = account_type
         self.all_devices = []
         self.selected_sns = []
         self._checkboxes = []
@@ -260,7 +277,13 @@ class SnQueryDialog(QDialog):
         self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
         self.table.setRowCount(0)
 
-        thread = DeviceSnQueryThread(self.phone, env, username, password)
+        thread = DeviceSnQueryThread(
+            self.phone,
+            env,
+            username,
+            password,
+            account_type=self.account_type,
+        )
         thread.progress.connect(lambda msg: self.status_label.setText(msg))
         thread.error.connect(self._on_query_error)
         thread.success.connect(self._on_query_success)
@@ -350,6 +373,15 @@ class SnQueryDialog(QDialog):
 
 class EditFirmwareDialog(QDialog):
     """修改固件信息对话框"""
+    ACCOUNT_QUERY_TYPES = [
+        ("手机号", "mobile"),
+        ("ID", "id"),
+        ("用户名", "username"),
+        ("邮箱", "email"),
+    ]
+    SN_QUERY_CONTROL_WIDTH = 120
+    SN_QUERY_CONTROL_SPACING = 12
+    SN_QUERY_ROW_SPACING = 12
     
     def __init__(self, firmware_id, firmware_data, parent=None):
         super().__init__(parent)
@@ -466,7 +498,7 @@ class EditFirmwareDialog(QDialog):
         form_layout.addRow(comment_label, self.comment_text)
         
         # 5. 支持升级的设备SN（标签、输入框、右侧账号+查询按钮）
-        sn_label = QLabel("<span style='color: red;'>*</span> 升级设备SN:")
+        sn_label = QLabel("<span style='color: red;'>*</span> 升级SN:")
         sn_label.setToolTip("每行一个SN，支持多个设备")
         sn_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
@@ -474,51 +506,78 @@ class EditFirmwareDialog(QDialog):
         sn_right_widget.setFixedHeight(100)  # 与SN输入框等高，避免多余空间
         sn_right_layout = QHBoxLayout(sn_right_widget)
         sn_right_layout.setContentsMargins(0, 0, 0, 0)
-        sn_right_layout.setSpacing(8)
+        sn_right_layout.setSpacing(self.SN_QUERY_CONTROL_SPACING)
 
         self.sn_text = QTextEdit()
         self.sn_text.setPlaceholderText("每行输入一个设备SN...")
         self.sn_text.setFixedHeight(100)
+        self.sn_text.setMinimumWidth(250)
+        self.sn_text.setMaximumWidth(290)
         self.sn_text.setStyleSheet(editable_style)
         self.sn_text.textChanged.connect(self.on_sn_text_changed)
         self.sn_text.textChanged.connect(self.validate_form)
 
-        # 右侧：账号输入框 + 查询按钮（垂直排列）
+        # 右侧：两行布局
         sn_btn_widget = QWidget()
         sn_btn_layout = QVBoxLayout(sn_btn_widget)
         sn_btn_layout.setContentsMargins(0, 0, 0, 0)
-        sn_btn_layout.setSpacing(4)
+        sn_btn_layout.setSpacing(0)
+        sn_btn_widget.setFixedWidth(
+            self.SN_QUERY_CONTROL_WIDTH * 2 + self.SN_QUERY_CONTROL_SPACING
+        )
 
-        from PyQt5.QtWidgets import QComboBox
-        self.sn_phone_input = QComboBox()
+        account_row = QHBoxLayout()
+        account_row.setContentsMargins(0, 0, 0, 0)
+        account_row.setSpacing(self.SN_QUERY_CONTROL_SPACING)
+
+        self.sn_account_type_combo = NoWheelComboBox()
+        for label, value in self.ACCOUNT_QUERY_TYPES:
+            self.sn_account_type_combo.addItem(label, value)
+        self.sn_account_type_combo.setCurrentIndex(0)
+        self.sn_account_type_combo.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 28)
+        self.sn_account_type_combo.setStyleSheet(StyleManager.get_COMBOBOX())
+        self.sn_account_type_combo.currentIndexChanged.connect(self.on_sn_account_type_changed)
+
+        self.sn_phone_input = NoWheelComboBox()
         self.sn_phone_input.setEditable(True)
         self.sn_phone_input.setInsertPolicy(QComboBox.NoInsert)
-        self.sn_phone_input.lineEdit().setPlaceholderText("手机号...")
-        self.sn_phone_input.setFixedSize(100, 28)
+        self.sn_phone_input.lineEdit().setPlaceholderText("请输入手机号...")
+        self.sn_phone_input.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 28)
         self.sn_phone_input.setStyleSheet(StyleManager.get_COMBOBOX())
         # 加载账号历史（与设备查询页面同步）
         self._load_phone_history()
+        account_row.addWidget(self.sn_account_type_combo)
+        account_row.addWidget(self.sn_phone_input)
+
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.setSpacing(self.SN_QUERY_CONTROL_SPACING)
 
         self.sn_query_btn = QPushButton("查询设备")
         self.sn_query_btn.setIcon(QIcon(":/icons/common/search.png"))
         self.sn_query_btn.setIconSize(QSize(14, 14))
-        self.sn_query_btn.setFixedSize(100, 28)
+        self.sn_query_btn.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 28)
         self.sn_query_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.sn_query_btn.clicked.connect(self.on_query_device_sn)
 
-        sn_btn_layout.addWidget(self.sn_phone_input)
-        sn_btn_layout.addWidget(self.sn_query_btn)
-
         self.sn_temp_fill_btn = QPushButton("临时填充")
-        self.sn_temp_fill_btn.setFixedSize(100, 28)
+        self.sn_temp_fill_btn.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 28)
         self.sn_temp_fill_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.sn_temp_fill_btn.clicked.connect(self._on_temp_fill_sn)
-        sn_btn_layout.addWidget(self.sn_temp_fill_btn)
+        action_row.addWidget(self.sn_query_btn)
+        action_row.addWidget(self.sn_temp_fill_btn)
+
+        sn_btn_layout.addStretch(1)
+        sn_btn_layout.addLayout(account_row)
+        sn_btn_layout.addSpacing(self.SN_QUERY_ROW_SPACING)
+        sn_btn_layout.addLayout(action_row)
+        sn_btn_layout.addStretch(1)
 
         sn_btn_widget.setFixedHeight(100)  # 与SN输入框等高
 
         sn_right_layout.addWidget(self.sn_text, 1)
-        sn_right_layout.addWidget(sn_btn_widget)
+        sn_right_layout.addWidget(sn_btn_widget, 0, Qt.AlignVCenter)
+        self.on_sn_account_type_changed()
 
         form_layout.addRow(sn_label, sn_right_widget)
         
@@ -722,16 +781,22 @@ class EditFirmwareDialog(QDialog):
     def on_query_device_sn(self):
         """查询设备SN - 直接弹出结果对话框"""
         phone = self.sn_phone_input.currentText().strip()
+        account_type = self.get_selected_sn_account_type()
         if not phone:
             if self.parent():
-                self.parent().show_warning("请输入手机号")
+                self.parent().show_warning("请输入账号")
             return
 
         # 从固件标识提取型号（取第一个 '-' 前的部分）
         identifier = self.identifier_input.text().strip()
         model_filter = identifier.split('-')[0] if identifier and '-' in identifier else ''
 
-        dialog = SnQueryDialog(phone=phone, model_filter=model_filter, parent=self)
+        dialog = SnQueryDialog(
+            phone=phone,
+            model_filter=model_filter,
+            account_type=account_type,
+            parent=self,
+        )
         if dialog.exec_() == QDialog.Accepted:
             sns = dialog.get_selected_sns()
             if sns:
@@ -766,6 +831,23 @@ class EditFirmwareDialog(QDialog):
         # 刷新下拉列表
         self.sn_phone_input.clear()
         self.sn_phone_input.addItems(app_config.phone_history)
+
+    def get_selected_sn_account_type(self):
+        """获取当前 SN 查询账号类型"""
+        return self.sn_account_type_combo.currentData() or "mobile"
+
+    def on_sn_account_type_changed(self, *_args):
+        """切换 SN 查询账号类型时更新占位提示"""
+        placeholder_map = {
+            "mobile": "请输入手机号...",
+            "id": "请输入用户ID...",
+            "username": "请输入用户名...",
+            "email": "请输入邮箱...",
+        }
+        account_type = self.get_selected_sn_account_type()
+        self.sn_phone_input.lineEdit().setPlaceholderText(
+            placeholder_map.get(account_type, "请输入账号...")
+        )
 
     def _on_temp_fill_sn(self):
         """临时填充SN"""

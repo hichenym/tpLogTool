@@ -19,6 +19,7 @@ from query_tool.utils import (
     get_account_config, DeviceQuery, check_device_online
 )
 from query_tool.utils.theme_manager import t, theme_manager
+from query_tool.utils.runtime_credential_cache import get_shared_device_query
 from query_tool.utils.workers import QueryThread, WakeThread, PhoneQueryThread
 from query_tool.widgets import PlainTextEdit, ClickableLineEdit, show_question_box
 
@@ -33,6 +34,12 @@ class NoWheelComboBox(QComboBox):
 @register_page("设备", order=1, icon=":/icons/system/device.png")
 class DeviceStatusPage(BasePage):
     """设备状态查询页面"""
+    ACCOUNT_QUERY_TYPES = [
+        ("手机号", "mobile"),
+        ("ID", "id"),
+        ("用户名", "username"),
+        ("邮箱", "email"),
+    ]
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -92,30 +99,10 @@ class DeviceStatusPage(BasePage):
         如果凭证相同，则复用已有对象；否则创建新对象
         Token 超过 90 分钟时主动重建对象，避免 2 小时后 Token 过期导致 401
         """
-        import time
-        TOKEN_REFRESH_INTERVAL = 90 * 60  # 90 分钟主动重建，早于服务器 2 小时过期
-
-        credentials_changed = (
-            self._device_query_env != env or
-            self._device_query_username != username or
-            self._device_query_password != password
-        )
-        token_expired = (
-            self._device_query_timestamp is None or
-            time.time() - self._device_query_timestamp > TOKEN_REFRESH_INTERVAL
-        )
-
-        if self._device_query is None or credentials_changed or token_expired:
-            if token_expired and self._device_query is not None:
-                from query_tool.utils.logger import logger
-                logger.info("DeviceQuery Token 即将过期，主动重建对象")
-
-            self._device_query = DeviceQuery(env, username, password)
-            self._device_query_env = env
-            self._device_query_username = username
-            self._device_query_password = password
-            self._device_query_timestamp = time.time()
-
+        self._device_query = get_shared_device_query(env, username, password)
+        self._device_query_env = env
+        self._device_query_username = username
+        self._device_query_password = password
         return self._device_query
     
     def init_ui(self):
@@ -176,11 +163,14 @@ class DeviceStatusPage(BasePage):
         account_frame_layout.setContentsMargins(8, 8, 8, 8)
         account_frame_layout.setSpacing(10)
         
-        account_label = QLabel("账号:")
-        account_label.setFixedWidth(35)
-        account_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        account_label.setStyleSheet("border: none;")  # 去掉边框
-        
+        self.account_type_combo = NoWheelComboBox()
+        for label, value in self.ACCOUNT_QUERY_TYPES:
+            self.account_type_combo.addItem(label, value)
+        self.account_type_combo.setCurrentIndex(0)
+        self.account_type_combo.setFixedWidth(82)
+        self.account_type_combo.setFixedHeight(28)
+        self.account_type_combo.currentIndexChanged.connect(self.on_account_query_type_changed)
+
         self.phone_input = NoWheelComboBox()
         self.phone_input.setEditable(True)
         self.phone_input.setInsertPolicy(QComboBox.NoInsert)
@@ -194,10 +184,11 @@ class DeviceStatusPage(BasePage):
         self.phone_query_btn.setFixedSize(90, 28)  # 统一按钮宽度为90px
         self.phone_query_btn.clicked.connect(self.on_phone_query)
         
-        account_frame_layout.addWidget(account_label)
+        account_frame_layout.addWidget(self.account_type_combo)
         account_frame_layout.addWidget(self.phone_input, 1)
         account_frame_layout.addWidget(self.phone_query_btn)
         group_layout.addWidget(account_frame)
+        self.on_account_query_type_changed()
         
         # 标签行
         label_layout = QHBoxLayout()
@@ -2092,6 +2083,7 @@ class DeviceStatusPage(BasePage):
     def on_phone_query(self):
         """账号查询按钮点击"""
         phone = self.phone_input.currentText().strip()
+        account_type = self.get_selected_account_query_type()
         
         if not phone:
             self.show_warning("请输入账号")
@@ -2155,7 +2147,14 @@ class DeviceStatusPage(BasePage):
         self.phone_query_results = []
         
         # 启动查询线程（使用与设备查询相同的线程数）
-        phone_query_thread = PhoneQueryThread(phone, env, username, password, max_workers=self.thread_count)
+        phone_query_thread = PhoneQueryThread(
+            phone,
+            env,
+            username,
+            password,
+            max_workers=self.thread_count,
+            account_type=account_type,
+        )
         phone_query_thread.progress.connect(lambda msg: self.show_progress(msg))
         phone_query_thread.error.connect(self.on_phone_query_error)
         phone_query_thread.success.connect(self.on_phone_query_success)
@@ -2166,7 +2165,7 @@ class DeviceStatusPage(BasePage):
     def on_phone_query_error(self, error_msg):
         """账号查询出错"""
         self.phone_query_btn.setEnabled(True)
-        self.phone_query_btn.setText("查询账号")
+        self.phone_query_btn.setText("账号查询")
         self.show_error(error_msg)
     
     def on_phone_query_success(self, results, models):
@@ -2254,6 +2253,25 @@ class DeviceStatusPage(BasePage):
         self.phone_input.addItems(app_config.phone_history)
         
         config_manager.save_app_config(app_config)
+
+    def get_selected_account_query_type(self):
+        """获取当前账号查询类型"""
+        if not hasattr(self, 'account_type_combo'):
+            return "mobile"
+        return self.account_type_combo.currentData() or "mobile"
+
+    def on_account_query_type_changed(self, *_args):
+        """账号查询类型切换"""
+        placeholder_map = {
+            "mobile": "请输入手机号...",
+            "id": "请输入用户ID...",
+            "username": "请输入用户名...",
+            "email": "请输入邮箱...",
+        }
+        account_type = self.get_selected_account_query_type()
+        self.phone_input.lineEdit().setPlaceholderText(
+            placeholder_map.get(account_type, "请输入账号...")
+        )
     
     # ===== 筛选相关方法 =====
     

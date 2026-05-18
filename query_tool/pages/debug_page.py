@@ -236,7 +236,7 @@ class DebugConsoleEdit(QTextEdit):
         super().__init__(parent)
         self._input_enabled = False
         self._input_locked = False
-        self._prompt_text = "# "
+        self._prompt_text = "~ # "
         self._input_prompt_start = 0
         self._input_start = 0
         self._show_timestamps = True
@@ -267,6 +267,14 @@ class DebugConsoleEdit(QTextEdit):
             self._browse_mode = False
         if self._input_enabled:
             self._rebuild_document()
+
+    def set_input_locked_quietly(self, locked: bool):
+        self._input_locked = locked
+        if locked:
+            self._browse_mode = False
+            self._hide_input_cursor()
+        else:
+            self._show_input_cursor()
 
     def clear_console(self):
         self._entries = []
@@ -313,6 +321,48 @@ class DebugConsoleEdit(QTextEdit):
         )
         self._rebuild_document_with_scroll_restore()
 
+    def commit_command_submission(self, command: str):
+        """一次重绘内完成命令回显和输入锁定，减少回车时的顿感。"""
+        self._entries.append(
+            {
+                "timestamp": datetime.now(),
+                "text": command or "",
+                "color_role": "status_info",
+                "kind": "command",
+            }
+        )
+        self._input_locked = True
+        self._browse_mode = False
+        self._rebuild_document_with_scroll_restore()
+
+    def commit_console_submission_live(self, command: str):
+        """控制台直接回车时，原地追加命令和新提示行，避免整页重绘。"""
+        if not self._input_enabled:
+            self.commit_command_submission(command)
+            return
+
+        self._entries.append(
+            {
+                "timestamp": datetime.now(),
+                "text": command or "",
+                "color_role": "status_info",
+                "kind": "command",
+            }
+        )
+
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.End)
+
+        command_fmt = QTextCharFormat()
+        command_fmt.setForeground(QColor(t("status_info")))
+        cursor.insertText(command or "", command_fmt)
+        cursor.insertBlock()
+
+        self._input_prompt_start = cursor.position()
+        self._render_input_prompt(cursor, "")
+        self.setTextCursor(cursor)
+        self.scroll_to_prompt()
+
     def update_progress(self, progress_id: str, message: str):
         progress_id = (progress_id or "").strip()
         if not progress_id or message is None:
@@ -323,6 +373,7 @@ class DebugConsoleEdit(QTextEdit):
                 entry["timestamp"] = datetime.now()
                 entry["text"] = str(message)
                 self._rebuild_document_with_scroll_restore()
+                self.scroll_to_prompt()
                 return
 
         self._entries.append(
@@ -334,6 +385,7 @@ class DebugConsoleEdit(QTextEdit):
             }
         )
         self._rebuild_document_with_scroll_restore()
+        self.scroll_to_prompt()
 
     def refresh_content_style(self):
         if self._entries or self._input_enabled:
@@ -545,6 +597,11 @@ class DebugConsoleEdit(QTextEdit):
             self.horizontalScrollBar().setValue(h_scroll)
         elif ensure_visible:
             self.ensureCursorVisible()
+
+    def scroll_to_prompt(self):
+        self._browse_mode = False
+        self._move_cursor_to_end(ensure_visible=True)
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def _protect_cursor(self, force_end: bool = False):
         cursor = self.textCursor()
@@ -1314,14 +1371,23 @@ class DebugPage(BasePage):
             self._record_history(command)
         self.last_command_source = source
         self.command_running = True
-        self.console_edit.set_input_locked(True)
-        self.command_input.setEnabled(False)
-        self.command_type_combo.setEnabled(False)
-        self.add_shortcut_btn.setEnabled(False)
-        self.toggle_shortcut_btn.setEnabled(False)
-        self.update_send_button()
-        self.console_edit.append_command(command)
-        self.request_command.emit(backend_command, self.default_timeout_ms, self.download_root)
+        should_freeze_command_bar = source != "console"
+        if should_freeze_command_bar:
+            self.command_input.setEnabled(False)
+            self.command_type_combo.setEnabled(False)
+            self.add_shortcut_btn.setEnabled(False)
+            self.toggle_shortcut_btn.setEnabled(False)
+            self.update_send_button()
+        if source == "console":
+            self.console_edit.set_input_locked_quietly(True)
+            self.console_edit.commit_console_submission_live(command)
+        else:
+            self.console_edit.commit_command_submission(command)
+        QTimer.singleShot(
+            0,
+            lambda cmd=backend_command, timeout_ms=self.default_timeout_ms, download_root=self.download_root:
+                self.request_command.emit(cmd, timeout_ms, download_root),
+        )
         if source != "auto":
             self.command_input.clear()
 
@@ -1392,15 +1458,18 @@ class DebugPage(BasePage):
     def on_command_finished(self):
         self.command_running = False
         if self.connected:
-            self.console_edit.set_input_enabled(True)
-            self.console_edit.set_input_locked(False)
-            self.command_input.setEnabled(True)
-            self.command_type_combo.setEnabled(True)
-            self.update_shortcut_controls()
-            self.update_send_button()
+            if not self.console_edit._input_enabled:
+                self.console_edit.set_input_enabled(True)
+            else:
+                self.console_edit.set_input_locked_quietly(False)
+            if self.last_command_source != "console":
+                self.command_input.setEnabled(True)
+                self.command_type_combo.setEnabled(True)
+                self.update_shortcut_controls()
+                self.update_send_button()
             if self.last_command_source in ("console", "auto"):
                 self.console_edit.setFocus(Qt.OtherFocusReason)
-                self.console_edit._move_cursor_to_end()
+                self.console_edit.scroll_to_prompt()
             else:
                 self.command_input.setFocus(Qt.OtherFocusReason)
 
@@ -1414,6 +1483,7 @@ class DebugPage(BasePage):
         if time.monotonic() < self._console_suppress_until:
             return
         self.console_edit.append_message(text, color=color)
+        self.console_edit.scroll_to_prompt()
 
     def _should_suppress_output(self, message):
         message = (message or "").strip()

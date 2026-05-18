@@ -188,10 +188,19 @@ class DeviceQuery:
         params = {"deviceId": dev_id}
         return self._request('/api/seetong-member-device/device-bind-user/list', params)
 
+    def get_user_by_account(self, account_type, account_value):
+        """根据账号类型查询用户信息"""
+        params = {
+            account_type: account_value,
+            "current": "1",
+            "size": "10",
+            "descs": "id",
+        }
+        return self._request('/api/seetong-client/client/member/list', params)
+
     def get_user_by_mobile(self, mobile):
         """根据手机号查询用户ID"""
-        params = {"mobile": mobile, "current": "1", "size": "10", "descs": "id"}
-        return self._request('/api/seetong-client/client/member/list', params)
+        return self.get_user_by_account("mobile", mobile)
 
     def get_user_bind_devices(self, user_id):
         """根据用户ID查询绑定设备列表"""

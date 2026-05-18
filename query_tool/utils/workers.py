@@ -291,13 +291,21 @@ class PhoneQueryWorker(QObject):
     error = pyqtSignal(str)
     success = pyqtSignal(list, list)  # (查询结果, 型号列表)
     
-    def __init__(self, phone, env, username, password, max_workers=30):
+    ACCOUNT_TYPE_LABELS = {
+        "mobile": "手机号",
+        "id": "ID",
+        "username": "用户名",
+        "email": "邮箱",
+    }
+
+    def __init__(self, phone, env, username, password, max_workers=30, account_type="mobile"):
         super().__init__()
         self.phone = phone
         self.env = env
         self.username = username
         self.password = password
         self.max_workers = max_workers  # 使用可配置的线程数
+        self.account_type = account_type
         self._stop_event = Event()  # 添加停止事件
         
     def stop(self):
@@ -319,16 +327,17 @@ class PhoneQueryWorker(QObject):
                 self.error.emit(query.init_error)
                 return
             
-            # 第一步：根据手机号查询用户ID
+            # 第一步：根据账号类型查询用户ID
             self.progress.emit("正在查询用户信息...")
-            user_response = query.get_user_by_mobile(self.phone)
+            user_response = query.get_user_by_account(self.account_type, self.phone)
+            account_label = self.ACCOUNT_TYPE_LABELS.get(self.account_type, "账号")
             if not user_response or not user_response.get('data'):
-                self.error.emit("未找到该手机号对应的用户")
+                self.error.emit(f"未找到该{account_label}对应的用户")
                 return
             
             records = user_response['data'].get('records', [])
             if not records:
-                self.error.emit("未找到该手机号对应的用户")
+                self.error.emit(f"未找到该{account_label}对应的用户")
                 return
             
             user_id = records[0].get('id')
@@ -512,9 +521,16 @@ class PhoneQueryThread(QThread):
     error = pyqtSignal(str)
     success = pyqtSignal(list, list)
     
-    def __init__(self, phone, env, username, password, max_workers=30):
+    def __init__(self, phone, env, username, password, max_workers=30, account_type="mobile"):
         super().__init__()
-        self.worker = PhoneQueryWorker(phone, env, username, password, max_workers)
+        self.worker = PhoneQueryWorker(
+            phone,
+            env,
+            username,
+            password,
+            max_workers,
+            account_type=account_type,
+        )
         self.worker.progress.connect(self.progress)
         self.worker.error.connect(self.error)
         self.worker.success.connect(self.success)

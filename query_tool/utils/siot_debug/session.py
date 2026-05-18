@@ -15,6 +15,11 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from query_tool.utils.internal_launch import build_internal_command
+from query_tool.utils.runtime_credential_cache import (
+    invalidate_cached_cloud_credentials,
+    load_cached_cloud_credentials,
+    save_cached_cloud_credentials,
+)
 
 from .command_catalog import is_getsystemcfg_command, is_syscmd_family_command
 from .config import (
@@ -94,7 +99,16 @@ TPSRTC_PROPERTY_AUTO_TRANSPORT = 36
 
 ERR_P2P_USER_NOT_AUTH = 8
 HEARTBEAT_INTERVAL_S = 10.0
-FILE_IDLE_SETTLE_S = 0.6
+FILE_IDLE_SETTLE_S = 0.35
+MAX_CLOUD_CREDENTIAL_REFRESH_RETRIES = 2
+
+
+class CloudCredentialRefreshRequired(SiotError):
+    def __init__(self, stage: str, reason: str, message: str, user_message: str | None = None) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.reason = reason
+        self.user_message = user_message or message
 
 
 def _build_heartbeat_xml() -> bytes:
@@ -127,7 +141,13 @@ def _http_get(url: str, headers: dict[str, str]) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def fetch_cloud_credentials(username: str, password: str) -> CloudCredentials:
+def fetch_cloud_credentials(username: str, password: str, force_refresh: bool = False) -> CloudCredentials:
+    if not force_refresh:
+        cached_credentials = load_cached_cloud_credentials(username, password)
+        if cached_credentials is not None:
+            logging.info("Using cached SIOT cloud credentials")
+            return cached_credentials
+
     client_id = f"windows-siot-{uuid.uuid4().hex}"
     login_headers = {
         "Authorization": CLOUD_AUTH_BASIC,
@@ -183,6 +203,7 @@ def fetch_cloud_credentials(username: str, password: str) -> CloudCredentials:
         vip_relay_nodes=vip_relay_nodes,
         jwt_key_version=int(data.get("signKeyVer", 0)),
     )
+    save_cached_cloud_credentials(username, password, credentials)
     logging.info("SIOT credentials obtained successfully")
     logging.info("  Access node: %s", credentials.access_node)
     return credentials
@@ -370,6 +391,36 @@ class DeviceSession:
     def connect(self, device: DeviceCredentials, status_callback: Optional[Callable[[str], None]] = None) -> None:
         self.device = device
         self._status_callback = status_callback
+        for retry_index in range(MAX_CLOUD_CREDENTIAL_REFRESH_RETRIES + 1):
+            force_refresh = retry_index > 0
+            try:
+                self._connect_once(force_refresh=force_refresh)
+                return
+            except CloudCredentialRefreshRequired as exc:
+                self.close()
+                self.device = device
+                self._status_callback = status_callback
+                invalidate_cached_cloud_credentials(self.cloud_username, self.cloud_password)
+                if retry_index >= MAX_CLOUD_CREDENTIAL_REFRESH_RETRIES:
+                    raise SiotError(exc.user_message)
+                logging.warning(
+                    "Cloud credentials refresh retry %s/%s, stage=%s reason=%s message=%s",
+                    retry_index + 1,
+                    MAX_CLOUD_CREDENTIAL_REFRESH_RETRIES,
+                    exc.stage,
+                    exc.reason,
+                    str(exc),
+                )
+                self._emit_status(
+                    f"云凭证已刷新，正在进行第{retry_index + 1}次重试..."
+                )
+            except Exception:
+                raise
+
+    def _connect_once(self, force_refresh: bool) -> None:
+        if self.device is None:
+            raise SiotError("device credentials are missing")
+
         self._gateway_id = DEVICE_GATEWAY_ID
         self._gateway_id_4g = ""
         self._cloud_protocol = -1
@@ -377,17 +428,20 @@ class DeviceSession:
         self._device_online = False
         self._device_is_4g = False
         self._emit_status("正在检查设备状态...")
-        self.cloud_credentials = fetch_cloud_credentials(self.cloud_username, self.cloud_password)
+        self.cloud_credentials = fetch_cloud_credentials(
+            self.cloud_username,
+            self.cloud_password,
+            force_refresh=force_refresh,
+        )
         status = self._probe_device_status_via_siot_helper(self.cloud_credentials)
         self._apply_device_status(status)
         if self._is_device_offline(status):
-            self._emit_status(f"设备：{device.sn}不在线")
-            raise SiotError(f"设备：{device.sn}不在线")
+            self._emit_status(f"设备：{self.device.sn}不在线")
+            raise SiotError(f"设备：{self.device.sn}不在线")
         if self._is_device_sleeping(status):
             self._emit_status("设备休眠，正在唤醒...")
             self._prepare_device_via_siot_helper()
             self._emit_status("唤醒成功，正在连接设备...")
-            self.cloud_credentials = fetch_cloud_credentials(self.cloud_username, self.cloud_password)
         else:
             self._emit_status("设备已在线，正在连接设备...")
         self._emit_status("正在连接设备...")
@@ -396,6 +450,20 @@ class DeviceSession:
         self._authenticate_via_signaling()
         self._connect_peer()
         self._start_heartbeat_loop()
+
+    def _raise_cloud_refresh_required(
+        self,
+        stage: str,
+        reason: str,
+        message: str,
+        user_message: str,
+    ) -> None:
+        raise CloudCredentialRefreshRequired(
+            stage=stage,
+            reason=reason,
+            message=message,
+            user_message=user_message,
+        )
 
     def execute_command(
         self,
@@ -458,11 +526,21 @@ class DeviceSession:
             )
             if not self._siot_conn:
                 self.lib.TPSRTC_Cleanup()
-                raise SiotError("TPSIOT_Connect returned NULL")
+                self._raise_cloud_refresh_required(
+                    "signaling",
+                    "connect_null",
+                    "TPSIOT_Connect returned NULL",
+                    "连接信令服务失败",
+                )
 
         if not self._signal_ready.wait(15.0) or not self._signal_connected:
             self.close()
-            raise SiotError("failed to connect signaling server")
+            self._raise_cloud_refresh_required(
+                "signaling",
+                "connect_timeout",
+                "failed to connect signaling server",
+                "连接信令服务失败",
+            )
 
         ret = self.lib.TPSRTC_Init(None, self._cb_send_sdp, None, None, None)
         if ret != 0:
@@ -580,10 +658,20 @@ class DeviceSession:
                 False,
             )
             if not self._peer_conn:
-                raise SiotError("TPSRTC_ConnectPeer returned NULL")
+                self._raise_cloud_refresh_required(
+                    "p2p",
+                    "connect_null",
+                    "TPSRTC_ConnectPeer returned NULL",
+                    "建立P2P通道失败",
+                )
 
         if not self._peer_ready.wait(20.0) or not self._peer_connected:
-            raise SiotError("failed to establish P2P data channel")
+            self._raise_cloud_refresh_required(
+                "p2p",
+                "connect_timeout",
+                "failed to establish P2P data channel",
+                "建立P2P通道失败",
+            )
 
     def _execute_p2p_command(
         self,
@@ -872,13 +960,8 @@ class DeviceSession:
             return
 
         if event == TPSIOT_CONN_RECONNECT_THRESHOLD and self.cloud_credentials and self._siot_conn:
-            logging.warning("Signaling reconnect threshold reached, redirecting access point")
-            self.lib.TPSIOT_RedirectAccess(
-                self._siot_conn,
-                self.cloud_credentials.access_node.encode("utf-8"),
-                self.cloud_credentials.access_jwt_token.encode("utf-8"),
-                self.cloud_credentials.jwt_key_version,
-            )
+            logging.warning("Signaling reconnect threshold reached, refreshing access point")
+            self._refresh_redirect_access()
             return
 
         if event != TPSIOT_CONN_APP_RECEIVED_DATA or not data_ptr:
@@ -886,9 +969,14 @@ class DeviceSession:
 
         message = ctypes.cast(data_ptr, ctypes.POINTER(TPSIOT_DeviceMessage)).contents
         if message.feedbackCode == TPSIOT_FB_UNREACHABLE_DEVICE:
+            self._device_online = False
+            if self._peer_connected:
+                self._log_unreachable_signaling(keep_session=True)
+                self._status_ready.set()
+                return
             self._authenticated = False
             self._peer_connected = False
-            logging.warning("Device is unreachable via signaling")
+            self._log_unreachable_signaling(keep_session=False)
             self._status_ready.set()
             self._auth_ready.set()
             return
@@ -1142,6 +1230,31 @@ class DeviceSession:
             self._status_callback(message)
         except Exception:
             logging.exception("Status callback failed: %s", message)
+
+    def _refresh_redirect_access(self) -> None:
+        if not self._siot_conn:
+            return
+        try:
+            self.cloud_credentials = fetch_cloud_credentials(
+                self.cloud_username,
+                self.cloud_password,
+                force_refresh=True,
+            )
+            ret = self.lib.TPSIOT_RedirectAccess(
+                self._siot_conn,
+                self.cloud_credentials.access_node.encode("utf-8"),
+                self.cloud_credentials.access_jwt_token.encode("utf-8"),
+                self.cloud_credentials.jwt_key_version,
+            )
+            if ret != 0:
+                logging.warning("TPSIOT_RedirectAccess failed after refresh: %s", ret)
+        except Exception as exc:
+            logging.warning("Refresh redirect access failed: %s", exc)
+
+    def _log_unreachable_signaling(self, keep_session: bool) -> None:
+        if keep_session:
+            return
+        logging.warning("Device is unreachable via signaling")
 
     @staticmethod
     def _looks_like_json(raw: bytes) -> bool:

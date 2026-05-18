@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shlex
 import sys
@@ -8,11 +9,29 @@ import time
 from pathlib import Path
 
 from .command_catalog import is_getsystemcfg_command, is_syscmd_family_command, is_syscmdex_command
-from .config import DEFAULT_COMMAND_TIMEOUT_MS
+from .config import APP_LOG_DIR, DEFAULT_COMMAND_TIMEOUT_MS, RUN_LOG_PATH
 from .models import CommandResult, DeviceCredentials, TransferProgress
 from .session import DeviceSession
 
 CONNECT_WAKEUP_ATTEMPTS = 1
+
+
+def _configure_runtime_logging():
+    APP_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+
+    file_handler = logging.FileHandler(str(RUN_LOG_PATH), encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s:%(name)s:%(message)s",
+            datefmt="%m-%d %H:%M:%S",
+        )
+    )
+    root_logger.addHandler(file_handler)
 
 
 def _emit(event: str, **payload):
@@ -232,6 +251,7 @@ def main():
     connected = False
 
     try:
+        _configure_runtime_logging()
         first_line = sys.stdin.readline()
         if not first_line:
             return 1

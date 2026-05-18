@@ -5,19 +5,24 @@ import locale
 import re
 import subprocess
 import threading
+import time
+import hashlib
 from typing import Dict, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from query_tool.utils.device_query import DeviceQuery
 from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.logger import logger
+from query_tool.utils.runtime_credential_cache import get_shared_device_query
 
 from .config import DEFAULT_COMMAND_TIMEOUT_MS, DEVICE_USERNAME
 from .models import DeviceCredentials
 from .session import fetch_cloud_credentials
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+_DEVICE_CONTEXT_CACHE = {}
+_DEVICE_CONTEXT_CACHE_LOCK = threading.RLock()
+_DEVICE_CONTEXT_CACHE_TTL_S = 5 * 60
 
 
 def _is_wakeup_failed_message(message: str) -> bool:
@@ -48,7 +53,7 @@ def validate_seetong_login(username: str, password: str) -> Tuple[bool, str]:
         return False, "请输入账号和密码"
 
     try:
-        fetch_cloud_credentials(username, password)
+        fetch_cloud_credentials(username, password, force_refresh=True)
         return True, "验证成功"
     except Exception as exc:
         logger.error(f"Seetong 账号验证失败: {exc}")
@@ -57,7 +62,19 @@ def validate_seetong_login(username: str, password: str) -> Tuple[bool, str]:
 
 def resolve_device_credentials(sn: str, env: str, username: str, password: str) -> Tuple[DeviceCredentials, Dict[str, str]]:
     """通过设备查询接口按 SN 获取设备密码，并组装调试连接所需凭据。"""
-    query = DeviceQuery(env, username, password)
+    password_digest = hashlib.sha256((password or "").encode("utf-8")).hexdigest()
+    cache_key = f"{env}|{username}|{password_digest}|{sn.strip().upper()}"
+    now = time.time()
+    with _DEVICE_CONTEXT_CACHE_LOCK:
+        entry = _DEVICE_CONTEXT_CACHE.get(cache_key)
+        if entry and (now - entry["created_at"]) < _DEVICE_CONTEXT_CACHE_TTL_S:
+            context = dict(entry["context"])
+            return (
+                DeviceCredentials(sn=context["sn"], username=DEVICE_USERNAME, password=context["device_password"]),
+                context,
+            )
+
+    query = get_shared_device_query(env, username, password)
     if query.init_error:
         raise RuntimeError(query.init_error)
 
@@ -76,13 +93,20 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
     if not device_password:
         raise RuntimeError(f"未获取到设备密码：{real_sn}")
 
+    context = {
+        "sn": real_sn,
+        "dev_id": dev_id,
+        "device_password": device_password,
+    }
+    with _DEVICE_CONTEXT_CACHE_LOCK:
+        _DEVICE_CONTEXT_CACHE[cache_key] = {
+            "context": dict(context),
+            "created_at": now,
+        }
+
     return (
         DeviceCredentials(sn=real_sn, username=DEVICE_USERNAME, password=device_password),
-        {
-            "sn": real_sn,
-            "dev_id": dev_id,
-            "device_password": device_password,
-        },
+        context,
     )
 
 

@@ -57,6 +57,7 @@ class Logger:
         # 配置根日志记录器
         self.logger = logging.getLogger('QueryTool')
         self.logger.setLevel(logging.DEBUG)  # 设置为DEBUG以支持所有级别
+        self.logger.propagate = False
         
         # 清除已有的处理器
         self.logger.handlers.clear()
