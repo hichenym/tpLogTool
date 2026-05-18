@@ -109,10 +109,15 @@ def sync_user_version():
         if _threads:
             return
 
-        from query_tool.utils.config import get_account_config, get_firmware_account_config
+        from query_tool.utils.config import (
+            get_account_config,
+            get_firmware_account_config,
+            get_seetong_account_config,
+        )
+        st, _ = get_seetong_account_config()
         fw, _ = get_firmware_account_config()
         _, dv, _ = get_account_config()
-        user = fw or dv
+        user = st or fw or dv
         if not user:
             return
 
