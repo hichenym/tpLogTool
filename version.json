@@ -1,15 +1,15 @@
 {
-  "version": "3.5.0",
+  "version": "3.5.1",
   "build_date": "20260517",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.0/TPQueryTool.exe",
-  "file_size_mb": 161.87,
-  "file_size_bytes": 169737216,
-  "file_hash": "34f64384587dd5575cb4d4921058718cf64a0be089e276dcd110ab95c6c60426",
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.1/TPQueryTool.exe",
+  "file_size_mb": 162.9,
+  "file_size_bytes": 170813440,
+  "file_hash": "08daa0a31ba8ca43348dae339f2118396501f224d19e06d2888c7f316174b085",
   "hash_algorithm": "sha256",
-  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.0/TPQueryTool.exe.sha256",
-  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.5.0",
+  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.1/TPQueryTool.exe.sha256",
+  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.5.1",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": ["新增设备调试功能","新增命令下发功能","修复已知问题"],
+  "changelog": ["修复调试和命令页功能错误","窗口界面自适应"],
   "analytics": {"doc_id":"IVx0bqWefaVflZssxeycgHvSn5J","sheet_id":"tblyZtqCQEC43Hzl"}
 }
