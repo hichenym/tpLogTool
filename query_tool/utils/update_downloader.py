@@ -455,6 +455,39 @@ class UpdateDownloader:
 
 class UpdateInstaller:
     """更新安装器"""
+
+    @staticmethod
+    def can_apply_update() -> bool:
+        """判断当前运行方式是否支持自动覆盖安装。"""
+        if getattr(sys, 'frozen', False):
+            return True
+        if "__compiled__" in globals() or hasattr(sys, "nuitka_binary_dir"):
+            return True
+
+        current_program = UpdateInstaller.get_current_executable_path()
+        basename = os.path.basename(current_program).lower()
+        return current_program.lower().endswith('.exe') and basename not in ("python.exe", "pythonw.exe")
+
+    @staticmethod
+    def get_current_executable_path() -> str:
+        """获取当前程序路径，优先返回真正的应用 exe。"""
+        candidates = []
+
+        if sys.executable:
+            candidates.append(Path(sys.executable).resolve())
+        if sys.argv and sys.argv[0]:
+            candidates.append(Path(sys.argv[0]).resolve())
+
+        for candidate in candidates:
+            if candidate.suffix.lower() != '.exe':
+                continue
+            if candidate.name.lower() in ("python.exe", "pythonw.exe"):
+                continue
+            return str(candidate)
+
+        if candidates:
+            return str(candidates[0])
+        return sys.executable
     
     @staticmethod
     def create_update_script(new_exe_path: str, current_exe_path: str, restart: bool = True) -> str:
@@ -545,17 +578,15 @@ del "%~f0"
             logger.info(f"文件大小: {file_size / 1024 / 1024:.2f} MB")
             
             # 获取当前 exe 路径
-            if getattr(sys, 'frozen', False):
-                # 打包后的 exe
-                current_exe_path = sys.executable
-                logger.info(f"当前程序: {current_exe_path}")
-            else:
-                # 开发环境，不执行更新
+            if not UpdateInstaller.can_apply_update():
                 logger.warning("=" * 60)
-                logger.warning("检测到开发环境（未打包），跳过更新")
-                logger.warning("如需测试更新功能，请使用打包后的 exe")
+                logger.warning("当前运行方式不支持自动覆盖安装，跳过更新")
+                logger.warning(f"当前程序: {UpdateInstaller.get_current_executable_path()}")
                 logger.warning("=" * 60)
-                raise RuntimeError("开发环境不支持自动更新")
+                raise RuntimeError("当前运行方式不支持自动更新")
+
+            current_exe_path = UpdateInstaller.get_current_executable_path()
+            logger.info(f"当前程序: {current_exe_path}")
             
             # 创建更新脚本
             logger.info("创建更新脚本...")

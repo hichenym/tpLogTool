@@ -439,9 +439,7 @@ class MainWindow(QMainWindow):
             try:
                 from query_tool.utils.update_downloader import UpdateInstaller
                 import os
-                import sys
                 import subprocess
-                import tempfile
                 
                 logger.info("检测到待安装的更新，准备安装...")
                 
@@ -449,60 +447,18 @@ class MainWindow(QMainWindow):
                 restart = self._restart_after_update
                 logger.info(f"安装后是否重启程序: {restart}")
                 
-                # 检查是否是打包后的程序
-                if not getattr(sys, 'frozen', False):
-                    logger.warning("开发环境，跳过更新安装")
+                if not UpdateInstaller.can_apply_update():
+                    logger.warning("当前运行方式不支持自动更新安装，跳过本次自动安装")
                     event.accept()
                     return
                 
-                # 创建更新脚本
                 new_exe_path = self.pending_update_file
-                current_exe_path = sys.executable
-                
-                script_content = f"""@echo off
-chcp 65001 >nul
-echo 正在更新程序...
-
-:: 等待主程序退出
-timeout /t 2 /nobreak >nul
-
-:: 备份当前版本
-if exist "{current_exe_path}.bak" del "{current_exe_path}.bak"
-move "{current_exe_path}" "{current_exe_path}.bak"
-
-:: 复制新版本
-copy "{new_exe_path}" "{current_exe_path}"
-
-:: 检查是否成功
-if exist "{current_exe_path}" (
-    echo 更新成功！
-    :: 删除备份
-    del "{current_exe_path}.bak"
-    :: 删除下载的文件
-    del "{new_exe_path}"
-) else (
-    echo 更新失败，恢复备份...
-    move "{current_exe_path}.bak" "{current_exe_path}"
-)
-
-"""
-                
-                if restart:
-                    script_content += f"""
-:: 重启程序
-start "" "{current_exe_path}"
-"""
-                
-                script_content += """
-:: 删除脚本自身
-del "%~f0"
-"""
-                
-                # 保存脚本
-                script_path = os.path.join(tempfile.gettempdir(), 'tpquerytool_update.bat')
-                
-                with open(script_path, 'w', encoding='utf-8') as f:
-                    f.write(script_content)
+                current_exe_path = UpdateInstaller.get_current_executable_path()
+                script_path = UpdateInstaller.create_update_script(
+                    new_exe_path,
+                    current_exe_path,
+                    restart,
+                )
                 
                 logger.info(f"更新脚本已创建: {script_path}")
                 logger.info("启动更新脚本...")
@@ -607,14 +563,17 @@ del "%~f0"
                                 strategy = self.update_manager.get_update_strategy()
                                 
                                 if strategy == 'silent':
-                                    # 静默模式：直接安装
-                                    logger.info("静默模式，直接安装已下载的文件")
-                                    self.pending_update_file = str(latest_file)
-                                    # 设置标志为 True，表示安装后需要重新打开程序
-                                    self._restart_after_update = True
-                                    # 立即关闭程序并安装
-                                    self.close()
-                                    return
+                                    from query_tool.utils.update_downloader import UpdateInstaller
+                                    if UpdateInstaller.can_apply_update():
+                                        # 静默模式：直接安装
+                                        logger.info("静默模式，直接安装已下载的文件")
+                                        self.pending_update_file = str(latest_file)
+                                        # 设置标志为 True，表示安装后需要重新打开程序
+                                        self._restart_after_update = True
+                                        # 立即关闭程序并安装
+                                        self.close()
+                                        return
+                                    logger.warning("当前运行方式不支持自动安装已下载更新，跳过启动时自动应用")
                                 elif strategy == 'prompt':
                                     # 提示模式：弹窗询问用户是否立即重启
                                     logger.info("提示模式，弹窗询问用户是否立即重启")
@@ -756,19 +715,15 @@ del "%~f0"
                 # 显示下载完成消息，然后弹出重启对话框
                 self.show_success("更新下载完成", 2000)
                 
-                # 检查是否在开发环境
-                import sys
-                if not getattr(sys, 'frozen', False):
-                    # 开发环境，显示提示
+                from query_tool.utils.update_downloader import UpdateInstaller
+                if not UpdateInstaller.can_apply_update():
                     from PyQt5.QtWidgets import QMessageBox
                     QMessageBox.information(
                         self,
-                        "开发环境提示",
+                        "更新已下载",
                         "更新已下载完成。\n\n"
-                        "注意：自动更新功能仅在打包后的程序中可用。\n\n"
-                        "当前运行在开发环境，无法执行自动更新。\n"
-                        "如需测试更新功能，请使用以下命令打包：\n\n"
-                        "python scripts/build.py"
+                        "当前运行方式不支持自动覆盖安装。\n"
+                        "已保留安装包，可手动替换或使用发布版程序完成更新。"
                     )
                     return
                 
@@ -827,12 +782,23 @@ del "%~f0"
         """显示更新已准备好的对话框（启动时检测到已下载的文件）"""
         from PyQt5.QtWidgets import QMessageBox
         from query_tool.utils.logger import logger
+        from query_tool.utils.update_downloader import UpdateInstaller
         
         logger.info(f"显示更新已准备好对话框: {file_path}")
         
         # 设置更新管理器的下载文件路径
         if self.update_manager:
             self.update_manager.downloaded_file_path = file_path
+
+        if not UpdateInstaller.can_apply_update():
+            QMessageBox.information(
+                self,
+                "更新已下载",
+                "检测到更新安装包已下载完成。\n\n"
+                "当前运行方式不支持自动覆盖安装。\n"
+                "已保留安装包，可手动替换或使用发布版程序完成更新。"
+            )
+            return
         
         # 弹窗询问用户
         reply = QMessageBox.question(
@@ -854,6 +820,7 @@ del "%~f0"
         """应用更新并重启"""
         from query_tool.utils.logger import logger
         from PyQt5.QtWidgets import QMessageBox
+        from query_tool.utils.update_downloader import UpdateInstaller
         
         try:
             logger.info("用户选择立即重启，应用更新...")
@@ -874,6 +841,15 @@ del "%~f0"
                 return
             
             logger.info(f"更新文件路径: {self.update_manager.downloaded_file_path}")
+
+            if not UpdateInstaller.can_apply_update():
+                QMessageBox.information(
+                    self,
+                    "更新已下载",
+                    "当前运行方式不支持自动覆盖安装。\n"
+                    "已保留安装包，可手动替换或使用发布版程序完成更新。"
+                )
+                return
             
             # 设置标志，表示更新后需要重启程序
             self._restart_after_update = True
@@ -883,18 +859,6 @@ del "%~f0"
             logger.info("关闭程序以执行更新...")
             self.close()
             
-        except RuntimeError as e:
-            # 开发环境错误（预期的）
-            error_msg = str(e)
-            logger.warning(error_msg)
-            QMessageBox.information(
-                self,
-                "开发环境提示",
-                f"{error_msg}\n\n"
-                "自动更新功能仅在打包后的程序中可用。\n\n"
-                "如需测试更新功能，请使用以下命令打包：\n"
-                "python scripts/build.py"
-            )
         except Exception as e:
             logger.error(f"应用更新失败: {e}", exc_info=True)
             QMessageBox.critical(
