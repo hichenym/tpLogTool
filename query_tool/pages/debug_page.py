@@ -811,6 +811,7 @@ class DebugPage(BasePage):
 
     MAX_SHORTCUTS = 50
     MAX_HISTORY = 100
+    PENDING_RECONNECT_DELAY_MS = 800
     DEFAULT_SHORTCUT_COMMANDS = [
         'startlogp2p 31',
         'startlogp2p 0',
@@ -1163,6 +1164,11 @@ class DebugPage(BasePage):
         self.pending_target_sn = ""
         self.on_connect_button_clicked()
 
+    def _schedule_pending_connect(self):
+        if not (self.pending_target_sn or "").strip():
+            return
+        QTimer.singleShot(self.PENDING_RECONNECT_DELAY_MS, self._start_pending_connect)
+
     def on_connect_button_clicked(self):
         if self.connecting and not self.connected:
             self.on_cancel_connect_clicked()
@@ -1265,7 +1271,7 @@ class DebugPage(BasePage):
         self.update_connect_button()
         self.append_output("已取消连接")
         self.show_info("已取消连接")
-        QTimer.singleShot(0, self._start_pending_connect)
+        self._schedule_pending_connect()
 
     def on_disconnect_clicked(self):
         if not self.connected:
@@ -1556,8 +1562,8 @@ class DebugPage(BasePage):
         self.update_shortcut_controls()
         self.update_send_button()
         self.append_output("连接成功")
+        self._flush_pending_output()
         self.show_success(f"设备 {context.get('sn', '')} 连接成功")
-        self._submit_command("start", source="auto", record_history=False)
 
     def on_connect_failed(self, message):
         self.connected = False
@@ -1598,7 +1604,7 @@ class DebugPage(BasePage):
         self.update_send_button()
         self.append_output(message)
         self.show_info(message)
-        QTimer.singleShot(0, self._start_pending_connect)
+        self._schedule_pending_connect()
 
     def on_command_failed(self, message):
         self._last_command_failed = True

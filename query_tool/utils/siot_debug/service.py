@@ -238,14 +238,9 @@ class SiotDebugWorker(QObject):
             self.disconnected.emit("连接已断开")
             return
 
-        self._closing = True
-        try:
-            self._send_to_process({"action": "disconnect"})
-        except Exception as exc:
-            logger.warning(f"发送断开指令失败，转为强制关闭: {exc}")
-            self._close_process(wait=False)
-            self._connected = False
-            self.disconnected.emit("连接已断开")
+        self._close_process(wait=False)
+        self._connected = False
+        self.disconnected.emit("连接已断开")
 
     @pyqtSlot()
     def shutdown(self):

@@ -16,8 +16,16 @@ from .models import CommandResult, DeviceCredentials, TransferProgress
 from .session import DeviceSession
 
 CONNECT_WAKEUP_ATTEMPTS = 1
+AUTH_RETRY_ATTEMPTS = 2
+AUTH_RETRY_DELAY_S = 0.8
 STREAM_LOG_FLUSH_INTERVAL_S = 0.2
 STREAM_LOG_MAX_BATCH = 50
+
+
+def _is_auth_failed_message(message: str) -> bool:
+    return (message or "").strip().lower() == "device authentication failed"
+
+
 class _StreamLogEmitter:
     def __init__(self):
         self._lock = threading.Lock()
@@ -191,9 +199,7 @@ def _format_command_result(command: str, result: CommandResult) -> str:
         )
 
     if result.success and result.acknowledged:
-        if command.lower() in ("syscmd start", "syscmdex start"):
-            return ""
-        return "命令已发送成功，设备未返回内容"
+        return ""
 
     return "无返回内容。"
 
@@ -377,29 +383,45 @@ def main():
         last_connect_error = ""
 
         for attempt in range(1, CONNECT_WAKEUP_ATTEMPTS + 1):
-            session = DeviceSession(cloud_username, cloud_password)
-            try:
-                session.connect(credentials, status_callback=lambda msg: _emit("status", message=msg))
-                connected = True
-                _emit("connected")
+            for auth_retry_index in range(AUTH_RETRY_ATTEMPTS):
+                session = DeviceSession(cloud_username, cloud_password)
+                try:
+                    session.connect(credentials, status_callback=lambda msg: _emit("status", message=msg))
+                    init_result = session.execute_command(
+                        "syscmd start",
+                        timeout_ms=DEFAULT_COMMAND_TIMEOUT_MS,
+                        progress_callback=None,
+                        stream_log_callback=None,
+                    )
+                    if not init_result.success:
+                        init_message = (init_result.display_text or _format_command_result("syscmd start", init_result)).strip()
+                        raise RuntimeError(init_message or "初始化交互终端失败")
+                    connected = True
+                    _emit("connected")
+                    break
+                except Exception as exc:
+                    last_connect_error = str(exc)
+                    if session is not None:
+                        try:
+                            session.close()
+                        except Exception:
+                            pass
+                        session = None
+
+                    if _is_auth_failed_message(last_connect_error) and auth_retry_index < AUTH_RETRY_ATTEMPTS - 1:
+                        time.sleep(AUTH_RETRY_DELAY_S)
+                        continue
+
+                    if not _is_wakeup_failed_message(last_connect_error):
+                        raise
+
+                    wakeup_failures.append(f"第{attempt}轮唤醒失败")
+                    if attempt < CONNECT_WAKEUP_ATTEMPTS:
+                        _emit("status", message=f"第{attempt}轮唤醒失败，准备第{attempt + 1}轮重试...")
+                        continue
+                    raise RuntimeError("\n".join(wakeup_failures) or "唤醒失败")
+            if connected:
                 break
-            except Exception as exc:
-                last_connect_error = str(exc)
-                if session is not None:
-                    try:
-                        session.close()
-                    except Exception:
-                        pass
-                    session = None
-
-                if not _is_wakeup_failed_message(last_connect_error):
-                    raise
-
-                wakeup_failures.append(f"第{attempt}轮唤醒失败")
-                if attempt < CONNECT_WAKEUP_ATTEMPTS:
-                    _emit("status", message=f"第{attempt}轮唤醒失败，准备第{attempt + 1}轮重试...")
-                    continue
-                raise RuntimeError("\n".join(wakeup_failures) or "唤醒失败")
 
         if not connected:
             raise RuntimeError(last_connect_error or "登录设备失败")
