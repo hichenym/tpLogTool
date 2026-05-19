@@ -15,6 +15,7 @@ from query_tool.utils import StyleManager
 from query_tool.utils.logger import logger
 from query_tool.utils.thread_manager import ThreadManager
 import os
+from urllib.parse import parse_qsl, urlparse, unquote
 
 
 class ClickableDateTimeEdit(QDateTimeEdit):
@@ -391,6 +392,7 @@ class EditFirmwareDialog(QDialog):
         self.session = None  # 将从父窗口获取session
         self.selected_file_name = None  # 保存选择的文件名
         self.is_create_mode = (firmware_id is None)  # 是否为新增模式
+        self.immediate_upgrade_checkbox = None
         
         # 线程管理器
         self.thread_mgr = ThreadManager()
@@ -583,10 +585,15 @@ class EditFirmwareDialog(QDialog):
         
         # 6. 可升级时间段（两个时间控件水平排列）
         time_label = QLabel("升级时间段:")
-        time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        time_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         time_widget = QWidget()
-        time_widget.setFixedHeight(28)
-        time_layout = QHBoxLayout(time_widget)
+        time_widget.setFixedHeight(58)
+        time_container_layout = QVBoxLayout(time_widget)
+        time_container_layout.setContentsMargins(0, 0, 0, 0)
+        time_container_layout.setSpacing(6)
+
+        time_row_widget = QWidget()
+        time_layout = QHBoxLayout(time_row_widget)
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.setSpacing(10)
         
@@ -612,20 +619,32 @@ class EditFirmwareDialog(QDialog):
         self.end_time_edit.setStyleSheet(datetime_style)
         self.end_time_edit.setButtonSymbols(QDateTimeEdit.UpDownArrows)
         
-        time_layout.addWidget(self.start_time_edit)
-        time_layout.addWidget(separator_label)
-        time_layout.addWidget(self.end_time_edit)
-        time_layout.addStretch()
-        
-        # 今天快捷按钮，与右侧按钮列对齐（同宽 100px）
         today_btn = QPushButton("今天")
         today_btn.setFixedSize(100, 28)
         today_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         today_btn.clicked.connect(self._on_set_today)
-        time_layout.addWidget(today_btn)
-        
-        # 调整 time_widget 高度以容纳按钮
-        time_widget.setFixedHeight(28)
+
+        self.immediate_upgrade_checkbox = QCheckBox("立即下发升级")
+        self.immediate_upgrade_checkbox.setStyleSheet(
+            f"QCheckBox {{ color: {t('text_primary')}; font-size: 12px; }}"
+        )
+
+        time_layout.addWidget(self.start_time_edit)
+        time_layout.addWidget(separator_label)
+        time_layout.addWidget(self.end_time_edit)
+        time_layout.addStretch()
+        time_layout.addWidget(today_btn, 0, Qt.AlignTop)
+
+        checkbox_row_widget = QWidget()
+        checkbox_layout = QHBoxLayout(checkbox_row_widget)
+        checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        checkbox_layout.setSpacing(10)
+        checkbox_layout.addStretch()
+        checkbox_layout.addWidget(self.immediate_upgrade_checkbox, 0, Qt.AlignLeft)
+        checkbox_layout.addSpacing(max(0, 100 - self.immediate_upgrade_checkbox.sizeHint().width()))
+
+        time_container_layout.addWidget(time_row_widget)
+        time_container_layout.addWidget(checkbox_row_widget)
         
         form_layout.addRow(time_label, time_widget)
         
@@ -661,6 +680,14 @@ class EditFirmwareDialog(QDialog):
     
     def load_data(self):
         """加载当前数据"""
+        current_file_name = self._resolve_current_file_name()
+        if current_file_name:
+            self.file_status_label.setText(current_file_name)
+            self.file_status_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
+        else:
+            self.file_status_label.setText("未选择文件")
+            self.file_status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
+
         # 加载固件标识
         identifier = self.firmware_data.get('device_identify', '')
         self.identifier_input.setText(identifier)
@@ -715,6 +742,45 @@ class EditFirmwareDialog(QDialog):
         
         # 初始验证表单状态
         self.validate_form()
+
+    def _resolve_current_file_name(self):
+        """优先从详情字段里提取当前固件文件名。"""
+        fallback_name = ""
+        for key in ("file_path", "file_formal_path", "file_temp_path", "file_url"):
+            raw_value = str(self.firmware_data.get(key, '') or '').strip()
+            file_name = self._extract_file_name(raw_value)
+            if file_name:
+                if "." in file_name:
+                    return file_name
+                if not fallback_name:
+                    fallback_name = file_name
+        return fallback_name
+
+    @staticmethod
+    def _extract_file_name(raw_value):
+        if not raw_value:
+            return ""
+        parsed = urlparse(raw_value)
+        candidates = []
+
+        if parsed.scheme or parsed.netloc:
+            if parsed.path:
+                candidates.append(parsed.path)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=False):
+                lowered_key = (key or "").strip().lower()
+                if lowered_key in {"filename", "file_name", "file", "name", "path"} and value:
+                    candidates.append(value)
+        else:
+            candidates.append(raw_value)
+
+        for candidate in candidates:
+            normalized = unquote(str(candidate).strip()).replace("\\", "/").rstrip("/")
+            if not normalized:
+                continue
+            name = normalized.rsplit("/", 1)[-1].strip()
+            if name:
+                return name
+        return ""
     
     def validate_form(self):
         """验证表单，控制确认按钮状态"""
@@ -1083,4 +1149,8 @@ class EditFirmwareDialog(QDialog):
     def get_result(self):
         """获取修改结果"""
         return self.result_data
+
+    def should_send_upgrade_immediately(self):
+        """是否在保存成功后立即批量下发升级"""
+        return bool(self.immediate_upgrade_checkbox and self.immediate_upgrade_checkbox.isChecked())
 

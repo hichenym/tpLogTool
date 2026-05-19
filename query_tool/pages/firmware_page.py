@@ -20,11 +20,13 @@ if project_root not in sys.path:
 
 from .base_page import BasePage
 from .page_registry import register_page
-from query_tool.utils import ButtonManager, ThreadManager, StyleManager, config_manager
+from query_tool.utils import ButtonManager, ThreadManager, StyleManager, config_manager, get_account_config
 from query_tool.utils.theme_manager import t
 from query_tool.widgets.custom_widgets import set_dark_title_bar
 from query_tool.widgets import EditFirmwareDialog
 from query_tool.utils.logger import logger
+from query_tool.utils.runtime_credential_cache import get_shared_device_query
+from query_tool.widgets.batch_upgrade_dialog import BatchUpgradeThread
 
 # 导入固件列表获取函数
 from query_tool.utils.firmware_api import login, fetch_firmware_data, parse_firmware_data, delete_firmware, get_firmware_detail, update_firmware
@@ -559,7 +561,10 @@ class FirmwarePage(BasePage):
             if result == EditFirmwareDialog.Accepted:
                 result_data = dialog.get_result()
                 if result_data:
-                    self.submit_firmware_create(result_data)
+                    self.submit_firmware_create(
+                        result_data,
+                        send_upgrade_immediately=dialog.should_send_upgrade_immediately(),
+                    )
             else:
                 self.show_info("已取消新增固件")
 
@@ -569,7 +574,7 @@ class FirmwarePage(BasePage):
         self.thread_mgr.add("load_create_page", load_thread)
         load_thread.start()
     
-    def submit_firmware_create(self, data):
+    def submit_firmware_create(self, data, send_upgrade_immediately=False):
         """提交新增固件"""
         identifier = data.get('device_identify', '未知')
         self.show_progress(f"正在新增固件: {identifier}...")
@@ -629,7 +634,15 @@ class FirmwarePage(BasePage):
                     self.finished_signal.emit(False, str(e))
         
         create_thread = CreateThread(data)
-        create_thread.finished_signal.connect(lambda success, msg: self.on_create_finished(success, msg, identifier))
+        create_thread.finished_signal.connect(
+            lambda success, msg: self.on_create_finished(
+                success,
+                msg,
+                identifier,
+                data,
+                send_upgrade_immediately,
+            )
+        )
         create_thread.finished.connect(lambda: create_thread.deleteLater())
         self.thread_mgr.add("create", create_thread)
         create_thread.start()
@@ -637,10 +650,12 @@ class FirmwarePage(BasePage):
         # 保存线程引用
         self._create_thread = create_thread
     
-    def on_create_finished(self, success, message, identifier):
+    def on_create_finished(self, success, message, identifier, created_data, send_upgrade_immediately):
         """新增完成回调"""
         if success:
             self.show_success(f"新增成功: {identifier}")
+            if send_upgrade_immediately:
+                self.start_immediate_batch_upgrade(created_data)
             # 刷新列表（回到第1页）
             self.current_page = 1
             self.query_with_page(self.current_page)
@@ -1158,12 +1173,16 @@ class FirmwarePage(BasePage):
             result_data = dialog.get_result()
             if result_data:
                 # 传递固件ID和更新的数据
-                self.submit_firmware_update(firmware_id, result_data)
+                self.submit_firmware_update(
+                    firmware_id,
+                    result_data,
+                    send_upgrade_immediately=dialog.should_send_upgrade_immediately(),
+                )
         else:
             # 用户取消了修改
             self.show_info("已取消修改固件")
-    
-    def submit_firmware_update(self, firmware_id, data):
+
+    def submit_firmware_update(self, firmware_id, data, send_upgrade_immediately=False):
         """提交固件更新"""
         identifier = data.get('device_identify', '未知')
         self.show_progress(f"正在提交修改: {identifier}...")
@@ -1186,7 +1205,13 @@ class FirmwarePage(BasePage):
         update_thread = UpdateThread(firmware_id, data)
         # 传递固件ID和更新的数据到回调函数
         update_thread.finished_signal.connect(
-            lambda success, msg: self.on_update_finished(success, msg, firmware_id, data)
+            lambda success, msg: self.on_update_finished(
+                success,
+                msg,
+                firmware_id,
+                data,
+                send_upgrade_immediately,
+            )
         )
         update_thread.finished.connect(lambda: update_thread.deleteLater())
         self.thread_mgr.add("update", update_thread)
@@ -1195,16 +1220,96 @@ class FirmwarePage(BasePage):
         # 保存线程引用
         self._update_thread = update_thread
     
-    def on_update_finished(self, success, message, firmware_id, updated_data):
+    def on_update_finished(self, success, message, firmware_id, updated_data, send_upgrade_immediately):
         """更新完成回调"""
         if success:
             identifier = updated_data.get('device_identify', '未知')
             self.show_success(f"修改成功: {identifier}")
+            if send_upgrade_immediately:
+                self.start_immediate_batch_upgrade(updated_data)
             
             # 只更新表格中已显示的字段，不重新查询
             self.update_table_row(firmware_id, updated_data)
         else:
             self.show_error(f"修改失败: {message}")
+
+    def start_immediate_batch_upgrade(self, firmware_data):
+        """保存固件后，按支持升级SN立即批量下发升级命令。"""
+        support_sn = str(firmware_data.get('support_sn', '') or '')
+        sn_list = []
+        seen = set()
+        for raw_line in support_sn.splitlines():
+            sn = raw_line.strip()
+            if not sn or sn in seen:
+                continue
+            seen.add(sn)
+            sn_list.append(sn)
+
+        if not sn_list:
+            self.show_warning("固件已保存，但升级SN为空，未执行立即下发")
+            return
+
+        file_url = str(firmware_data.get('download_url') or firmware_data.get('file_url') or '').strip()
+        if not file_url:
+            self.show_warning("固件已保存，但下载链接为空，未执行立即下发")
+            return
+
+        env, username, password = get_account_config()
+        if not username or not password:
+            self.show_warning("固件已保存，但运维账号未配置，未执行立即下发")
+            return
+
+        device_query = get_shared_device_query(env, username, password)
+        if device_query.init_error or not device_query.token:
+            self.show_warning(
+                f"固件已保存，但无法获取设备访问令牌，未执行立即下发：{device_query.init_error or '登录失败'}"
+            )
+            return
+
+        identifier = str(firmware_data.get('device_identify') or '未知').strip()
+        self.show_progress(f"正在立即下发升级: {identifier}（{len(sn_list)} 台）...")
+
+        devices = [(sn, "") for sn in sn_list]
+        stats = {'success': 0, 'offline': 0, 'failed': 0}
+        thread_name = f"immediate_upgrade_{int(datetime.now().timestamp() * 1000)}"
+        thread = BatchUpgradeThread(
+            devices,
+            identifier,
+            file_url,
+            device_query.token,
+            device_query.host,
+            min(30, max(1, len(devices))),
+        )
+
+        def on_single_result(_sn, status, _message):
+            if status not in stats:
+                status = 'failed'
+            stats[status] += 1
+
+        def on_all_done():
+            success_count = stats.get('success', 0)
+            offline_count = stats.get('offline', 0)
+            failed_count = stats.get('failed', 0)
+
+            if success_count > 0:
+                self.show_success(
+                    f"升级命令下发完成：成功 {success_count} 台，离线 {offline_count} 台，失败 {failed_count} 台"
+                )
+                return
+
+            if offline_count > 0 and failed_count == 0:
+                self.show_error("设备离线，操作失败")
+                return
+
+            self.show_error(
+                f"升级下发失败：离线 {offline_count} 台，失败 {failed_count} 台"
+            )
+
+        thread.single_result.connect(on_single_result)
+        thread.all_done.connect(on_all_done)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add(thread_name, thread)
+        thread.start()
     
     def update_table_row(self, firmware_id, updated_data):
         """更新表格中的指定行"""

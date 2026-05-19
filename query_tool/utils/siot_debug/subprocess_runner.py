@@ -18,12 +18,27 @@ from .session import DeviceSession
 CONNECT_WAKEUP_ATTEMPTS = 1
 AUTH_RETRY_ATTEMPTS = 2
 AUTH_RETRY_DELAY_S = 0.8
+INIT_START_ATTEMPTS = 2
+INIT_START_RETRY_DELAY_S = 0.8
+INIT_START_TIMEOUT_MS = 5_000
 STREAM_LOG_FLUSH_INTERVAL_S = 0.2
 STREAM_LOG_MAX_BATCH = 50
 
 
 def _is_auth_failed_message(message: str) -> bool:
     return (message or "").strip().lower() == "device authentication failed"
+
+
+def _is_empty_start_result(result: CommandResult) -> bool:
+    """syscmd start 常见为空应答；这类结果不应直接打成登录失败。"""
+    return (
+        not result.success
+        and not result.acknowledged
+        and not result.display_text
+        and not result.responses
+        and result.streamed_packets == 0
+        and not result.binary_payload
+    )
 
 
 class _StreamLogEmitter:
@@ -387,13 +402,22 @@ def main():
                 session = DeviceSession(cloud_username, cloud_password)
                 try:
                     session.connect(credentials, status_callback=lambda msg: _emit("status", message=msg))
-                    init_result = session.execute_command(
-                        "syscmd start",
-                        timeout_ms=DEFAULT_COMMAND_TIMEOUT_MS,
-                        progress_callback=None,
-                        stream_log_callback=None,
-                    )
-                    if not init_result.success:
+                    init_result = None
+                    for init_attempt in range(INIT_START_ATTEMPTS):
+                        init_result = session.execute_command(
+                            "syscmd start",
+                            timeout_ms=INIT_START_TIMEOUT_MS,
+                            progress_callback=None,
+                            stream_log_callback=None,
+                        )
+                        if init_result.success:
+                            break
+                        if _is_empty_start_result(init_result):
+                            if init_attempt < INIT_START_ATTEMPTS - 1:
+                                time.sleep(INIT_START_RETRY_DELAY_S)
+                                continue
+                            logging.warning("syscmd start returned empty result during connect; treating as soft success")
+                            break
                         init_message = (init_result.display_text or _format_command_result("syscmd start", init_result)).strip()
                         raise RuntimeError(init_message or "初始化交互终端失败")
                     connected = True
