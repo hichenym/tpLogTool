@@ -3,14 +3,15 @@ GitLab 日志导出页面
 提供 GitLab 提交日志查询和导出功能
 """
 import os
+from collections import OrderedDict
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QComboBox, QDateEdit, QGroupBox, QScrollArea, QWidget,
-    QFileDialog, QFrame
+    QFileDialog, QFrame, QPlainTextEdit, QShortcut, QSizePolicy, QTextEdit
 )
-from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal, QSize
-from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal, QSize, QEvent
+from PyQt5.QtGui import QIcon, QTextCursor, QTextDocument, QKeySequence, QColor, QTextCharFormat
 
 from .base_page import BasePage
 from .page_registry import register_page
@@ -43,6 +44,28 @@ class GitLabWorkerThread(QThread):
             self.error_signal.emit(str(e))
 
 
+class SearchablePlainTextEdit(QPlainTextEdit):
+    """支持快捷搜索的纯文本框"""
+    find_requested = pyqtSignal()
+    find_next_requested = pyqtSignal()
+    find_previous_requested = pyqtSignal()
+    
+    def keyPressEvent(self, event):
+        if event.matches(QKeySequence.Find):
+            self.find_requested.emit()
+            event.accept()
+            return
+        if event.matches(QKeySequence.FindNext):
+            self.find_next_requested.emit()
+            event.accept()
+            return
+        if event.matches(QKeySequence.FindPrevious):
+            self.find_previous_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 @register_page("GIT", order=6, icon=":/icons/system/git.png")
 class GitLabLogPage(BasePage):
     """GitLab 日志导出页面"""
@@ -68,6 +91,11 @@ class GitLabLogPage(BasePage):
         self.save_path = ""
         self.recent_projects = []
         self.recent_branches = {}
+        self.query_conditions_collapsed = False
+        self.last_search_keyword = ""
+        self.base_commits_cache = OrderedDict()
+        self.hydrated_commits_cache = OrderedDict()
+        self.authors_cache = OrderedDict()
         
         self.init_ui()
         self.load_config()
@@ -84,12 +112,15 @@ class GitLabLogPage(BasePage):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area = scroll
         
         # 内容容器
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(8)
+        self.content_widget = content_widget
+        self.content_layout = content_layout
         
         # 1. 服务器连接区
         self.create_connection_area(content_layout)
@@ -100,25 +131,26 @@ class GitLabLogPage(BasePage):
         # 3. 时间范围和导出区
         self.create_export_area(content_layout)
         
-        # 添加弹性空间
-        content_layout.addStretch()
-        
         scroll.setWidget(content_widget)
         main_layout.addWidget(scroll)
         
         # 创建按钮组
         self.main_buttons = self.btn_manager.create_group("main")
         self.main_buttons.add(
-            self.connect_btn, self.browse_btn, self.export_btn
+            self.connect_btn, self.browse_btn, self.export_btn, self.query_btn
         )
+        self.scroll_area.viewport().installEventFilter(self)
         
         # 初始状态
         self.set_controls_enabled(False)
+        self._lock_static_group_heights()
+        self._update_result_area_height()
     
     def create_connection_area(self, parent_layout):
         """创建服务器连接区域"""
-        group = QGroupBox("服务器连接")
-        layout = QVBoxLayout(group)
+        self.connection_group = QGroupBox("服务器连接")
+        self.connection_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout = QVBoxLayout(self.connection_group)
         layout.setSpacing(8)
         layout.setContentsMargins(10, 15, 10, 10)
         
@@ -155,12 +187,13 @@ class GitLabLogPage(BasePage):
         token_layout.addWidget(self.connect_btn)
         layout.addLayout(token_layout)
         
-        parent_layout.addWidget(group)
+        parent_layout.addWidget(self.connection_group)
     
     def create_query_area(self, parent_layout):
         """创建查询条件区域"""
-        group = QGroupBox("查询条件")
-        layout = QVBoxLayout(group)
+        self.query_group = QGroupBox("查询条件")
+        self.query_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout = QVBoxLayout(self.query_group)
         layout.setSpacing(8)
         layout.setContentsMargins(10, 15, 10, 10)
         
@@ -243,12 +276,13 @@ class GitLabLogPage(BasePage):
         keyword_layout.addWidget(self.keyword_input, 1)
         layout.addLayout(keyword_layout)
         
-        parent_layout.addWidget(group)
+        parent_layout.addWidget(self.query_group)
     
     def create_export_area(self, parent_layout):
         """创建时间范围和导出区域"""
-        group = QGroupBox("时间范围与导出")
-        layout = QVBoxLayout(group)
+        self.export_group = QGroupBox("时间范围与导出")
+        self.export_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout = QVBoxLayout(self.export_group)
         layout.setSpacing(8)
         layout.setContentsMargins(10, 15, 10, 10)
         
@@ -306,14 +340,164 @@ class GitLabLogPage(BasePage):
         self.export_btn.setIconSize(QSize(16, 16))
         self.export_btn.setFixedSize(80, 28)
         self.export_btn.clicked.connect(self.on_export)
+
+        self.query_btn = QPushButton("查询")
+        self.query_btn.setFixedSize(80, 28)
+        self.query_btn.clicked.connect(self.on_query)
+
+        self.toggle_conditions_btn = QPushButton("收起")
+        self.toggle_conditions_btn.setFixedSize(80, 28)
+        self.toggle_conditions_btn.clicked.connect(self.toggle_query_conditions)
         
         path_layout.addWidget(path_label)
         path_layout.addWidget(self.path_input, 1)
         path_layout.addWidget(self.browse_btn)
         path_layout.addWidget(self.export_btn)
+        path_layout.addWidget(self.query_btn)
+        path_layout.addWidget(self.toggle_conditions_btn)
         layout.addLayout(path_layout)
         
-        parent_layout.addWidget(group)
+        parent_layout.addWidget(self.export_group)
+
+        self.create_result_area(parent_layout)
+
+    def create_result_area(self, parent_layout):
+        """创建查询结果区域"""
+        self.result_group = QGroupBox("Git 记录")
+        self.result_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout = QVBoxLayout(self.result_group)
+        layout.setSpacing(8)
+        layout.setContentsMargins(10, 15, 10, 10)
+
+        self.search_bar = QWidget()
+        self.search_bar.setVisible(False)
+        search_layout = QHBoxLayout(self.search_bar)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(6)
+
+        search_label = QLabel("搜索:")
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("输入关键字后回车，支持 Ctrl+F / F3 / Shift+F3")
+        self.search_input.returnPressed.connect(self.find_next_in_result)
+        self.search_input.textChanged.connect(self.update_search_highlights)
+
+        self.prev_match_btn = QPushButton("上一条")
+        self.prev_match_btn.setFixedSize(80, 28)
+        self.prev_match_btn.clicked.connect(self.find_previous_in_result)
+
+        self.next_match_btn = QPushButton("下一条")
+        self.next_match_btn.setFixedSize(80, 28)
+        self.next_match_btn.clicked.connect(self.find_next_in_result)
+
+        self.close_search_btn = QPushButton("关闭搜索")
+        self.close_search_btn.setFixedSize(90, 28)
+        self.close_search_btn.clicked.connect(self.hide_search_bar)
+
+        search_layout.addWidget(search_label)
+        search_layout.addWidget(self.search_input, 1)
+        search_layout.addWidget(self.prev_match_btn)
+        search_layout.addWidget(self.next_match_btn)
+        search_layout.addWidget(self.close_search_btn)
+        layout.addWidget(self.search_bar)
+
+        self.result_text = SearchablePlainTextEdit()
+        self.result_text.setReadOnly(True)
+        self.result_text.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.result_text.setMinimumHeight(260)
+        self.result_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.result_text.setPlaceholderText("点击“查询”后，这里会展示 Git 提交记录。")
+        self.result_text.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        self.result_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+        self.result_text.find_requested.connect(self.show_search_bar)
+        self.result_text.find_next_requested.connect(self.find_next_in_result)
+        self.result_text.find_previous_requested.connect(self.find_previous_in_result)
+        layout.addWidget(self.result_text)
+
+        self.find_shortcut = QShortcut(QKeySequence.Find, self.result_group)
+        self.find_shortcut.activated.connect(self.show_search_bar)
+
+        parent_layout.addWidget(self.result_group)
+        if hasattr(self, 'content_layout'):
+            self.content_layout.setStretchFactor(self.result_group, 1)
+
+    def _lock_static_group_heights(self):
+        """锁定顶部筛选区域高度，避免随窗口拉伸"""
+        for group in (self.connection_group, self.query_group, self.export_group):
+            group.setFixedHeight(group.sizeHint().height())
+
+    def eventFilter(self, watched, event):
+        if hasattr(self, 'scroll_area') and watched is self.scroll_area.viewport():
+            if event.type() in (QEvent.Resize, QEvent.Show, QEvent.LayoutRequest):
+                self._update_result_area_height()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_result_area_height()
+
+    def _sum_visible_group_heights(self, widgets):
+        """计算可见分组高度之和"""
+        visible_widgets = [widget for widget in widgets if widget.isVisible()]
+        if not visible_widgets:
+            return 0
+        return (
+            sum(widget.sizeHint().height() for widget in visible_widgets)
+            + max(0, len(visible_widgets) - 1) * self.content_layout.spacing()
+        )
+
+    def _update_result_area_height(self):
+        """根据窗口高度自动调整 Git 记录区高度"""
+        if not hasattr(self, 'scroll_area') or not hasattr(self, 'result_group'):
+            return
+
+        viewport_height = self.scroll_area.viewport().height()
+        margins = self.content_layout.contentsMargins()
+        used_height = margins.top() + margins.bottom()
+        used_height += self._sum_visible_group_heights([
+            self.connection_group,
+            self.query_group,
+            self.export_group
+        ])
+        used_height += self.content_layout.spacing()
+
+        available_height = max(320, viewport_height - used_height)
+        self.result_group.setMinimumHeight(available_height)
+
+    def update_search_highlights(self):
+        """更新搜索高亮"""
+        if not hasattr(self, 'result_text'):
+            return
+
+        keyword = self.search_input.text().strip()
+        selections = []
+
+        if keyword:
+            document = self.result_text.document()
+            cursor = QTextCursor(document)
+            normal_format = QTextCharFormat()
+            normal_format.setBackground(QColor("#8a6d00"))
+            normal_format.setForeground(QColor("#fff7bf"))
+
+            while True:
+                cursor = document.find(keyword, cursor)
+                if cursor.isNull():
+                    break
+                selection = QTextEdit.ExtraSelection()
+                selection.cursor = cursor
+                selection.format = normal_format
+                selections.append(selection)
+
+        current_cursor = self.result_text.textCursor()
+        if keyword and current_cursor.hasSelection() and current_cursor.selectedText() == keyword:
+            current_format = QTextCharFormat()
+            current_format.setBackground(QColor("#d8a300"))
+            current_format.setForeground(QColor("#1f1f1f"))
+            current_selection = QTextEdit.ExtraSelection()
+            current_selection.cursor = current_cursor
+            current_selection.format = current_format
+            selections.append(current_selection)
+
+        self.result_text.setExtraSelections(selections)
 
     
     def set_controls_enabled(self, enabled):
@@ -325,6 +509,7 @@ class GitLabLogPage(BasePage):
         self.start_date.setEnabled(enabled)
         self.end_date.setEnabled(enabled)
         self.export_btn.setEnabled(enabled)
+        self.query_btn.setEnabled(enabled)
     
     def on_connect(self):
         """连接/断开服务器"""
@@ -358,9 +543,13 @@ class GitLabLogPage(BasePage):
         self.is_connected = False
         self.projects = []
         self.branches = []
+        self.base_commits_cache.clear()
+        self.hydrated_commits_cache.clear()
+        self.authors_cache.clear()
         
         # 更新按钮
         self.connect_btn.setText("连接")
+        self.main_buttons.set_text(self.connect_btn, "连接")
         self.connect_btn.setIcon(QIcon(":/icons/gitlab/connect.png"))
         
         # 清空并禁用控件
@@ -383,6 +572,13 @@ class GitLabLogPage(BasePage):
         self.author_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
         
         self.set_controls_enabled(False)
+        self.result_text.clear()
+        self.result_text.setExtraSelections([])
+        self.search_input.clear()
+        self.last_search_keyword = ""
+        self.search_bar.setVisible(False)
+        self.result_text.setPlaceholderText("点击“查询”后，这里会展示 Git 提交记录。")
+        self._update_result_area_height()
         
         # 启用输入框
         self.server_input.setEnabled(True)
@@ -399,6 +595,7 @@ class GitLabLogPage(BasePage):
         
         # 更新按钮
         self.connect_btn.setText("断开")
+        self.main_buttons.set_text(self.connect_btn, "断开")
         self.connect_btn.setIcon(QIcon(":/icons/gitlab/disconnect.png"))
         self.connect_btn.setEnabled(True)
         
@@ -438,6 +635,14 @@ class GitLabLogPage(BasePage):
         self.connect_btn.setEnabled(True)
         self.server_input.setEnabled(True)
         self.token_input.setEnabled(True)
+
+    def toggle_query_conditions(self):
+        """收起/展开服务器连接和查询条件区域"""
+        self.query_conditions_collapsed = not self.query_conditions_collapsed
+        self.connection_group.setVisible(not self.query_conditions_collapsed)
+        self.query_group.setVisible(not self.query_conditions_collapsed)
+        self.toggle_conditions_btn.setText("展开" if self.query_conditions_collapsed else "收起")
+        self._update_result_area_height()
     
     def on_project_selected(self, index):
         """项目选择"""
@@ -515,6 +720,7 @@ class GitLabLogPage(BasePage):
         self.start_date.setEnabled(False)
         self.end_date.setEnabled(False)
         self.export_btn.setEnabled(False)
+        self.query_btn.setEnabled(False)
         
         # 加载提交者列表
         self.load_authors()
@@ -526,6 +732,13 @@ class GitLabLogPage(BasePage):
     
     def load_authors(self):
         """加载提交者列表"""
+        branch = self.branch_combo.currentData()
+        cache_key = (self.current_project or '', branch or '')
+        cached_authors = self._cache_get_authors(cache_key)
+        if cached_authors is not None:
+            self.on_authors_loaded(cached_authors)
+            return
+
         self.show_progress("正在获取提交者列表...")
         
         thread = GitLabWorkerThread(self.get_authors)
@@ -538,15 +751,17 @@ class GitLabLogPage(BasePage):
     def get_authors(self):
         """获取项目的所有提交者"""
         branch = self.branch_combo.currentData()
-        commits = self.api.get_commits(self.current_project, "2000-01-01", None, branch)
+        commits = self._get_base_commits(self.current_project, branch, "2000-01-01", None)
         
         authors = set()
         for c in commits:
             author = c.get('author_name', '')
             if author:
                 authors.add(author)
-        
-        return sorted(list(authors))
+
+        author_list = sorted(list(authors))
+        self._cache_set_authors((self.current_project or '', branch or ''), author_list)
+        return author_list
     
     def on_authors_loaded(self, authors):
         """提交者列表加载完成"""
@@ -567,6 +782,7 @@ class GitLabLogPage(BasePage):
         self.start_date.setEnabled(True)
         self.end_date.setEnabled(True)
         self.export_btn.setEnabled(True)
+        self.query_btn.setEnabled(True)
         
         self.show_success(f"获取到 {len(authors)} 个提交者")
     
@@ -586,6 +802,7 @@ class GitLabLogPage(BasePage):
         self.start_date.setEnabled(True)
         self.end_date.setEnabled(True)
         self.export_btn.setEnabled(True)
+        self.query_btn.setEnabled(True)
     
     def on_browse(self):
         """选择保存目录"""
@@ -604,31 +821,349 @@ class GitLabLogPage(BasePage):
             self.save_path = folder
             self.save_config()
             self.show_success(f"保存路径已设置")
-    
-    def on_export(self):
-        """导出日志"""
+
+    def _get_query_context(self, require_save_dir=False):
+        """获取当前查询上下文"""
         project_path = self.project_combo.currentData()
         if not project_path:
-            project_path = self.project_combo.currentText().replace("★ ", "")
-        
+            project_path = self.project_combo.currentText().replace("★ ", "").strip()
+
         branch_name = self.branch_combo.currentData()
+        if not branch_name:
+            branch_name = self.branch_combo.currentText().replace("★ ", "").replace(" (默认)", "").strip()
+
         author_filter = self.author_combo.currentData() if self.author_combo.currentIndex() >= 0 else ""
         keyword = self.keyword_input.text().strip()
         since_date = self.start_date.date().toString("yyyy-MM-dd")
         until_date = self.end_date.date().toString("yyyy-MM-dd")
         save_dir = self.path_input.text().strip()
-        
+
+        if not self.is_connected or not self.api:
+            self.show_warning("请先连接服务器")
+            return None
+
+        if not project_path:
+            self.show_warning("请选择项目")
+            return None
+
         if not branch_name:
             self.show_warning("请选择分支")
-            return
-        
-        if not save_dir:
+            return None
+
+        if self.start_date.date() > self.end_date.date():
+            self.show_warning("开始时间不能晚于结束时间")
+            return None
+
+        if require_save_dir and not save_dir:
             self.show_warning("请先设置保存路径")
+            return None
+
+        return {
+            'project_path': project_path,
+            'branch_name': branch_name,
+            'author_filter': author_filter,
+            'keyword': keyword,
+            'since_date': since_date,
+            'until_date': until_date,
+            'save_dir': save_dir
+        }
+
+    def _split_keywords(self, keyword_text):
+        """拆分关键词"""
+        return [item.strip().lower() for item in keyword_text.replace('；', ';').split(';') if item.strip()]
+
+    @staticmethod
+    def _clone_commit_list(commits):
+        """复制提交列表，避免缓存对象被外部修改"""
+        return [dict(commit) for commit in commits]
+
+    def _cache_get_commits(self, cache, key):
+        """获取提交缓存并刷新顺序"""
+        value = cache.get(key)
+        if value is None:
+            return None
+        cache.move_to_end(key)
+        return self._clone_commit_list(value)
+
+    def _cache_set_commits(self, cache, key, commits, limit=8):
+        """写入提交缓存并限制大小"""
+        cache[key] = self._clone_commit_list(commits)
+        cache.move_to_end(key)
+        while len(cache) > limit:
+            cache.popitem(last=False)
+
+    def _cache_get_authors(self, key):
+        """获取作者缓存并刷新顺序"""
+        value = self.authors_cache.get(key)
+        if value is None:
+            return None
+        self.authors_cache.move_to_end(key)
+        return list(value)
+
+    def _cache_set_authors(self, key, authors, limit=12):
+        """写入作者缓存并限制大小"""
+        self.authors_cache[key] = list(authors)
+        self.authors_cache.move_to_end(key)
+        while len(self.authors_cache) > limit:
+            self.authors_cache.popitem(last=False)
+
+    def _get_base_commit_key(self, project_path, branch_name, since_date, until_date):
+        """基础提交缓存键"""
+        return (project_path, branch_name or '', since_date, until_date or '')
+
+    def _get_hydrated_commit_key(self, project_path, branch_name, since_date, until_date, author_filter):
+        """带文件变化的提交缓存键"""
+        return (project_path, branch_name or '', since_date, until_date or '', author_filter or '')
+
+    def _get_base_commits(self, project_path, branch_name, since_date, until_date):
+        """获取基础提交列表，命中时直接走缓存"""
+        cache_key = self._get_base_commit_key(project_path, branch_name, since_date, until_date)
+        cached = self._cache_get_commits(self.base_commits_cache, cache_key)
+        if cached is not None:
+            return cached
+
+        commits = self.api.get_commits(project_path, since_date, until_date, branch_name)
+        self._cache_set_commits(self.base_commits_cache, cache_key, commits)
+        return self._clone_commit_list(commits)
+
+    def _fill_commit_changes(self, project_path, commits):
+        """补充提交涉及的文件变化"""
+        for commit in commits:
+            if commit.get('files_changed'):
+                continue
+            try:
+                diff = self.api.get_commit_diff(project_path, commit['id'])
+                files = []
+
+                for item in diff:
+                    if item.get('new_file'):
+                        files.append(f"[新增] {item['new_path']}")
+                    elif item.get('deleted_file'):
+                        files.append(f"[删除] {item['old_path']}")
+                    elif item.get('renamed_file'):
+                        files.append(f"[重命名] {item['old_path']} -> {item['new_path']}")
+                    else:
+                        files.append(f"[修改] {item['new_path']}")
+
+                commit['files_changed'] = '\n'.join(files) if files else '(无文件变化)'
+            except Exception:
+                commit['files_changed'] = '(获取失败)'
+
+        return commits
+
+    def _filter_commits_by_keywords(self, commits, keyword_text):
+        """根据关键词筛选提交记录"""
+        keywords = self._split_keywords(keyword_text)
+        if not keywords:
+            return commits
+
+        filtered = []
+        for commit in commits:
+            searchable_text = '\n'.join([
+                commit.get('title', ''),
+                commit.get('message', ''),
+                commit.get('author_name', ''),
+                commit.get('files_changed', '')
+            ]).lower()
+            if all(keyword in searchable_text for keyword in keywords):
+                filtered.append(commit)
+        return filtered
+
+    def _collect_commits(self, project_path, branch_name, since_date, until_date, author_filter="", keyword=""):
+        """获取并筛选提交记录"""
+        commits = self._get_base_commits(project_path, branch_name, since_date, until_date)
+        if not commits:
+            return []
+
+        hydrated_key = self._get_hydrated_commit_key(
+            project_path, branch_name, since_date, until_date, author_filter
+        )
+        hydrated_commits = self._cache_get_commits(self.hydrated_commits_cache, hydrated_key)
+        if hydrated_commits is None:
+            if author_filter:
+                commits = [commit for commit in commits if commit.get('author_name') == author_filter]
+            if not commits:
+                self._cache_set_commits(self.hydrated_commits_cache, hydrated_key, [])
+                return []
+
+            self._fill_commit_changes(project_path, commits)
+            self._cache_set_commits(self.hydrated_commits_cache, hydrated_key, commits)
+            hydrated_commits = self._clone_commit_list(commits)
+
+        commits = hydrated_commits
+        commits = self._filter_commits_by_keywords(commits, keyword)
+        return commits
+
+    def _format_commit_date(self, date_text):
+        """格式化提交时间"""
+        if not date_text:
+            return ""
+        try:
+            dt = datetime.fromisoformat(date_text.replace("Z", "+00:00"))
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return date_text.replace("T", " ").replace("Z", "")
+
+    def _format_commit_records(self, commits):
+        """格式化提交记录文本"""
+        lines = []
+        for index, commit in enumerate(commits, 1):
+            commit_id = commit.get('id', '') or commit.get('short_id', '')
+            title = (commit.get('title') or '').strip() or '(无标题)'
+            message = (commit.get('message') or '').strip() or '(无提交说明)'
+            files_changed = commit.get('files_changed', '(无文件变化)')
+
+            lines.append("=" * 80)
+            lines.append(f"{index}. {title}")
+            lines.append(f"提交者: {commit.get('author_name', '')}")
+            lines.append(f"提交时间: {self._format_commit_date(commit.get('committed_date', ''))}")
+            lines.append(f"Commit: {commit_id}")
+            lines.append("提交说明:")
+            lines.extend(message.splitlines())
+            lines.append("文件变化:")
+            lines.extend(files_changed.splitlines())
+            lines.append("")
+
+        return "\n".join(lines).strip()
+
+    def _show_query_result_area(self):
+        """显示查询结果区域"""
+        self._update_result_area_height()
+
+    def on_query(self):
+        """查询日志并展示文本结果"""
+        context = self._get_query_context()
+        if not context:
+            return
+
+        self.add_recent_project(context['project_path'])
+        self.add_recent_branch(context['project_path'], context['branch_name'])
+        self.save_config()
+
+        self._show_query_result_area()
+        self.result_text.clear()
+        self.result_text.setExtraSelections([])
+        self.last_search_keyword = ""
+        self.show_progress("正在查询 Git 提交记录...")
+        self.main_buttons.disable()
+        self.query_btn.setText("查询中...")
+
+        thread = GitLabWorkerThread(
+            self.do_query,
+            context['project_path'],
+            context['branch_name'],
+            context['since_date'],
+            context['until_date'],
+            context['keyword'],
+            context['author_filter']
+        )
+        thread.finished_signal.connect(self.on_query_finished)
+        thread.error_signal.connect(self.on_query_error)
+        thread.finished.connect(lambda: thread.deleteLater())
+        self.thread_mgr.add("query", thread)
+        thread.start()
+
+    def do_query(self, project_path, branch_name, since_date, until_date, keyword, author_filter):
+        """执行查询操作"""
+        commits = self._collect_commits(
+            project_path, branch_name, since_date, until_date, author_filter, keyword
+        )
+        if not commits:
+            return None
+
+        return {
+            'count': len(commits),
+            'content': self._format_commit_records(commits)
+        }
+
+    def on_query_finished(self, result):
+        """查询完成"""
+        self.main_buttons.enable()
+
+        if result is None:
+            self.result_text.setPlainText("")
+            self.show_warning("没有找到符合条件的提交记录")
+            return
+
+        self._show_query_result_area()
+        self.result_text.setPlainText(result['content'])
+        self.last_search_keyword = ""
+        cursor = self.result_text.textCursor()
+        cursor.movePosition(QTextCursor.Start)
+        self.result_text.setTextCursor(cursor)
+        self.update_search_highlights()
+        self._update_result_area_height()
+        self.show_success(f"查询完成! 共 {result['count']} 条记录")
+
+    def on_query_error(self, error):
+        """查询失败"""
+        self.main_buttons.enable()
+        self.show_error(f"查询失败: {error}")
+
+    def show_search_bar(self):
+        """显示结果搜索栏"""
+        self.search_bar.setVisible(True)
+        self._update_result_area_height()
+        self.search_input.setFocus(Qt.ShortcutFocusReason)
+        self.search_input.selectAll()
+
+    def hide_search_bar(self):
+        """隐藏结果搜索栏"""
+        self.search_bar.setVisible(False)
+        self.search_input.clear()
+        self.last_search_keyword = ""
+        self.result_text.setExtraSelections([])
+        self._update_result_area_height()
+        self.result_text.setFocus(Qt.ShortcutFocusReason)
+
+    def _find_in_result(self, backward=False):
+        """在查询结果中查找关键字"""
+        keyword = self.search_input.text().strip()
+        if not keyword:
+            self.show_warning("请输入搜索关键字")
+            return False
+
+        if keyword != self.last_search_keyword:
+            self.last_search_keyword = keyword
+            cursor = self.result_text.textCursor()
+            cursor.movePosition(QTextCursor.End if backward else QTextCursor.Start)
+            self.result_text.setTextCursor(cursor)
+
+        flags = QTextDocument.FindBackward if backward else QTextDocument.FindFlags()
+        found = self.result_text.find(keyword, flags)
+        if found:
+            self.update_search_highlights()
+            return True
+
+        cursor = self.result_text.textCursor()
+        cursor.movePosition(QTextCursor.End if backward else QTextCursor.Start)
+        self.result_text.setTextCursor(cursor)
+        found = self.result_text.find(keyword, flags)
+        if not found:
+            self.show_info(f"未找到：{keyword}")
+        self.update_search_highlights()
+        return found
+
+    def find_next_in_result(self):
+        """查找下一条"""
+        self._find_in_result(backward=False)
+
+    def find_previous_in_result(self):
+        """查找上一条"""
+        self._find_in_result(backward=True)
+
+    def on_export(self):
+        """导出日志"""
+        context = self._get_query_context(require_save_dir=True)
+        if not context:
             return
         
         # 生成文件名
-        filename = f"gitlog_{project_path.replace('/', '_')}_{branch_name}_{since_date}_to_{until_date}.xlsx"
-        save_path = os.path.join(save_dir, filename)
+        filename = (
+            f"gitlog_{context['project_path'].replace('/', '_')}_{context['branch_name']}_"
+            f"{context['since_date']}_to_{context['until_date']}.xlsx"
+        )
+        save_path = os.path.join(context['save_dir'], filename)
         
         # 如果文件已存在，添加序号
         counter = 1
@@ -638,8 +1173,8 @@ class GitLabLogPage(BasePage):
             counter += 1
         
         # 保存最近使用记录
-        self.add_recent_project(project_path)
-        self.add_recent_branch(project_path, branch_name)
+        self.add_recent_project(context['project_path'])
+        self.add_recent_branch(context['project_path'], context['branch_name'])
         self.save_config()
         
         self.show_progress("开始导出日志...")
@@ -647,8 +1182,14 @@ class GitLabLogPage(BasePage):
         self.export_btn.setText("导出中...")
         
         thread = GitLabWorkerThread(
-            self.do_export, project_path, branch_name, since_date, 
-            until_date, keyword, author_filter, save_path
+            self.do_export,
+            context['project_path'],
+            context['branch_name'],
+            context['since_date'],
+            context['until_date'],
+            context['keyword'],
+            context['author_filter'],
+            save_path
         )
         thread.finished_signal.connect(self.on_export_finished)
         thread.error_signal.connect(self.on_export_error)
@@ -659,39 +1200,12 @@ class GitLabLogPage(BasePage):
     
     def do_export(self, project_path, branch_name, since_date, until_date, keyword, author_filter, save_path):
         """执行导出操作"""
-        # 获取提交记录
-        commits = self.api.get_commits(project_path, since_date, until_date, branch_name)
-        
+        commits = self._collect_commits(
+            project_path, branch_name, since_date, until_date, author_filter, keyword
+        )
         if not commits:
             return None
-        
-        # 按提交者筛选
-        if author_filter:
-            commits = [c for c in commits if c.get('author_name') == author_filter]
-        
-        if not commits:
-            return None
-        
-        # 获取文件变化
-        for idx, commit in enumerate(commits, 1):
-            try:
-                diff = self.api.get_commit_diff(project_path, commit['id'])
-                files = []
-                
-                for d in diff:
-                    if d.get('new_file'):
-                        files.append(f"[新增] {d['new_path']}")
-                    elif d.get('deleted_file'):
-                        files.append(f"[删除] {d['old_path']}")
-                    elif d.get('renamed_file'):
-                        files.append(f"[重命名] {d['old_path']} -> {d['new_path']}")
-                    else:
-                        files.append(f"[修改] {d['new_path']}")
-                
-                commit['files_changed'] = '\n'.join(files) if files else '(无文件变化)'
-            except Exception:
-                commit['files_changed'] = '(获取失败)'
-        
+
         # 创建 Excel 文件
         create_gitlab_xlsx(commits, save_path, keyword)
         
@@ -853,4 +1367,6 @@ class GitLabLogPage(BasePage):
         if hasattr(self, 'branch_combo') and self.branch_combo.lineEdit():
             style = active if self.is_connected else inactive
             self.branch_combo.lineEdit().setStyleSheet(style)
+        if hasattr(self, 'result_text'):
+            self.result_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
 

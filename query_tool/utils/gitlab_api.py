@@ -9,12 +9,36 @@ from query_tool.utils.session_manager import SessionManager
 
 class GitLabAPI:
     """GitLab API 封装"""
+    CACHE_LIMIT = 8
     
     def __init__(self, url, token):
         self.url = url.rstrip('/')
         self.token = token
         self.timeout = 10  # 请求超时时间（秒）
         self.session = SessionManager().get_session('gitlab')
+        self._commits_cache = {}
+        self._commit_diff_cache = {}
+
+    @staticmethod
+    def _clone_dict_list(items):
+        """复制字典列表，避免缓存对象被外部修改"""
+        return [dict(item) for item in items]
+
+    def _cache_get(self, cache, key):
+        """读取缓存并刷新命中顺序"""
+        value = cache.get(key)
+        if value is None:
+            return None
+        cache.pop(key, None)
+        cache[key] = value
+        return self._clone_dict_list(value)
+
+    def _cache_set(self, cache, key, value):
+        """写入缓存并控制缓存大小"""
+        cache.pop(key, None)
+        cache[key] = self._clone_dict_list(value)
+        while len(cache) > self.CACHE_LIMIT:
+            cache.pop(next(iter(cache)))
     
     def api_get(self, endpoint, params=None, retry=3):
         """
@@ -150,6 +174,11 @@ class GitLabAPI:
         Returns:
             提交记录列表
         """
+        cache_key = (project_path, since_date, until_date or '', branch or '', max_pages)
+        cached = self._cache_get(self._commits_cache, cache_key)
+        if cached is not None:
+            return cached
+
         encoded = urllib.parse.quote(project_path, safe='')
         commits = []
         page = 1
@@ -186,7 +215,8 @@ class GitLabAPI:
         # 如果达到最大页数限制，发出警告
         if page > max_pages:
             print(f"警告：提交记录超过 {max_pages * 100} 条，仅返回前 {len(commits)} 条")
-        
+
+        self._cache_set(self._commits_cache, cache_key, commits)
         return commits
     
     def get_commit_diff(self, project_path, commit_sha):
@@ -200,9 +230,16 @@ class GitLabAPI:
         Returns:
             文件差异列表
         """
+        cache_key = (project_path, commit_sha)
+        cached = self._cache_get(self._commit_diff_cache, cache_key)
+        if cached is not None:
+            return cached
+
         encoded = urllib.parse.quote(project_path, safe='')
         
         try:
-            return self.api_get(f'/projects/{encoded}/repository/commits/{commit_sha}/diff')
+            diff = self.api_get(f'/projects/{encoded}/repository/commits/{commit_sha}/diff')
+            self._cache_set(self._commit_diff_cache, cache_key, diff)
+            return self._clone_dict_list(diff)
         except Exception:
             return []
