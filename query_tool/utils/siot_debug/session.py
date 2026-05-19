@@ -21,7 +21,13 @@ from query_tool.utils.runtime_credential_cache import (
     save_cached_cloud_credentials,
 )
 
-from .command_catalog import is_getsystemcfg_command, is_startlogp2p_command, is_syscmd_family_command, parse_startlogp2p_level
+from .command_catalog import (
+    get_command_keyword,
+    is_getsystemcfg_command,
+    is_startlogp2p_command,
+    is_syscmd_family_command,
+    parse_startlogp2p_level,
+)
 from .config import (
     CLOUD_ACCESS_URL,
     CLOUD_AUTH_BASIC,
@@ -106,6 +112,7 @@ ERR_P2P_USER_NOT_AUTH = 8
 HEARTBEAT_INTERVAL_S = 10.0
 FILE_IDLE_SETTLE_S = 0.35
 MAX_CLOUD_CREDENTIAL_REFRESH_RETRIES = 2
+INTERACTIVE_COMMAND_START_TIMEOUT_MS = 5_000
 
 
 class CloudCredentialRefreshRequired(SiotError):
@@ -125,6 +132,20 @@ def _build_heartbeat_xml() -> bytes:
         "</XML_TOPSEE>"
     )
     return xml.encode("utf-8")
+
+
+def _describe_payload_error(payload: ParsedPayload) -> str:
+    message_type = (payload.message_type or "").strip()
+    msg_flag = (payload.msg_flag or "").strip()
+    if not msg_flag or msg_flag == "0":
+        return ""
+    if msg_flag == str(ERR_P2P_USER_NOT_AUTH):
+        return "设备认证已失效，请重新连接。"
+    if message_type == "TPS_COMMON_MESSAGE" and msg_flag == "-100":
+        return "设备交互会话已失效，已尝试自动重建。"
+    if message_type:
+        return f"{message_type} 返回错误，flag={msg_flag}"
+    return f"设备返回错误，flag={msg_flag}"
 
 
 def _http_post(url: str, data: str, headers: dict[str, str]) -> dict:
@@ -318,6 +339,19 @@ class _CommandWaiter:
                 responses=self.responses,
             )
 
+        if self.has_error:
+            return CommandResult(
+                command=self.command,
+                command_kind=self.command_kind,
+                success=False,
+                display_text=self._build_error_text(),
+                acknowledged=bool(self.responses),
+                filename=self.filename,
+                received_bytes=self.received_bytes,
+                streamed_packets=self.packet_count,
+                responses=self.responses,
+            )
+
         return CommandResult(
             command=self.command,
             command_kind=self.command_kind,
@@ -329,6 +363,16 @@ class _CommandWaiter:
             streamed_packets=self.packet_count,
             responses=self.responses,
         )
+
+    def _build_error_text(self) -> str:
+        for payload in reversed(self.responses):
+            text = extract_printable_text(payload).strip()
+            if text:
+                return text
+            fallback = _describe_payload_error(payload)
+            if fallback:
+                return fallback
+        return "命令执行失败。"
 
     def _notify_progress(self, payload: ParsedPayload) -> None:
         if self.progress_callback is None:
@@ -386,6 +430,8 @@ class DeviceSession:
         self._waiter_lock = threading.Lock()
         self._stream_log_listener: Optional[Callable[[str], None]] = None
         self._stream_log_enabled = False
+        self._interactive_command_ready = False
+        self._interactive_command_keyword = ""
 
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._status_callback: Optional[Callable[[str], None]] = None
@@ -456,6 +502,7 @@ class DeviceSession:
         self._query_device()
         self._authenticate_via_signaling()
         self._connect_peer()
+        self._invalidate_interactive_command_session()
         self._start_heartbeat_loop()
 
     def _raise_cloud_refresh_required(
@@ -486,7 +533,21 @@ class DeviceSession:
             return CommandResult(command=command, command_kind="ignored", success=False, display_text="")
 
         self._ensure_ready()
-        return self._execute_p2p_command(command, timeout_ms, progress_callback, stream_log_callback)
+        if self._should_prepare_interactive_command(command):
+            self._ensure_interactive_command_session(command)
+
+        result = self._execute_p2p_command(command, timeout_ms, progress_callback, stream_log_callback)
+        self._update_interactive_command_state(command, result)
+
+        if self._should_retry_with_interactive_restart(command, result):
+            logging.info("Interactive command session appears stale, retrying command after restart: %s", _safe_log_text(command))
+            self._invalidate_interactive_command_session()
+            self._ensure_ready()
+            self._ensure_interactive_command_session(command)
+            result = self._execute_p2p_command(command, timeout_ms, progress_callback, stream_log_callback)
+            self._update_interactive_command_state(command, result)
+
+        return result
 
     def _ensure_ready(self) -> None:
         if self.device is None or self.cloud_credentials is None:
@@ -497,6 +558,84 @@ class DeviceSession:
             self._authenticate_via_signaling()
         if not self._peer_connected:
             self._connect_peer()
+
+    @staticmethod
+    def _is_interactive_start_command(command: str) -> bool:
+        parts = command.strip().split(None, 1)
+        if len(parts) != 2:
+            return False
+        keyword = parts[0]
+        action = parts[1].strip().lower()
+        return keyword in ("syscmd", "syscmdEx") and action == "start"
+
+    def _should_prepare_interactive_command(self, command: str) -> bool:
+        return is_syscmd_family_command(command) and not self._is_interactive_start_command(command)
+
+    def _ensure_interactive_command_session(self, command: str) -> None:
+        keyword = get_command_keyword(command)
+        if keyword not in ("syscmd", "syscmdEx"):
+            return
+        if self._interactive_command_ready and self._interactive_command_keyword == keyword:
+            return
+
+        start_command = f"{keyword} start"
+        logging.info("Initializing interactive command session via P2P: %s", start_command)
+        init_result = self._execute_p2p_command(
+            start_command,
+            INTERACTIVE_COMMAND_START_TIMEOUT_MS,
+            progress_callback=None,
+            stream_log_callback=None,
+        )
+        self._update_interactive_command_state(start_command, init_result)
+        if self._is_interactive_start_success(init_result):
+            return
+
+        message = (init_result.display_text or "").strip() or "初始化交互终端失败"
+        raise SiotError(message)
+
+    def _update_interactive_command_state(self, command: str, result: CommandResult) -> None:
+        keyword = get_command_keyword(command)
+        if keyword not in ("syscmd", "syscmdEx"):
+            return
+        if not self._is_interactive_start_command(command):
+            if self._looks_like_interactive_session_lost(result):
+                self._invalidate_interactive_command_session()
+            return
+
+        if self._is_interactive_start_success(result):
+            self._interactive_command_keyword = keyword
+            self._interactive_command_ready = True
+        else:
+            self._invalidate_interactive_command_session()
+
+    def _should_retry_with_interactive_restart(self, command: str, result: CommandResult) -> bool:
+        return self._should_prepare_interactive_command(command) and self._looks_like_interactive_session_lost(result)
+
+    @staticmethod
+    def _is_interactive_start_success(result: CommandResult) -> bool:
+        return result.success or (
+            not result.success
+            and not result.acknowledged
+            and not result.display_text
+            and not result.responses
+            and result.streamed_packets == 0
+            and not result.binary_payload
+        )
+
+    @staticmethod
+    def _looks_like_interactive_session_lost(result: CommandResult) -> bool:
+        if result.success:
+            return False
+        if any(
+            payload.message_type == "TPS_COMMON_MESSAGE" and payload.msg_flag == "-100"
+            for payload in result.responses
+        ):
+            return True
+        return not result.acknowledged and not (result.display_text or "").strip() and not result.responses
+
+    def _invalidate_interactive_command_session(self) -> None:
+        self._interactive_command_ready = False
+        self._interactive_command_keyword = ""
 
     def _connect_signaling(self) -> None:
         if self.cloud_credentials is None:
@@ -903,10 +1042,18 @@ class DeviceSession:
         self._status_ready.set()
 
     def _handle_xml_payload(self, parsed: ParsedPayload) -> None:
-        if parsed.message_type in ("TPS_COMMON_MESSAGE", "IOT_CAMERA_MESSAGE"):
+        if parsed.message_type == "TPS_COMMON_MESSAGE":
             if parsed.msg_flag == str(ERR_P2P_USER_NOT_AUTH):
                 logging.warning("Device reported auth expired")
                 self._authenticated = False
+                self._invalidate_interactive_command_session()
+            with self._waiter_lock:
+                waiter = self._active_waiter
+            if waiter is not None:
+                waiter.feed(parsed)
+            return
+
+        if parsed.message_type == "IOT_CAMERA_MESSAGE":
             return
 
         if parsed.message_type == "USER_AUTH_MESSAGE":
@@ -1025,6 +1172,7 @@ class DeviceSession:
             self._signal_connected = False
             self._authenticated = False
             self._peer_connected = False
+            self._invalidate_interactive_command_session()
             self._signal_ready.set()
             logging.warning("Signaling event failed/closed: event=%s err=%s", event, err_code)
             return
@@ -1067,6 +1215,7 @@ class DeviceSession:
 
         if event in (TPSRTC_PEER_EVENT_DATA_CHANNEL_TIMEOUT, TPSRTC_PEER_EVENT_DATA_CHANNEL_CLOSED):
             self._peer_connected = False
+            self._invalidate_interactive_command_session()
             self._peer_ready.set()
             logging.warning("P2P data channel closed or timeout: event=%s err=%s", event, err_code)
             return
@@ -1165,6 +1314,7 @@ class DeviceSession:
         self._signal_connected = False
         self._authenticated = False
         self._peer_connected = False
+        self._invalidate_interactive_command_session()
         self._session_id = ""
         self._encrypt_method = 0
         self._secret_key = b""
