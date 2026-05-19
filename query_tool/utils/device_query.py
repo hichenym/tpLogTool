@@ -30,7 +30,11 @@ class DeviceQuery:
         
         try:
             if use_cache:
-                self.token, self.refresh_token = config_manager.load_token_cache(env, username)
+                cached_tokens = config_manager.load_token_cache(env, username)
+                if isinstance(cached_tokens, (tuple, list)) and len(cached_tokens) >= 2:
+                    self.token, self.refresh_token = cached_tokens[0], cached_tokens[1]
+                else:
+                    self.token, self.refresh_token = None, None
                 if not self.token:
                     self.token, self.refresh_token = self._get_token()
                     if self.token is None:

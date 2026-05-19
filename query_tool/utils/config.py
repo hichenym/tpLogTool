@@ -331,6 +331,7 @@ class ConfigManager:
                 except Exception as e:
                     from query_tool.utils.logger import logger
                     logger.debug(f"关闭注册表键失败: {e}")
+        return None, None
 
     @staticmethod
     def _decode_string_list(raw_value):
@@ -347,8 +348,6 @@ class ConfigManager:
         if isinstance(payload, list):
             return [str(item) for item in payload if str(item).strip()]
         return [item for item in text.split('|') if item]
-        
-        return None, None
 
     def save_seetong_cloud_cache(self, username, password, payload):
         """保存 Seetong 云登录缓存。"""
