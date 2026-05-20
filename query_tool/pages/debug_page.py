@@ -1547,6 +1547,18 @@ class DebugPage(BasePage):
             self.append_output(message)
         self.show_progress(message)
 
+    def _format_connect_result_message(self, result: str, sn: str = "", detail: str = "") -> str:
+        sn = str(sn or self.current_context.get("sn") or self.sn_input.text() or "").strip()
+        suffix = f"({sn})" if sn else ""
+        detail = (detail or "").strip()
+        if detail and sn:
+            detail = detail.replace(f"设备：{sn}不在线", "设备不在线")
+            detail = detail.replace(f"设备:{sn}不在线", "设备不在线")
+            detail = detail.replace(f"设备 {sn} 不在线", "设备不在线")
+        if detail:
+            return f"{result}{suffix}: {detail}"
+        return f"{result}{suffix}"
+
     def on_connected(self, context):
         self.connected = True
         self.connecting = False
@@ -1561,11 +1573,13 @@ class DebugPage(BasePage):
         self.command_type_combo.setEnabled(True)
         self.update_shortcut_controls()
         self.update_send_button()
-        self.append_output("连接成功")
+        success_message = self._format_connect_result_message("连接成功", context.get("sn", ""))
+        self.append_output(success_message)
         self._flush_pending_output()
-        self.show_success(f"设备 {context.get('sn', '')} 连接成功")
+        self.show_success(success_message)
 
     def on_connect_failed(self, message):
+        failure_message = self._format_connect_result_message("连接失败", detail=message)
         self.connected = False
         self.connecting = False
         self.current_context = {}
@@ -1579,10 +1593,11 @@ class DebugPage(BasePage):
         self.command_type_combo.setEnabled(True)
         self.update_shortcut_controls()
         self.update_send_button()
-        self.append_output(message, color=t("status_offline"))
-        self.show_error(f"连接失败: {message}")
+        self.append_output(failure_message, color=t("status_offline"))
+        self.show_error(failure_message)
 
     def on_disconnected(self, message):
+        disconnected_message = self._format_connect_result_message(message or "连接已断开")
         self.connected = False
         self.connecting = False
         self.command_running = False
@@ -1602,8 +1617,8 @@ class DebugPage(BasePage):
         self.command_type_combo.setEnabled(True)
         self.update_shortcut_controls()
         self.update_send_button()
-        self.append_output(message)
-        self.show_info(message)
+        self.append_output(disconnected_message)
+        self.show_info(disconnected_message)
         self._schedule_pending_connect()
 
     def on_command_failed(self, message):

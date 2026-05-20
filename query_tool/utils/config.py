@@ -49,6 +49,7 @@ class AppConfig:
     log_commands: List[str] = field(default_factory=list)
     last_page_index: int = 0
     theme: str = 'dark'  # 'dark' 或 'light'
+    tray_minimize_tip_shown: bool = False
 
 
 class ConfigManager:
@@ -234,6 +235,7 @@ class ConfigManager:
         log_commands = [item for item in log_commands_str.split('|') if item] if log_commands_str else []
         last_page_index = int(self._get_value('last_page_index', '0'))
         theme = self._get_value('theme', 'dark')
+        tray_minimize_tip_shown = self._get_value('tray_minimize_tip_shown', '0') == '1'
         
         return AppConfig(
             export_path=export_path,
@@ -246,7 +248,8 @@ class ConfigManager:
             log_download_path=log_download_path,
             log_commands=log_commands,
             last_page_index=last_page_index,
-            theme=theme
+            theme=theme,
+            tray_minimize_tip_shown=tray_minimize_tip_shown
         )
     
     def save_app_config(self, config: AppConfig) -> bool:
@@ -266,6 +269,7 @@ class ConfigManager:
             self._set_value('log_commands', log_commands_str)
             self._set_value('last_page_index', str(config.last_page_index))
             self._set_value('theme', config.theme)
+            self._set_value('tray_minimize_tip_shown', '1' if config.tray_minimize_tip_shown else '0')
             return True
         except Exception as e:
             print(f"保存配置失败: {e}")

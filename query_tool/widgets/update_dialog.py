@@ -3,13 +3,14 @@
 """
 import ctypes
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QProgressBar, QTextEdit, QWidget
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QProgressBar, QTextEdit, QWidget, QFrame
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 
 from query_tool.utils.update_checker import VersionInfo
+from query_tool.utils.theme_manager import t
 
 
 def set_dark_title_bar(window):
@@ -222,16 +223,17 @@ class UpdateCompleteDialog(QDialog):
     
     # 信号
     restart_now = pyqtSignal()
-    restart_later = pyqtSignal()
     
     def __init__(self, version_info: VersionInfo, parent=None):
         super().__init__(parent)
         
         self.version_info = version_info
         
-        self.setWindowTitle("更新完成")
-        self.setMinimumWidth(400)
-        self.setMinimumHeight(200)
+        self.setWindowTitle("功能变更")
+        self.setWindowIcon(QIcon(":/icons/app/logo.png"))
+        self.setFixedSize(480, 205)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint)
+        self.setWindowModality(Qt.ApplicationModal)
         
         self._init_ui()
     
@@ -243,50 +245,112 @@ class UpdateCompleteDialog(QDialog):
     def _init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # 标题
-        title_label = QLabel(f"✓ 更新下载完成")
+        layout.setSpacing(18)
+        layout.setContentsMargins(18, 16, 18, 16)
+
+        header_frame = QFrame()
+        header_frame.setObjectName("headerFrame")
+        header_layout = QVBoxLayout(header_frame)
+        header_layout.setContentsMargins(18, 16, 18, 16)
+        header_layout.setSpacing(8)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(12)
+
+        icon_label = QLabel("i")
+        icon_font = QFont()
+        icon_font.setPointSize(14)
+        icon_font.setBold(True)
+        icon_label.setFont(icon_font)
+        icon_label.setAlignment(Qt.AlignCenter)
+        icon_label.setFixedSize(30, 30)
+        icon_label.setObjectName("statusIcon")
+        title_row.addWidget(icon_label, 0, Qt.AlignVCenter)
+
+        title_label = QLabel("检测到功能变更")
         title_font = QFont()
         title_font.setPointSize(14)
         title_font.setBold(True)
         title_label.setFont(title_font)
-        layout.addWidget(title_label)
+        title_label.setObjectName("titleLabel")
+        title_row.addWidget(title_label, 0, Qt.AlignVCenter)
+        title_row.addStretch()
+        header_layout.addLayout(title_row)
+
+        subtitle_label = QLabel("需要重启程序后生效，建议完成一次重启以确保功能正常加载。")
+        subtitle_label.setWordWrap(True)
+        subtitle_label.setObjectName("subtitleLabel")
+        header_layout.addWidget(subtitle_label)
+        layout.addWidget(header_frame)
         
-        # 提示信息
-        info_label = QLabel(
-            f"V{self.version_info.version} 已下载完成\n\n"
-            "点击「立即重启」应用更新\n"
-            "或点击「稍后重启」在下次启动时更新"
-        )
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        layout.addStretch()
-        
-        # 按钮
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
         button_layout.addStretch()
-        
+
         restart_btn = QPushButton("立即重启")
-        restart_btn.setMinimumWidth(100)
+        restart_btn.setFixedSize(116, 36)
+        restart_btn.setCursor(Qt.PointingHandCursor)
+        restart_btn.setObjectName("primaryButton")
         restart_btn.clicked.connect(self._on_restart_now)
         button_layout.addWidget(restart_btn)
-        
-        later_btn = QPushButton("稍后重启")
-        later_btn.setMinimumWidth(100)
-        later_btn.clicked.connect(self._on_restart_later)
-        button_layout.addWidget(later_btn)
-        
+
         layout.addLayout(button_layout)
+        self._apply_styles()
+
+    def _apply_styles(self):
+        self.setStyleSheet(
+            f"""
+            QDialog {{
+                background-color: {t('bg_dark')};
+            }}
+            QFrame {{
+                border: none;
+            }}
+            QFrame#headerFrame {{
+                border-radius: 12px;
+            }}
+            QFrame#headerFrame {{
+                background-color: {t('bg_mid')};
+                border: 1px solid {t('border')};
+            }}
+            QLabel {{
+                color: {t('text_primary')};
+                background: transparent;
+            }}
+            QLabel#statusIcon {{
+                color: #ffffff;
+                background-color: {t('status_info')};
+                border-radius: 15px;
+            }}
+            QLabel#titleLabel {{
+                color: {t('text_primary')};
+            }}
+            QLabel#subtitleLabel {{
+                color: {t('text_secondary')};
+                font-size: 12px;
+            }}
+            QPushButton {{
+                border-radius: 8px;
+                padding: 0 18px;
+                font-size: 13px;
+            }}
+            QPushButton#primaryButton {{
+                background-color: {t('accent')};
+                color: #ffffff;
+                border: 1px solid {t('accent')};
+            }}
+            QPushButton#primaryButton:hover {{
+                background-color: {t('accent_dim')};
+                border: 1px solid {t('accent_dim')};
+            }}
+            QPushButton#primaryButton:pressed {{
+                background-color: {t('accent_dim')};
+            }}
+            """
+        )
     
     def _on_restart_now(self):
         """立即重启"""
         self.restart_now.emit()
         self.accept()
-    
-    def _on_restart_later(self):
-        """稍后重启"""
-        self.restart_later.emit()
-        self.reject()

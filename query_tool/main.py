@@ -12,7 +12,8 @@ sys.dont_write_bytecode = True
 import ctypes
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QStatusBar, QStackedWidget, QDesktopWidget
+    QPushButton, QStatusBar, QStackedWidget, QDesktopWidget,
+    QSystemTrayIcon, QMenu, QAction
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
 from PyQt5.QtGui import QIcon
@@ -79,8 +80,12 @@ class MainWindow(QMainWindow):
         self.update_manager = None
         self.pending_update_file = None  # 待安装的更新文件
         self._restart_after_update = False  # 是否在更新后重启程序
+        self._force_close = False  # 是否允许真正退出
+        self._tray_icon = None
+        self._tray_message_shown = False
         
         self.init_ui()
+        self._setup_system_tray()
         self.load_config()
         self.center_on_screen()
         
@@ -226,6 +231,93 @@ class MainWindow(QMainWindow):
             self.switch_page(page_index)
         else:
             self.switch_page(0)
+
+    def _setup_system_tray(self):
+        """初始化系统托盘。"""
+        from query_tool.utils.logger import logger
+
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            logger.warning("系统托盘不可用，关闭按钮将退化为最小化到任务栏")
+            return
+
+        tray_icon = QSystemTrayIcon(self.windowIcon(), self)
+        tray_icon.setToolTip(self.windowTitle())
+
+        tray_menu = QMenu(self)
+        show_action = QAction("打开主窗口", self)
+        show_action.triggered.connect(self.restore_from_tray)
+        tray_menu.addAction(show_action)
+
+        tray_menu.addSeparator()
+
+        exit_action = QAction("退出程序", self)
+        exit_action.triggered.connect(self.exit_application)
+        tray_menu.addAction(exit_action)
+
+        tray_icon.setContextMenu(tray_menu)
+        tray_icon.activated.connect(self._on_tray_icon_activated)
+        tray_icon.show()
+
+        self._tray_icon = tray_icon
+        logger.info("系统托盘初始化完成")
+
+    def _on_tray_icon_activated(self, reason):
+        """托盘图标点击事件。"""
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self.restore_from_tray()
+
+    def restore_from_tray(self):
+        """从托盘恢复主窗口。"""
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _bring_window_to_front(self):
+        """确保主窗口可见并位于前台，便于弹出重要对话框。"""
+        if not self.isVisible() or self.isMinimized():
+            self.restore_from_tray()
+        else:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+    def exit_application(self):
+        """真正退出程序。"""
+        app = QApplication.instance()
+        self._force_close = True
+        if self._tray_icon is not None:
+            self._tray_icon.hide()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(True)
+        self.close()
+
+    def _minimize_on_close(self):
+        """点击关闭按钮时最小化而不是直接退出。"""
+        from query_tool.utils.logger import logger
+
+        self.save_config()
+
+        if self._tray_icon is not None:
+            self.hide()
+            if not self._tray_message_shown:
+                self._tray_icon.showMessage(
+                    "查询工具",
+                    "程序已最小化到系统托盘，双击托盘图标可恢复，右键可退出。",
+                    QSystemTrayIcon.Information,
+                    3000,
+                )
+                self._tray_message_shown = True
+                app_config = config_manager.load_app_config()
+                app_config.tray_minimize_tip_shown = True
+                config_manager.save_app_config(app_config)
+            logger.info("主窗口已隐藏到系统托盘")
+            return
+
+        self.showMinimized()
+        logger.info("主窗口已最小化到任务栏")
     
     def switch_page(self, index):
         """切换页面"""
@@ -390,6 +482,7 @@ class MainWindow(QMainWindow):
         
         # 恢复上次的主题
         app_config = config_manager.load_app_config()
+        self._tray_message_shown = app_config.tray_minimize_tip_shown
         if app_config.theme == 'light':
             theme_manager.set_light()
     def _sync_user_data(self):
@@ -406,6 +499,11 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """窗口关闭事件"""
         from query_tool.utils.logger import logger
+
+        if not self._force_close and not self.pending_update_file:
+            self._minimize_on_close()
+            event.ignore()
+            return
         
         # 停止定时器
         if hasattr(self, '_periodic_update_timer'):
@@ -707,8 +805,8 @@ class MainWindow(QMainWindow):
             
             strategy = self.update_manager.get_update_strategy()
             
-            if strategy == 'prompt':
-                # 提示模式：停止呼吸闪烁，隐藏呼吸标签
+            if strategy in ('manual', 'prompt'):
+                # 手动/提示模式：停止呼吸闪烁，隐藏呼吸标签
                 self.breathing_label.stop()
                 self.breathing_label.setVisible(False)
                 
@@ -728,14 +826,30 @@ class MainWindow(QMainWindow):
                     return
                 
                 # 延迟显示重启对话框，让用户看到成功消息
-                QTimer.singleShot(500, self.show_update_complete_dialog)
+                QTimer.singleShot(500, self._show_update_complete_dialog_with_focus)
             
             elif strategy == 'silent':
-                # 静默模式：改为蓝色圆点，停止闪烁
+                # 静默模式：下载完成后主动提醒用户重启升级
+                self.breathing_label.stop()
                 self.breathing_label.set_color("#4a9eff", breathing=False)
-                # 保存文件路径，等待程序关闭时安装
                 self.pending_update_file = result
-                logger.info("静默更新已下载，将在程序关闭时安装")
+                logger.info("静默更新已下载完成，准备提示用户重启安装")
+                self.show_success("更新下载完成，请重启程序完成升级", 4000)
+
+                from query_tool.utils.update_downloader import UpdateInstaller
+                if not UpdateInstaller.can_apply_update():
+                    from PyQt5.QtWidgets import QMessageBox
+                    self._bring_window_to_front()
+                    QMessageBox.information(
+                        self,
+                        "更新已下载",
+                        "更新已下载完成。\n\n"
+                        "当前运行方式不支持自动覆盖安装。\n"
+                        "已保留安装包，可手动替换或使用发布版程序完成更新。"
+                    )
+                    return
+
+                QTimer.singleShot(300, self._show_update_complete_dialog_with_focus)
         
         else:
             logger.error(f"下载失败: {result}")
@@ -763,9 +877,13 @@ class MainWindow(QMainWindow):
         
         # 连接信号
         dialog.restart_now.connect(self.apply_update_and_restart)
-        dialog.restart_later.connect(self._on_restart_later)
         
         dialog.exec_()
+
+    def _show_update_complete_dialog_with_focus(self):
+        """拉起主窗口后显示更新完成对话框。"""
+        self._bring_window_to_front()
+        self.show_update_complete_dialog()
     
     def _on_restart_later(self):
         """用户选择稍后重启"""
@@ -944,6 +1062,7 @@ def main():
         theme_manager.theme_changed.connect(_on_global_theme_changed)
         
         window = MainWindow()
+        app.setQuitOnLastWindowClosed(window._tray_icon is None)
         window.show()
         
         exit_code = app.exec_()
