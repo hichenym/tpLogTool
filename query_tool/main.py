@@ -294,6 +294,23 @@ class MainWindow(QMainWindow):
             app.setQuitOnLastWindowClosed(True)
         self.close()
 
+    def _exit_for_update_install(self):
+        """为安装更新而彻底退出整个应用，而不是仅关闭主窗口。"""
+        from query_tool.utils.logger import logger
+
+        app = QApplication.instance()
+        self._force_close = True
+        if self._tray_icon is not None:
+            self._tray_icon.hide()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(True)
+
+        logger.info("准备退出整个应用以执行更新安装")
+        self.close()
+
+        if app is not None:
+            app.quit()
+
     def _minimize_on_close(self):
         """点击关闭按钮时最小化而不是直接退出。"""
         from query_tool.utils.logger import logger
@@ -669,7 +686,7 @@ class MainWindow(QMainWindow):
                                         # 设置标志为 True，表示安装后需要重新打开程序
                                         self._restart_after_update = True
                                         # 立即关闭程序并安装
-                                        self.close()
+                                        self._exit_for_update_install()
                                         return
                                     logger.warning("当前运行方式不支持自动安装已下载更新，跳过启动时自动应用")
                                 elif strategy == 'prompt':
@@ -975,7 +992,7 @@ class MainWindow(QMainWindow):
             
             # 关闭程序，触发 closeEvent 中的安装逻辑
             logger.info("关闭程序以执行更新...")
-            self.close()
+            self._exit_for_update_install()
             
         except Exception as e:
             logger.error(f"应用更新失败: {e}", exc_info=True)

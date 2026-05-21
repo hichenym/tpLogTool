@@ -473,6 +473,15 @@ class UpdateInstaller:
         """获取当前程序路径，优先返回真正的应用 exe。"""
         candidates = []
 
+        try:
+            main_module = sys.modules.get("__main__")
+            compiled_info = getattr(main_module, "__compiled__", None)
+            original_argv0 = getattr(compiled_info, "original_argv0", None)
+            if original_argv0:
+                candidates.append(Path(original_argv0).resolve())
+        except Exception:
+            pass
+
         if sys.executable:
             candidates.append(Path(sys.executable).resolve())
         if sys.argv and sys.argv[0]:
@@ -505,28 +514,40 @@ class UpdateInstaller:
         # 创建临时批处理脚本
         script_content = f"""@echo off
 chcp 65001 >nul
+setlocal EnableExtensions EnableDelayedExpansion
 echo 正在更新程序...
 
-:: 等待主程序退出
-timeout /t 2 /nobreak >nul
+set "CURRENT_EXE={current_exe_path}"
+set "BACKUP_EXE={current_exe_path}.bak"
+set "NEW_EXE={new_exe_path}"
+set /a RETRY_COUNT=0
+set /a MAX_RETRIES=30
 
-:: 备份当前版本
-if exist "{current_exe_path}.bak" del "{current_exe_path}.bak"
-move "{current_exe_path}" "{current_exe_path}.bak"
+:: 等待主程序彻底退出，并确认 exe 不再被占用
+:wait_for_main_exit
+if exist "!BACKUP_EXE!" del /f /q "!BACKUP_EXE!" >nul 2>&1
+move "!CURRENT_EXE!" "!BACKUP_EXE!" >nul 2>&1
+if exist "!CURRENT_EXE!" (
+    set /a RETRY_COUNT+=1
+    if !RETRY_COUNT! geq !MAX_RETRIES! (
+        echo 等待主程序退出超时，取消本次更新。
+        goto cleanup
+    )
+    timeout /t 1 /nobreak >nul
+    goto wait_for_main_exit
+)
 
 :: 复制新版本
-copy "{new_exe_path}" "{current_exe_path}"
+copy /y "!NEW_EXE!" "!CURRENT_EXE!" >nul
 
 :: 检查是否成功
-if exist "{current_exe_path}" (
+if exist "!CURRENT_EXE!" (
     echo 更新成功！
-    :: 删除备份
-    del "{current_exe_path}.bak"
-    :: 删除下载的文件
-    del "{new_exe_path}"
+    del /f /q "!BACKUP_EXE!" >nul 2>&1
+    del /f /q "!NEW_EXE!" >nul 2>&1
 ) else (
     echo 更新失败，恢复备份...
-    move "{current_exe_path}.bak" "{current_exe_path}"
+    if exist "!BACKUP_EXE!" move /y "!BACKUP_EXE!" "!CURRENT_EXE!" >nul 2>&1
 )
 
 """
@@ -538,6 +559,8 @@ start "" "{current_exe_path}"
 """
         
         script_content += """
+:cleanup
+endlocal
 :: 删除脚本自身
 del "%~f0"
 """
