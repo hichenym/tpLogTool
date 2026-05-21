@@ -1,15 +1,15 @@
 {
-  "version": "3.5.5",
-  "build_date": "20260519",
-  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.5/TPQueryTool.exe",
+  "version": "3.5.7",
+  "build_date": "20260521",
+  "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.7/TPQueryTool.exe",
   "file_size_mb": 163.02,
-  "file_size_bytes": 170943488,
-  "file_hash": "2aa1bee0f9a44e9f2c809cdb1a4c34e8c9950ec0be920380509232450af79757",
+  "file_size_bytes": 170938368,
+  "file_hash": "e9e0b1d79536a22e3db92f9decc5c10680da6e9f3f488934afb884bf41b98a55",
   "hash_algorithm": "sha256",
-  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.5/TPQueryTool.exe.sha256",
-  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.5.5",
+  "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.5.7/TPQueryTool.exe.sha256",
+  "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.5.7",
   "min_version": "3.0.0",
   "update_strategy": "silent",
-  "changelog": ["优化调试和命令功能的稳定性和性能","优化git页结果展示","修复已知问题"],
+  "changelog": ["增加关闭窗口最小化到托盘","修复调试页登录后一段时间自动断开导致交互异常"],
   "analytics": {"doc_id":"IVx0bqWefaVflZssxeycgHvSn5J","sheet_id":"tblyZtqCQEC43Hzl"}
 }
