@@ -10,7 +10,13 @@ from .config import (
     save_seetong_account_config,
     REGISTRY_PATH,
 )
-from .device_query import DeviceQuery, wake_device, check_device_online, wake_device_smart
+from .device_query import (
+    DeviceQuery,
+    wake_device,
+    check_device_online,
+    wake_device_smart,
+    ensure_device_online_for_upgrade,
+)
 from .button_manager import ButtonManager, ButtonGroup
 from .message_manager import MessageManager, MessageType
 from .style_manager import StyleManager
@@ -42,6 +48,7 @@ __all__ = [
     'wake_device',
     'check_device_online',
     'wake_device_smart',
+    'ensure_device_online_for_upgrade',
     'ButtonManager',
     'ButtonGroup',
     'MessageManager',

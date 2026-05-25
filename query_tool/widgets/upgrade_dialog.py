@@ -15,6 +15,7 @@ from query_tool.utils.logger import logger
 from query_tool.utils.session_manager import SessionManager
 from query_tool.utils.thread_manager import ThreadManager
 import json
+from datetime import datetime
 
 
 class NoWheelComboBox(QComboBox):
@@ -34,12 +35,14 @@ class StatusQueryThread(QThread):
     
     def run(self):
         try:
-            from query_tool.utils import check_device_online
-            is_online = check_device_online(self.sn, self.device_query)
-            if is_online:
+            from query_tool.utils.device_query import query_device_online_state
+            online_state = query_device_online_state(self.sn, self.device_query)
+            if online_state is True:
                 self.finished_signal.emit(True, "在线")
-            else:
+            elif online_state is False:
                 self.finished_signal.emit(False, "离线")
+            else:
+                self.finished_signal.emit(False, "查询失败")
         except Exception as e:
             self.finished_signal.emit(False, f"查询失败: {str(e)}")
 
@@ -121,23 +124,35 @@ class UpgradeThread(QThread):
     """升级命令发送线程"""
     finished_signal = pyqtSignal(bool, str)  # success, message
     
-    def __init__(self, sn, device_identify, file_url, token, host):
+    def __init__(self, sn, dev_id, device_identify, file_url, device_query):
         super().__init__()
         self.sn = sn
+        self.dev_id = dev_id
         self.device_identify = device_identify
         self.file_url = file_url
-        self.token = token
-        self.host = host
+        self.device_query = device_query
     
     def run(self):
         try:
+            from query_tool.utils import ensure_device_online_for_upgrade
+
+            can_upgrade, _, prepare_message = ensure_device_online_for_upgrade(
+                self.dev_id,
+                self.sn,
+                self.device_query,
+                max_wake_times=3,
+            )
+            if not can_upgrade:
+                self.finished_signal.emit(False, prepare_message)
+                return
+
             session = SessionManager().get_session()
-            url = f"https://{self.host}/api/seetong-siot-device/console/device/operate/sendCommand"
+            url = f"https://{self.device_query.host}/api/seetong-siot-device/console/device/operate/sendCommand"
             
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA==",
-                "Seetong-Auth": self.token,
+                "Seetong-Auth": self.device_query.token,
             }
             
             params_dict = {
@@ -711,72 +726,54 @@ class UpgradeDialog(QDialog):
             if self.parent_window:
                 self.parent_window.show_warning("请先选择固件")
             return
-        
-        # 禁用所有按钮
-        self.wake_btn.setEnabled(False)
-        self.refresh_btn.setEnabled(False)
-        self.confirm_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(False)
-        
-        # 重新查询状态
-        if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query)
-            thread.finished_signal.connect(self.on_confirm_status_checked)
-            thread.finished.connect(lambda: thread.deleteLater())
-            self.thread_mgr.add("confirm_status_query", thread)
-            thread.start()
-        else:
+
+        if not self.device_query or not self.device_query.token:
             if self.parent_window:
-                self.parent_window.show_error("查询状态失败，操作取消")
-            self.restore_buttons()
-    
-    def on_confirm_status_checked(self, is_online, message):
-        """确认前状态检查完成"""
-        if not is_online:
-            self.status_label.setText("● 离线")
-            self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 12px;")
-            if self.parent_window:
-                self.parent_window.show_warning("当前状态显示离线，继续尝试下发，最终结果以服务端返回为准")
-        self.send_upgrade_command()
-    
-    def send_upgrade_command(self):
-        """发送升级命令"""
+                self.parent_window.show_error("无法获取访问令牌，操作失败")
+            return
+
+        if not self.start_background_upgrade():
+            return
+
+        self.accept()
+
+    def start_background_upgrade(self):
+        """在父页面线程管理器中启动后台升级任务。"""
         device_identify = self.selected_firmware.get('identifier', '')
         file_url = self.selected_firmware.get('download_url', '')
         
         if not file_url:
             if self.parent_window:
                 self.parent_window.show_error("固件下载链接为空，无法升级")
-            self.restore_buttons()
-            return
-        
-        if self.device_query and self.device_query.token:
-            thread = UpgradeThread(
-                self.sn,
-                device_identify,
-                file_url,
-                self.device_query.token,
-                self.device_query.host
-            )
-            thread.finished_signal.connect(self.on_upgrade_finished)
-            thread.finished.connect(lambda: thread.deleteLater())
-            self.thread_mgr.add("upgrade", thread)
-            thread.start()
-        else:
-            if self.parent_window:
-                self.parent_window.show_error("无法获取访问令牌，操作失败")
-            self.restore_buttons()
-    
-    def on_upgrade_finished(self, success, message):
-        """升级命令发送完成"""
-        if success:
-            if self.parent_window:
-                self.parent_window.show_success(f"升级命令已发送: {self.sn}")
-            self.accept()
-        else:
-            if self.parent_window:
-                self.parent_window.show_error(f"升级失败: {message}")
-            self.restore_buttons()
+            return False
+
+        owner_thread_mgr = getattr(self.parent_window, 'thread_mgr', None) or self.thread_mgr
+        thread_name = f"upgrade_{self.sn}_{int(datetime.now().timestamp() * 1000)}"
+
+        thread = UpgradeThread(
+            self.sn,
+            self.dev_id,
+            device_identify,
+            file_url,
+            self.device_query,
+        )
+
+        if self.parent_window:
+            self.parent_window.show_progress(f"已在后台开始升级 {self.sn}...")
+
+        def handle_finished(success, message, sn=self.sn, parent=self.parent_window):
+            if not parent:
+                return
+            if success:
+                parent.show_success(f"升级命令已发送: {sn}")
+            else:
+                parent.show_error(f"升级失败: {message}")
+
+        thread.finished_signal.connect(handle_finished)
+        thread.finished.connect(lambda: thread.deleteLater())
+        owner_thread_mgr.add(thread_name, thread)
+        thread.start()
+        return True
     
     def restore_buttons(self):
         """恢复按钮状态"""

@@ -323,11 +323,8 @@ def wake_device(dev_id, sn, token_or_query, host='console.seetong.com', times=3)
         time.sleep(1)
 
 
-def check_device_online(sn, token_or_query, host='console.seetong.com'):
-    """查询设备在线状态。
-
-    优先复用 DeviceQuery，确保与主查询页使用同一套 host、token 刷新和接口逻辑。
-    """
+def query_device_online_state(sn, token_or_query, host='console.seetong.com'):
+    """查询设备在线状态，返回 True/False/None（None 表示查询失败）。"""
     try:
         token, host, query = _resolve_auth_context(token_or_query, host)
 
@@ -353,7 +350,60 @@ def check_device_online(sn, token_or_query, host='console.seetong.com'):
         return _is_online_status(online_status)
     except Exception as e:
         logger.warning(f"查询在线状态失败: {e}")
-        return False
+        return None
+
+
+def check_device_online(sn, token_or_query, host='console.seetong.com'):
+    """查询设备在线状态。
+
+    优先复用 DeviceQuery，确保与主查询页使用同一套 host、token 刷新和接口逻辑。
+    """
+    return query_device_online_state(sn, token_or_query, host) is True
+
+
+def ensure_device_online_for_upgrade(dev_id, sn, token_or_query, host='console.seetong.com', max_wake_times=3):
+    """升级前确保设备在线。
+
+    Returns:
+        tuple[bool, str, str]:
+            - 是否允许继续下发升级
+            - 预处理结果: online/status_unknown/woken/wake_failed
+            - 结果描述
+    """
+    token, host, query = _resolve_auth_context(token_or_query, host)
+    auth_context = query if query is not None else token
+
+    online_state = query_device_online_state(sn, auth_context, host)
+    if online_state is True:
+        return True, 'online', '设备在线'
+    if online_state is None:
+        logger.warning(f"设备 {sn} 在线状态查询失败，继续尝试直接下发升级")
+        return True, 'status_unknown', '在线状态查询失败，继续尝试直接下发升级'
+
+    resolved_dev_id = dev_id
+    if not resolved_dev_id and query is not None:
+        try:
+            res = query.get_device_info(dev_sn=sn)
+            records = res.get('data', {}).get('records', []) if res else []
+            if records:
+                resolved_dev_id = records[0].get('devId') or records[0].get('id') or ''
+        except Exception as e:
+            logger.warning(f"查询设备ID失败 {sn}: {e}")
+
+    if not resolved_dev_id:
+        logger.warning(f"设备 {sn} 离线且缺少 dev_id，无法执行唤醒")
+        return False, 'wake_failed', '设备离线，且缺少 dev_id，无法唤醒'
+
+    if wake_device_smart(
+        resolved_dev_id,
+        sn,
+        auth_context,
+        host,
+        max_times=max_wake_times,
+    ):
+        return True, 'woken', '设备唤醒成功'
+
+    return False, 'wake_failed', '设备离线，唤醒失败'
 
 
 def wake_device_smart(dev_id, sn, token_or_query, host='console.seetong.com', max_times=3):

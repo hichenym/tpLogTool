@@ -1270,15 +1270,14 @@ class FirmwarePage(BasePage):
         self.show_progress(f"正在立即下发升级: {identifier}（{len(sn_list)} 台）...")
 
         devices = [(sn, "") for sn in sn_list]
-        stats = {'success': 0, 'offline': 0, 'failed': 0}
+        stats = {'success': 0, 'offline': 0, 'wake_failed': 0, 'failed': 0}
         thread_name = f"immediate_upgrade_{int(datetime.now().timestamp() * 1000)}"
         thread = BatchUpgradeThread(
             devices,
             identifier,
             file_url,
-            device_query.token,
-            device_query.host,
-            min(30, max(1, len(devices))),
+            device_query=device_query,
+            max_workers=min(30, max(1, len(devices))),
         )
 
         def on_single_result(_sn, status, _message):
@@ -1289,20 +1288,25 @@ class FirmwarePage(BasePage):
         def on_all_done():
             success_count = stats.get('success', 0)
             offline_count = stats.get('offline', 0)
+            wake_failed_count = stats.get('wake_failed', 0)
             failed_count = stats.get('failed', 0)
 
             if success_count > 0:
                 self.show_success(
-                    f"升级命令下发完成：成功 {success_count} 台，离线 {offline_count} 台，失败 {failed_count} 台"
+                    f"升级命令下发完成：成功 {success_count} 台，离线 {offline_count} 台，唤醒失败 {wake_failed_count} 台，失败 {failed_count} 台"
                 )
                 return
 
-            if offline_count > 0 and failed_count == 0:
+            if offline_count == 0 and wake_failed_count > 0 and failed_count == 0:
+                self.show_error(f"设备离线且唤醒失败：共 {wake_failed_count} 台")
+                return
+
+            if offline_count > 0 and wake_failed_count == 0 and failed_count == 0:
                 self.show_error("设备离线，操作失败")
                 return
 
             self.show_error(
-                f"升级下发失败：离线 {offline_count} 台，失败 {failed_count} 台"
+                f"升级下发失败：离线 {offline_count} 台，唤醒失败 {wake_failed_count} 台，失败 {failed_count} 台"
             )
 
         thread.single_result.connect(on_single_result)
