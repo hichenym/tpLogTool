@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import hashlib
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Union
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -431,6 +431,10 @@ class UpdateDownloader:
                 try:
                     file.unlink()
                     logger.info(f"已删除旧文件: {file}")
+                    metadata_file = file.with_name(file.name + '.meta.json')
+                    if metadata_file.exists():
+                        metadata_file.unlink()
+                        logger.info(f"已删除旧元数据文件: {metadata_file}")
                 except Exception as e:
                     logger.error(f"删除文件失败 {file}: {e}")
         
@@ -464,13 +468,51 @@ class UpdateInstaller:
         if "__compiled__" in globals() or hasattr(sys, "nuitka_binary_dir"):
             return True
 
-        current_program = UpdateInstaller.get_current_executable_path()
-        basename = os.path.basename(current_program).lower()
-        return current_program.lower().endswith('.exe') and basename not in ("python.exe", "pythonw.exe")
+        launcher_program = UpdateInstaller.get_launcher_executable_path()
+        basename = os.path.basename(launcher_program).lower()
+        return launcher_program.lower().endswith('.exe') and basename not in ("python.exe", "pythonw.exe")
 
     @staticmethod
-    def get_current_executable_path() -> str:
-        """获取当前程序路径，优先返回真正的应用 exe。"""
+    def _is_real_executable(path_like: Optional[Union[str, Path]]) -> bool:
+        if not path_like:
+            return False
+        try:
+            path = Path(path_like).resolve()
+        except Exception:
+            return False
+        return path.suffix.lower() == '.exe' and path.name.lower() not in ("python.exe", "pythonw.exe")
+
+    @staticmethod
+    def _is_runtime_executable(path_like: Optional[Union[str, Path]]) -> bool:
+        if not UpdateInstaller._is_real_executable(path_like):
+            return False
+        try:
+            path = Path(path_like).resolve()
+        except Exception:
+            return False
+        return any(part.lower() == '.tpquerytool-onefile' for part in path.parts)
+
+    @staticmethod
+    def get_runtime_executable_path() -> Optional[str]:
+        """获取当前 onefile 展开的运行体路径。"""
+        for candidate in (sys.executable, sys.argv[0] if sys.argv else ""):
+            if UpdateInstaller._is_runtime_executable(candidate):
+                return str(Path(candidate).resolve())
+        return None
+
+    @staticmethod
+    def get_runtime_directory_path() -> Optional[str]:
+        runtime_exe = UpdateInstaller.get_runtime_executable_path()
+        if not runtime_exe:
+            return None
+        try:
+            return str(Path(runtime_exe).resolve().parent)
+        except Exception:
+            return None
+
+    @staticmethod
+    def get_launcher_executable_path() -> str:
+        """获取真正需要被替换和重启的外层 launcher exe。"""
         candidates = []
 
         try:
@@ -487,94 +529,200 @@ class UpdateInstaller:
         if sys.argv and sys.argv[0]:
             candidates.append(Path(sys.argv[0]).resolve())
 
+        runtime_fallback = None
         for candidate in candidates:
-            if candidate.suffix.lower() != '.exe':
+            if not UpdateInstaller._is_real_executable(candidate):
                 continue
-            if candidate.name.lower() in ("python.exe", "pythonw.exe"):
+            if UpdateInstaller._is_runtime_executable(candidate):
+                runtime_fallback = candidate
+                inferred_launcher = candidate.parent.parent / candidate.name
+                if inferred_launcher != candidate and inferred_launcher.suffix.lower() == '.exe':
+                    return str(inferred_launcher)
                 continue
             return str(candidate)
 
+        if runtime_fallback is not None:
+            inferred_launcher = runtime_fallback.parent.parent / runtime_fallback.name
+            return str(inferred_launcher)
         if candidates:
             return str(candidates[0])
         return sys.executable
-    
+
     @staticmethod
-    def create_update_script(new_exe_path: str, current_exe_path: str, restart: bool = True) -> str:
+    def get_current_executable_path() -> str:
+        """向后兼容别名，返回外层 launcher exe。"""
+        return UpdateInstaller.get_launcher_executable_path()
+
+    @staticmethod
+    def _quote_ps(value: str) -> str:
+        return value.replace("'", "''")
+
+    @staticmethod
+    def create_update_script(
+        new_exe_path: str,
+        current_exe_path: str,
+        restart: bool = True,
+        parent_pid: Optional[int] = None,
+    ) -> str:
         """
-        创建更新脚本
+        创建 PowerShell 更新脚本。
         
         Args:
             new_exe_path: 新版本 exe 路径
             current_exe_path: 当前 exe 路径
             restart: 是否重启程序
+            parent_pid: 需要等待退出的主进程 PID
         
         Returns:
             str: 脚本文件路径
         """
-        # 创建临时批处理脚本
-        script_content = f"""@echo off
-chcp 65001 >nul
-setlocal EnableExtensions EnableDelayedExpansion
-echo 正在更新程序...
+        runtime_dir = UpdateInstaller.get_runtime_directory_path() or ""
+        log_dir = Path.home() / '.TPQueryTool' / 'logs'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / 'update_installer.log'
+        script_path = os.path.join(tempfile.gettempdir(), 'tpquerytool_update.ps1')
 
-set "CURRENT_EXE={current_exe_path}"
-set "BACKUP_EXE={current_exe_path}.bak"
-set "NEW_EXE={new_exe_path}"
-set /a RETRY_COUNT=0
-set /a MAX_RETRIES=30
+        script_content = f"""$ErrorActionPreference = 'Stop'
+$ParentPid = {int(parent_pid or 0)}
+$LauncherExe = '{UpdateInstaller._quote_ps(current_exe_path)}'
+$PackageExe = '{UpdateInstaller._quote_ps(new_exe_path)}'
+$BackupExe = '{UpdateInstaller._quote_ps(current_exe_path)}.bak'
+$MetadataPath = '{UpdateInstaller._quote_ps(str(Path(new_exe_path).with_name(Path(new_exe_path).name + ".meta.json")))}'
+$Restart = {'$true' if restart else '$false'}
+$RuntimeDir = '{UpdateInstaller._quote_ps(runtime_dir)}'
+$LogPath = '{UpdateInstaller._quote_ps(str(log_path))}'
 
-:: 等待主程序彻底退出，并确认 exe 不再被占用
-:wait_for_main_exit
-if exist "!BACKUP_EXE!" del /f /q "!BACKUP_EXE!" >nul 2>&1
-move "!CURRENT_EXE!" "!BACKUP_EXE!" >nul 2>&1
-if exist "!CURRENT_EXE!" (
-    set /a RETRY_COUNT+=1
-    if !RETRY_COUNT! geq !MAX_RETRIES! (
-        echo 等待主程序退出超时，取消本次更新。
-        goto cleanup
-    )
-    timeout /t 1 /nobreak >nul
-    goto wait_for_main_exit
-)
+function Write-Log([string]$message) {{
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    Add-Content -LiteralPath $LogPath -Value "$timestamp [installer] $message"
+}}
 
-:: 复制新版本
-copy /y "!NEW_EXE!" "!CURRENT_EXE!" >nul
+function Wait-ParentExit([int]$pid, [int]$timeoutSeconds) {{
+    if ($pid -le 0) {{
+        return $true
+    }}
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    while ((Get-Date) -lt $deadline) {{
+        $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+        if (-not $process) {{
+            return $true
+        }}
+        Start-Sleep -Milliseconds 250
+    }}
+    return $false
+}}
 
-:: 检查是否成功
-if exist "!CURRENT_EXE!" (
-    echo 更新成功！
-    del /f /q "!BACKUP_EXE!" >nul 2>&1
-    del /f /q "!NEW_EXE!" >nul 2>&1
-) else (
-    echo 更新失败，恢复备份...
-    if exist "!BACKUP_EXE!" move /y "!BACKUP_EXE!" "!CURRENT_EXE!" >nul 2>&1
-)
+function Wait-And-MoveLauncher([string]$launcherPath, [string]$backupPath, [int]$timeoutSeconds) {{
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    while ((Get-Date) -lt $deadline) {{
+        try {{
+            if (-not (Test-Path -LiteralPath $launcherPath)) {{
+                Write-Log "launcher 文件当前不存在，跳过备份移动: $launcherPath"
+                return $true
+            }}
+            if (Test-Path -LiteralPath $backupPath) {{
+                Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+            }}
+            Move-Item -LiteralPath $launcherPath -Destination $backupPath -Force
+            return $true
+        }} catch {{
+            Start-Sleep -Milliseconds 500
+        }}
+    }}
+    return $false
+}}
 
+try {{
+    Write-Log "开始安装更新，目标: $LauncherExe"
+
+    if (-not (Test-Path -LiteralPath $PackageExe)) {{
+        throw "更新包不存在: $PackageExe"
+    }}
+
+    if (-not (Wait-ParentExit -pid $ParentPid -timeoutSeconds 12)) {{
+        Write-Log "主进程未按时退出，尝试强制结束 PID=$ParentPid"
+        Stop-Process -Id $ParentPid -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+    }}
+
+    if (-not (Wait-And-MoveLauncher -launcherPath $LauncherExe -backupPath $BackupExe -timeoutSeconds 20)) {{
+        throw "等待 launcher 可替换超时: $LauncherExe"
+    }}
+
+    Copy-Item -LiteralPath $PackageExe -Destination $LauncherExe -Force
+    if (-not (Test-Path -LiteralPath $LauncherExe)) {{
+        throw "复制新版本失败: $LauncherExe"
+    }}
+
+    if ($RuntimeDir) {{
+        try {{
+            Remove-Item -LiteralPath $RuntimeDir -Recurse -Force -ErrorAction Stop
+            Write-Log "已清理 onefile 运行体目录: $RuntimeDir"
+        }} catch {{
+            Write-Log "清理 onefile 运行体目录失败(忽略): $RuntimeDir ; $($_.Exception.Message)"
+        }}
+    }}
+
+    if ($Restart) {{
+        Start-Process -FilePath $LauncherExe -WorkingDirectory (Split-Path -Path $LauncherExe -Parent)
+    }}
+
+    if (Test-Path -LiteralPath $BackupExe) {{
+        Remove-Item -LiteralPath $BackupExe -Force -ErrorAction SilentlyContinue
+    }}
+    if (Test-Path -LiteralPath $PackageExe) {{
+        Remove-Item -LiteralPath $PackageExe -Force -ErrorAction SilentlyContinue
+    }}
+    if (Test-Path -LiteralPath $MetadataPath) {{
+        Remove-Item -LiteralPath $MetadataPath -Force -ErrorAction SilentlyContinue
+    }}
+    Write-Log "更新安装完成"
+}} catch {{
+    Write-Log "更新安装失败: $($_.Exception.Message)"
+    if ((Test-Path -LiteralPath $BackupExe) -and (-not (Test-Path -LiteralPath $LauncherExe))) {{
+        Move-Item -LiteralPath $BackupExe -Destination $LauncherExe -Force -ErrorAction SilentlyContinue
+        Write-Log "已回滚 launcher 备份"
+    }}
+}} finally {{
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+}}
 """
-        
-        if restart:
-            script_content += f"""
-:: 重启程序
-start "" "{current_exe_path}"
-"""
-        
-        script_content += """
-:cleanup
-endlocal
-:: 删除脚本自身
-del "%~f0"
-"""
-        
-        # 保存脚本
-        script_path = os.path.join(tempfile.gettempdir(), 'tpquerytool_update.bat')
-        
+
         with open(script_path, 'w', encoding='utf-8') as f:
             f.write(script_content)
-        
+
         logger.info(f"更新脚本已创建: {script_path}")
-        
         return script_path
-    
+
+    @staticmethod
+    def launch_update_installer(new_exe_path: str, restart: bool = True, parent_pid: Optional[int] = None) -> str:
+        """启动外部 PowerShell 更新脚本，但不在此处退出主程序。"""
+        current_exe_path = UpdateInstaller.get_launcher_executable_path()
+        logger.info(f"更新目标 launcher: {current_exe_path}")
+        runtime_exe = UpdateInstaller.get_runtime_executable_path()
+        if runtime_exe:
+            logger.info(f"当前运行体: {runtime_exe}")
+
+        script_path = UpdateInstaller.create_update_script(
+            new_exe_path,
+            current_exe_path,
+            restart=restart,
+            parent_pid=parent_pid or os.getpid(),
+        )
+
+        subprocess.Popen(
+            [
+                'powershell',
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-WindowStyle', 'Hidden',
+                '-File', script_path,
+            ],
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        logger.info("更新脚本已启动，等待主程序退出")
+        return script_path
+
     @staticmethod
     def apply_update(new_exe_path: str, restart: bool = True):
         """
@@ -608,27 +756,16 @@ del "%~f0"
                 logger.warning("=" * 60)
                 raise RuntimeError("当前运行方式不支持自动更新")
 
-            current_exe_path = UpdateInstaller.get_current_executable_path()
-            logger.info(f"当前程序: {current_exe_path}")
-            
-            # 创建更新脚本
-            logger.info("创建更新脚本...")
-            script_path = UpdateInstaller.create_update_script(
+            logger.info(f"当前程序: {UpdateInstaller.get_current_executable_path()}")
+
+            logger.info("创建并启动更新脚本...")
+            script_path = UpdateInstaller.launch_update_installer(
                 new_exe_path,
-                current_exe_path,
-                restart
+                restart=restart,
+                parent_pid=os.getpid(),
             )
-            
+
             logger.info(f"更新脚本: {script_path}")
-            
-            # 执行脚本并退出程序
-            logger.info("启动更新脚本...")
-            subprocess.Popen(
-                ['cmd', '/c', script_path],
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            
-            logger.info("更新脚本已启动，程序即将退出")
             logger.info("=" * 60)
             
             # 退出当前程序

@@ -1354,6 +1354,10 @@ class GitLabLogPage(BasePage):
         """清理资源"""
         self.thread_mgr.stop_all()
 
+    def fast_cleanup(self):
+        """更新重启时快速结束后台线程。"""
+        self.thread_mgr.stop_all(wait_ms=300, force=True)
+
     def refresh_theme(self):
         """主题切换时刷新 ComboBox lineEdit 样式"""
         inactive = StyleManager.get_COMBO_LINE_EDIT_INACTIVE()

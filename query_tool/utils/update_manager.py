@@ -2,6 +2,8 @@
 更新管理器
 统一管理更新检查、下载和安装
 """
+import json
+from pathlib import Path
 from typing import Optional
 from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -12,6 +14,8 @@ from query_tool.utils.update_downloader import UpdateDownloader, UpdateInstaller
 
 class UpdateManager(QObject):
     """更新管理器"""
+
+    METADATA_SUFFIX = ".meta.json"
     
     # 信号
     update_available = pyqtSignal(object)  # VersionInfo
@@ -95,6 +99,8 @@ class UpdateManager(QObject):
         """下载完成回调"""
         if success:
             self.downloaded_file_path = result
+            if self.latest_version_info:
+                self.save_download_metadata(result, self.latest_version_info)
             logger.info(f"下载完成: {result}")
         else:
             logger.error(f"下载失败: {result}")
@@ -155,3 +161,60 @@ class UpdateManager(QObject):
     def clean_old_downloads(self):
         """清理旧的下载文件"""
         self.downloader.clean_old_downloads()
+
+    @classmethod
+    def get_metadata_path(cls, file_path: str) -> Path:
+        file = Path(file_path)
+        return file.with_name(file.name + cls.METADATA_SUFFIX)
+
+    @classmethod
+    def save_download_metadata(cls, file_path: str, version_info: VersionInfo):
+        """为下载完成的安装包保存本地元数据。"""
+        metadata = {
+            "version": version_info.version,
+            "build_date": version_info.build_date,
+            "download_url": version_info.download_url,
+            "file_size_mb": version_info.file_size_mb,
+            "file_size_bytes": version_info.file_size_bytes,
+            "file_hash": version_info.file_hash,
+            "hash_algorithm": version_info.hash_algorithm or "sha256",
+            "checksum_url": version_info.checksum_url,
+            "release_notes_url": version_info.release_notes_url,
+            "min_version": version_info.min_version,
+            "update_strategy": version_info.update_strategy,
+            "changelog": version_info.changelog,
+        }
+
+        metadata_path = cls.get_metadata_path(file_path)
+        try:
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            logger.info(f"已写入更新包元数据: {metadata_path}")
+        except Exception as e:
+            logger.error(f"保存更新包元数据失败: {e}")
+
+    @classmethod
+    def load_download_metadata(cls, file_path: str) -> Optional[VersionInfo]:
+        """读取下载包对应的本地元数据。"""
+        metadata_path = cls.get_metadata_path(file_path)
+        try:
+            if not metadata_path.exists():
+                return None
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return VersionInfo(data)
+        except Exception as e:
+            logger.error(f"读取更新包元数据失败 {metadata_path}: {e}")
+            return None
+
+    @classmethod
+    def remove_download_metadata(cls, file_path: str):
+        """删除下载包的本地元数据。"""
+        metadata_path = cls.get_metadata_path(file_path)
+        try:
+            if metadata_path.exists():
+                metadata_path.unlink()
+                logger.info(f"已删除更新包元数据: {metadata_path}")
+        except Exception as e:
+            logger.warning(f"删除更新包元数据失败 {metadata_path}: {e}")

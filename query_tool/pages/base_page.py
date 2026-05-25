@@ -39,6 +39,10 @@ class BasePage(QWidget):
         """清理资源（页面关闭时调用，可选重写）"""
         pass
 
+    def fast_cleanup(self):
+        """快速清理资源（用于更新重启等需要尽快退出的场景）。"""
+        self.cleanup()
+
     def refresh_theme(self):
         """主题切换时调用，子类可重写以刷新自身样式"""
         pass

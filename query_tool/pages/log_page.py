@@ -1409,6 +1409,16 @@ class LogPage(BasePage):
             self.worker_thread.cancel()
             self.worker_thread.wait(3000)
 
+    def fast_cleanup(self):
+        if self.worker_thread is not None and self.worker_thread.isRunning():
+            try:
+                self.fetch_running = False
+                self.fetch_canceling = True
+                self.worker_thread.cancel()
+                self.worker_thread.wait(500)
+            except Exception:
+                pass
+
     def _prepare_result_table(self, sn_list):
         self._row_map = {}
         self._device_payloads = {}

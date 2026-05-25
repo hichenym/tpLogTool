@@ -1888,6 +1888,21 @@ class DebugPage(BasePage):
             self.worker_thread.quit()
             self.worker_thread.wait(3000)
 
+    def fast_cleanup(self):
+        try:
+            if hasattr(self, "worker"):
+                self.worker.cancel_pending_connect()
+                QMetaObject.invokeMethod(self.worker, "shutdown", Qt.QueuedConnection)
+        except Exception:
+            pass
+
+        if hasattr(self, "worker_thread"):
+            try:
+                self.worker_thread.quit()
+                self.worker_thread.wait(500)
+            except Exception:
+                pass
+
     def refresh_theme(self):
         for attr in ("_connect_frame", "_command_input_frame", "_shortcut_frame"):
             if hasattr(self, attr):

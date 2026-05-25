@@ -981,6 +981,23 @@ class ErrorRecordPage(BasePage):
             except RuntimeError:
                 pass
 
+    def fast_cleanup(self):
+        if hasattr(self, '_query_thread') and self._query_thread:
+            try:
+                if self._query_thread.isRunning():
+                    self._query_thread.quit()
+                    self._query_thread.wait(300)
+            except RuntimeError:
+                pass
+        if hasattr(self, '_export_thread') and self._export_thread:
+            try:
+                self._export_thread.cancel()
+                if self._export_thread.isRunning():
+                    self._export_thread.quit()
+                    self._export_thread.wait(300)
+            except RuntimeError:
+                pass
+
 
 class _FullExportThread(QThread):
     """全量拉取所有页数据并导出到文件"""
