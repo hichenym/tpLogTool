@@ -1612,6 +1612,15 @@ class DeviceStatusPage(BasePage):
         """刷新选中设备的在线状态"""
         # 使用线程池并发查询状态
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # 预先构建当前表格的 SN -> 行号映射，避免每个结果回填时都全表扫描。
+        sn_to_row_map = {}
+        for row in range(self.result_table.rowCount()):
+            sn_item = self.result_table.item(row, 3)
+            if sn_item:
+                sn = sn_item.text().strip()
+                if sn:
+                    sn_to_row_map[sn] = row
         
         def query_status(sn):
             try:
@@ -1631,15 +1640,13 @@ class DeviceStatusPage(BasePage):
             for future in as_completed(futures):
                 sn, is_online = future.result()
                 if is_online is not None:
-                    # 更新表格中的状态
-                    for row in range(self.result_table.rowCount()):
-                        sn_item = self.result_table.item(row, 3)
-                        if sn_item and sn_item.text() == sn:
-                            status_text = "在线" if is_online else "离线"
-                            status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
-                            status_item = self.create_status_item(status_text, status_color)
-                            self.result_table.setItem(row, 7, status_item)
-                            break
+                    row = sn_to_row_map.get(sn)
+                    if row is None:
+                        continue
+                    status_text = "在线" if is_online else "离线"
+                    status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
+                    status_item = self.create_status_item(status_text, status_color)
+                    self.result_table.setItem(row, 7, status_item)
     
     def on_batch_upgrade(self):
         """批量升级"""
