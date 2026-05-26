@@ -699,13 +699,13 @@ function Write-Log([string]$message) {{
     Add-Content -LiteralPath $LogPath -Value "$timestamp [installer] $message"
 }}
 
-function Wait-ParentExit([int]$pid, [int]$timeoutSeconds) {{
-    if ($pid -le 0) {{
+function Wait-ParentExit([int]$targetPid, [int]$timeoutSeconds) {{
+    if ($targetPid -le 0) {{
         return $true
     }}
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     while ((Get-Date) -lt $deadline) {{
-        $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+        $process = Get-Process -Id $targetPid -ErrorAction SilentlyContinue
         if (-not $process) {{
             return $true
         }}
@@ -741,7 +741,7 @@ try {{
         throw "更新包不存在: $PackageExe"
     }}
 
-    if (-not (Wait-ParentExit -pid $ParentPid -timeoutSeconds 12)) {{
+    if (-not (Wait-ParentExit -targetPid $ParentPid -timeoutSeconds 12)) {{
         Write-Log "主进程未按时退出，尝试强制结束 PID=$ParentPid"
         Stop-Process -Id $ParentPid -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 1
