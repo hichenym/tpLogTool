@@ -87,6 +87,7 @@ class UpdateManager(QObject):
             filename=filename,
             expected_hash=expected_hash,
             hash_algorithm=hash_algorithm,
+            expected_size_bytes=int(getattr(version_info, 'file_size_bytes', 0) or 0),
             progress_callback=self._on_download_progress,
             finished_callback=self._on_download_finished
         )

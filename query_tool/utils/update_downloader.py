@@ -21,17 +21,65 @@ class DownloadThread(QThread):
     progress = pyqtSignal(int, int)  # (已下载, 总大小)
     finished = pyqtSignal(bool, str)  # (是否成功, 消息/文件路径)
     
-    def __init__(self, url: str, save_path: str, expected_hash: Optional[str] = None, hash_algorithm: str = 'sha256'):
+    def __init__(
+        self,
+        url: str,
+        save_path: str,
+        expected_hash: Optional[str] = None,
+        hash_algorithm: str = 'sha256',
+        expected_size_bytes: int = 0,
+    ):
         super().__init__()
         self.url = url
         self.save_path = save_path
         self.expected_hash = expected_hash  # 期望的文件哈希值
         self.hash_algorithm = hash_algorithm  # 哈希算法（sha256, md5等）
+        self.expected_size_bytes = int(expected_size_bytes or 0)
         self._is_cancelled = False
+        self.lock_path = self.save_path + '.lock'
+        self._lock_fd = None
     
     def cancel(self):
         """取消下载"""
         self._is_cancelled = True
+
+    def _acquire_download_lock(self) -> bool:
+        """获取下载锁，避免多个进程同时写入同一个临时文件。"""
+        try:
+            if os.path.exists(self.lock_path):
+                try:
+                    lock_age = __import__('time').time() - os.path.getmtime(self.lock_path)
+                    if lock_age > 1800:
+                        logger.warning(f"发现过期下载锁，自动清理: {self.lock_path}")
+                        os.remove(self.lock_path)
+                except Exception as e:
+                    logger.warning(f"检查下载锁失败: {e}")
+
+            self._lock_fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            lock_payload = f"{os.getpid()}\n{self.save_path}\n"
+            os.write(self._lock_fd, lock_payload.encode('utf-8', errors='ignore'))
+            return True
+        except FileExistsError:
+            logger.error(f"检测到另一个实例正在下载同一更新包，跳过当前下载: {self.save_path}")
+            return False
+        except Exception as e:
+            logger.error(f"创建下载锁失败: {e}")
+            return False
+
+    def _release_download_lock(self):
+        """释放下载锁。"""
+        try:
+            if self._lock_fd is not None:
+                os.close(self._lock_fd)
+                self._lock_fd = None
+        except Exception as e:
+            logger.warning(f"关闭下载锁失败: {e}")
+
+        try:
+            if os.path.exists(self.lock_path):
+                os.remove(self.lock_path)
+        except Exception as e:
+            logger.warning(f"删除下载锁失败: {e}")
     
     def _calculate_file_hash(self, file_path: str, algorithm: str = 'sha256') -> str:
         """
@@ -76,6 +124,17 @@ class DownloadThread(QThread):
             return True  # 文件不存在，可以开始下载
         
         file_size = os.path.getsize(temp_path)
+
+        if self.expected_size_bytes > 0 and file_size > self.expected_size_bytes:
+            logger.warning(
+                f"临时文件大小超过预期 ({file_size} > {self.expected_size_bytes})，"
+                "说明续传文件已损坏，将重新下载"
+            )
+            try:
+                os.remove(temp_path)
+            except Exception as e:
+                logger.error(f"删除异常临时文件失败: {e}")
+            return True
         
         # 如果文件太小（小于1KB），可能是损坏的，重新下载
         if file_size < 1024:
@@ -125,149 +184,185 @@ class DownloadThread(QThread):
         """执行下载（带重试机制、断点续传和哈希验证）"""
         max_retries = 10
         retry_delay = 5  # 秒
-        
-        for attempt in range(max_retries):
-            try:
-                if attempt > 0:
-                    logger.info(f"重试下载 (第 {attempt + 1}/{max_retries} 次)")
-                    import time
-                    time.sleep(retry_delay)
-                
-                # 使用临时文件，下载完成后再重命名
-                temp_path = self.save_path + '.tmp'
-                
-                # 验证部分下载的文件
-                if not self._verify_partial_file(temp_path):
-                    logger.warning("部分文件验证失败，将重新下载")
-                    downloaded = 0
-                else:
-                    # 检查是否有未完成的下载（断点续传）
-                    downloaded = 0
-                    if os.path.exists(temp_path):
-                        downloaded = os.path.getsize(temp_path)
-                        logger.info(f"发现未完成的下载，已下载 {downloaded / 1024 / 1024:.2f} MB，尝试断点续传")
-                    else:
-                        logger.info(f"开始下载...")
-                
-                # 设置请求头支持断点续传
-                headers = {
-                    'User-Agent': 'TPQueryTool/3.1.0',
-                    'Accept': 'application/octet-stream'
-                }
-                
-                # 如果有已下载的部分，添加 Range 头
-                if downloaded > 0:
-                    headers['Range'] = f'bytes={downloaded}-'
-                
-                # 使用更长的超时时间
-                # connect timeout: 10秒, read timeout: 300秒(5分钟)
-                response = requests.get(
-                    self.url,
-                    stream=True,
-                    timeout=(10, 300),
-                    headers=headers,
-                    allow_redirects=True
-                )
-                
-                # 检查是否支持断点续传
-                if downloaded > 0:
-                    if response.status_code == 206:
-                        # 206 Partial Content - 支持断点续传
-                        logger.info("服务器支持断点续传，继续下载")
-                        mode = 'ab'  # 追加模式
-                    elif response.status_code == 200:
-                        # 200 OK - 不支持断点续传，重新下载
-                        logger.warning("服务器不支持断点续传，重新下载")
+        if not self._acquire_download_lock():
+            self.finished.emit(False, "检测到另一个实例正在下载更新，请关闭重复程序后重试")
+            return
+
+        try:
+            for attempt in range(max_retries):
+                response = None
+                try:
+                    if attempt > 0:
+                        logger.info(f"重试下载 (第 {attempt + 1}/{max_retries} 次)")
+                        import time
+                        time.sleep(retry_delay)
+                    
+                    # 使用临时文件，下载完成后再重命名
+                    temp_path = self.save_path + '.tmp'
+                    
+                    # 验证部分下载的文件
+                    if not self._verify_partial_file(temp_path):
+                        logger.warning("部分文件验证失败，将重新下载")
                         downloaded = 0
-                        mode = 'wb'  # 覆盖模式
-                        # 删除旧的临时文件
+                    else:
+                        # 检查是否有未完成的下载（断点续传）
+                        downloaded = 0
                         if os.path.exists(temp_path):
-                            os.remove(temp_path)
+                            downloaded = os.path.getsize(temp_path)
+                            logger.info(f"发现未完成的下载，已下载 {downloaded / 1024 / 1024:.2f} MB，尝试断点续传")
+                        else:
+                            logger.info(f"开始下载...")
+                    
+                    # 设置请求头支持断点续传
+                    headers = {
+                        'User-Agent': 'TPQueryTool/3.1.0',
+                        'Accept': 'application/octet-stream'
+                    }
+                    
+                    # 如果有已下载的部分，添加 Range 头
+                    if downloaded > 0:
+                        headers['Range'] = f'bytes={downloaded}-'
+                    
+                    # 使用更长的超时时间
+                    # connect timeout: 10秒, read timeout: 300秒(5分钟)
+                    response = requests.get(
+                        self.url,
+                        stream=True,
+                        timeout=(10, 300),
+                        headers=headers,
+                        allow_redirects=True
+                    )
+                    
+                    # 检查是否支持断点续传
+                    if downloaded > 0:
+                        if response.status_code == 206:
+                            # 206 Partial Content - 支持断点续传
+                            logger.info("服务器支持断点续传，继续下载")
+                            mode = 'ab'  # 追加模式
+                        elif response.status_code == 200:
+                            # 200 OK - 不支持断点续传，重新下载
+                            logger.warning("服务器不支持断点续传，重新下载")
+                            downloaded = 0
+                            mode = 'wb'  # 覆盖模式
+                            # 删除旧的临时文件
+                            if os.path.exists(temp_path):
+                                os.remove(temp_path)
+                        else:
+                            response.raise_for_status()
+                            mode = 'wb'
                     else:
                         response.raise_for_status()
                         mode = 'wb'
-                else:
-                    response.raise_for_status()
-                    mode = 'wb'
-                
-                # 获取总大小
-                if 'content-length' in response.headers:
-                    content_length = int(response.headers['content-length'])
-                    total_size = downloaded + content_length
-                elif 'content-range' in response.headers:
-                    # Content-Range: bytes 1000-2000/3000
-                    content_range = response.headers['content-range']
-                    total_size = int(content_range.split('/')[-1])
-                else:
-                    total_size = downloaded
-                
-                logger.info(f"总大小: {total_size / 1024 / 1024:.2f} MB, 已下载: {downloaded / 1024 / 1024:.2f} MB")
-                
-                # 确保目录存在
-                os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
-                
-                # 下载文件
-                with open(temp_path, mode) as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if self._is_cancelled:
-                            logger.info("下载已取消")
-                            # 不删除临时文件，保留用于断点续传
-                            self.finished.emit(False, "下载已取消")
-                            return
-                        
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            self.progress.emit(downloaded, total_size)
-                
-                logger.info(f"下载完成，开始验证文件...")
-                
-                # 验证文件哈希
-                if not self._verify_complete_file(temp_path):
-                    # 哈希验证失败
-                    logger.error("文件哈希验证失败，删除损坏的文件")
-                    try:
-                        os.remove(temp_path)
-                    except Exception as e:
-                        logger.error(f"删除损坏文件失败: {e}")
                     
-                    # 如果还有重试机会，继续重试
-                    if attempt < max_retries - 1:
-                        logger.info("将重新下载...")
-                        continue
+                    # 获取总大小
+                    if 'content-range' in response.headers:
+                        # Content-Range: bytes 1000-2000/3000
+                        content_range = response.headers['content-range']
+                        total_size = int(content_range.split('/')[-1])
+                    elif 'content-length' in response.headers:
+                        content_length = int(response.headers['content-length'])
+                        total_size = downloaded + content_length
                     else:
-                        self.finished.emit(False, "文件哈希验证失败，文件可能已损坏")
+                        total_size = downloaded
+
+                    if self.expected_size_bytes > 0 and total_size > 0 and total_size != self.expected_size_bytes:
+                        logger.warning(
+                            f"远端返回文件大小与版本元数据不一致: 响应 {total_size}，"
+                            f"元数据 {self.expected_size_bytes}"
+                        )
+                    
+                    logger.info(f"总大小: {total_size / 1024 / 1024:.2f} MB, 已下载: {downloaded / 1024 / 1024:.2f} MB")
+                    
+                    # 确保目录存在
+                    os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+                    
+                    # 下载文件
+                    with open(temp_path, mode) as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if self._is_cancelled:
+                                logger.info("下载已取消")
+                                # 不删除临时文件，保留用于断点续传
+                                self.finished.emit(False, "下载已取消")
+                                return
+                            
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                self.progress.emit(downloaded, total_size)
+
+                    actual_size = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                    expected_size = self.expected_size_bytes or total_size
+                    if expected_size > 0 and actual_size != expected_size:
+                        logger.error(
+                            f"下载文件大小不完整，期望 {expected_size} 字节，实际 {actual_size} 字节"
+                        )
+                        try:
+                            os.remove(temp_path)
+                        except Exception as e:
+                            logger.error(f"删除不完整文件失败: {e}")
+
+                        if attempt < max_retries - 1:
+                            logger.info("将重新下载完整文件...")
+                            continue
+                        self.finished.emit(False, "下载文件不完整，请重试")
                         return
+
+                    logger.info(f"下载完成，开始验证文件...")
+                    
+                    # 验证文件哈希
+                    if not self._verify_complete_file(temp_path):
+                        # 哈希验证失败
+                        logger.error("文件哈希验证失败，删除损坏的文件")
+                        try:
+                            os.remove(temp_path)
+                        except Exception as e:
+                            logger.error(f"删除损坏文件失败: {e}")
+                        
+                        # 如果还有重试机会，继续重试
+                        if attempt < max_retries - 1:
+                            logger.info("将重新下载...")
+                            continue
+                        else:
+                            self.finished.emit(False, "文件哈希验证失败，文件可能已损坏")
+                            return
+                    
+                    # 下载完成且验证通过，重命名临时文件
+                    if os.path.exists(self.save_path):
+                        os.remove(self.save_path)
+                    os.rename(temp_path, self.save_path)
+                    
+                    logger.info(f"下载完成: {self.save_path} ({downloaded / 1024 / 1024:.2f} MB)")
+                    self.finished.emit(True, self.save_path)
+                    return  # 成功，退出重试循环
+                    
+                except requests.exceptions.Timeout as e:
+                    logger.error(f"下载超时 (尝试 {attempt + 1}/{max_retries}): {e}")
+                    if attempt == max_retries - 1:
+                        self.finished.emit(False, f"下载超时，已重试 {max_retries} 次")
                 
-                # 下载完成且验证通过，重命名临时文件
-                if os.path.exists(self.save_path):
-                    os.remove(self.save_path)
-                os.rename(temp_path, self.save_path)
+                except requests.exceptions.ConnectionError as e:
+                    logger.error(f"连接失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                    if attempt == max_retries - 1:
+                        self.finished.emit(False, f"网络连接失败，请检查网络连接或稍后重试")
                 
-                logger.info(f"下载完成: {self.save_path} ({downloaded / 1024 / 1024:.2f} MB)")
-                self.finished.emit(True, self.save_path)
-                return  # 成功，退出重试循环
+                except requests.exceptions.HTTPError as e:
+                    logger.error(f"HTTP 错误: {e}")
+                    # HTTP 错误不重试（如 404）
+                    self.finished.emit(False, f"下载失败: {e}")
+                    return
                 
-            except requests.exceptions.Timeout as e:
-                logger.error(f"下载超时 (尝试 {attempt + 1}/{max_retries}): {e}")
-                if attempt == max_retries - 1:
-                    self.finished.emit(False, f"下载超时，已重试 {max_retries} 次")
-            
-            except requests.exceptions.ConnectionError as e:
-                logger.error(f"连接失败 (尝试 {attempt + 1}/{max_retries}): {e}")
-                if attempt == max_retries - 1:
-                    self.finished.emit(False, f"网络连接失败，请检查网络连接或稍后重试")
-            
-            except requests.exceptions.HTTPError as e:
-                logger.error(f"HTTP 错误: {e}")
-                # HTTP 错误不重试（如 404）
-                self.finished.emit(False, f"下载失败: {e}")
-                return
-            
-            except Exception as e:
-                logger.error(f"下载失败 (尝试 {attempt + 1}/{max_retries}): {e}")
-                if attempt == max_retries - 1:
-                    self.finished.emit(False, f"下载失败: {str(e)}")
+                except Exception as e:
+                    logger.error(f"下载失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                    if attempt == max_retries - 1:
+                        self.finished.emit(False, f"下载失败: {str(e)}")
+                finally:
+                    try:
+                        if response is not None:
+                            response.close()
+                    except Exception:
+                        pass
+        finally:
+            self._release_download_lock()
 
 
 class UpdateDownloader:
@@ -317,6 +412,7 @@ class UpdateDownloader:
         filename: str,
         expected_hash: Optional[str] = None,
         hash_algorithm: str = 'sha256',
+        expected_size_bytes: int = 0,
         progress_callback: Optional[Callable[[int, int], None]] = None,
         finished_callback: Optional[Callable[[bool, str], None]] = None
     ) -> DownloadThread:
@@ -356,7 +452,13 @@ class UpdateDownloader:
         
         save_path = str(self.DOWNLOAD_DIR / filename)
         
-        self.download_thread = DownloadThread(url, save_path, expected_hash, hash_algorithm)
+        self.download_thread = DownloadThread(
+            url,
+            save_path,
+            expected_hash,
+            hash_algorithm,
+            expected_size_bytes,
+        )
         self._is_downloading = True
         self._current_download_url = url
         
