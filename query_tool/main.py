@@ -1125,6 +1125,7 @@ def main():
     """主函数入口"""
     # 设置全局异常处理
     from query_tool.utils.logger import logger, setup_exception_handler
+    from query_tool.utils.update_downloader import UpdateInstaller
     from query_tool.version import get_version_string
     import platform
     
@@ -1134,6 +1135,14 @@ def main():
     logger.info(f"程序启动: {get_version_string()}")
     logger.info(f"Python版本: {sys.version.split()[0]}")
     logger.info(f"操作系统: {platform.system()} {platform.release()}")
+
+    if UpdateInstaller.launch_runtime_self_heal(restart=True):
+        logger.warning("已启动套娃 onefile 自愈流程，当前进程退出等待外部修复")
+        raise SystemExit(0)
+
+    cleaned_runtime_dirs = UpdateInstaller.cleanup_stale_nested_runtime_dirs()
+    if cleaned_runtime_dirs:
+        logger.info(f"启动时已清理 {len(cleaned_runtime_dirs)} 个残留套娃 onefile 目录")
     
     try:
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)

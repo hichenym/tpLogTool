@@ -3,11 +3,12 @@
 """
 import os
 import sys
+import shutil
 import subprocess
 import tempfile
 import hashlib
 from pathlib import Path
-from typing import Optional, Callable, Union
+from typing import Optional, Callable, Union, List
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -562,6 +563,8 @@ class UpdateDownloader:
 class UpdateInstaller:
     """更新安装器"""
 
+    RUNTIME_DIR_NAME = '.tpquerytool-onefile'
+
     @staticmethod
     def can_apply_update() -> bool:
         """判断当前运行方式是否支持自动覆盖安装。"""
@@ -592,7 +595,45 @@ class UpdateInstaller:
             path = Path(path_like).resolve()
         except Exception:
             return False
-        return any(part.lower() == '.tpquerytool-onefile' for part in path.parts)
+        runtime_dir_name = UpdateInstaller.RUNTIME_DIR_NAME.lower()
+        return any(part.lower() == runtime_dir_name for part in path.parts)
+
+    @staticmethod
+    def _get_runtime_root_from_executable(path_like: Optional[Union[str, Path]]) -> Optional[Path]:
+        """从当前 onefile 运行体路径回溯到最外层运行目录。"""
+        if not UpdateInstaller._is_runtime_executable(path_like):
+            return None
+        try:
+            runtime_dir = Path(path_like).resolve().parent
+        except Exception:
+            return None
+
+        runtime_dir_name = UpdateInstaller.RUNTIME_DIR_NAME.lower()
+        while runtime_dir.parent != runtime_dir and runtime_dir.parent.name.lower() == runtime_dir_name:
+            runtime_dir = runtime_dir.parent
+        return runtime_dir
+
+    @staticmethod
+    def _get_runtime_dir_depth(path_like: Optional[Union[str, Path]]) -> int:
+        """统计路径中 onefile 运行目录出现的层级数。"""
+        if not UpdateInstaller._is_runtime_executable(path_like):
+            return 0
+        try:
+            path = Path(path_like).resolve()
+        except Exception:
+            return 0
+
+        runtime_dir_name = UpdateInstaller.RUNTIME_DIR_NAME.lower()
+        return sum(1 for part in path.parts if part.lower() == runtime_dir_name)
+
+    @staticmethod
+    def _is_relative_to(path: Path, other: Path) -> bool:
+        """兼容 Python 3.8 的 Path.is_relative_to 替代实现。"""
+        try:
+            path.relative_to(other)
+            return True
+        except ValueError:
+            return False
 
     @staticmethod
     def get_runtime_executable_path() -> Optional[str]:
@@ -607,10 +648,108 @@ class UpdateInstaller:
         runtime_exe = UpdateInstaller.get_runtime_executable_path()
         if not runtime_exe:
             return None
+        runtime_root = UpdateInstaller._get_runtime_root_from_executable(runtime_exe)
+        if runtime_root is not None:
+            return str(runtime_root)
         try:
             return str(Path(runtime_exe).resolve().parent)
         except Exception:
             return None
+
+    @staticmethod
+    def get_runtime_nesting_depth() -> int:
+        """获取当前 onefile 运行体的嵌套层级。"""
+        runtime_exe = UpdateInstaller.get_runtime_executable_path()
+        return UpdateInstaller._get_runtime_dir_depth(runtime_exe)
+
+    @staticmethod
+    def get_runtime_repair_package_path() -> Optional[str]:
+        """
+        获取可用于自愈的 onefile 安装包路径。
+
+        当运行体已经出现“.tpquerytool-onefile/.tpquerytool-onefile”套娃时，
+        最外层运行目录下的同名 exe 就是误拷进去的 onefile 包，可用来回填外层 launcher。
+        """
+        runtime_exe = UpdateInstaller.get_runtime_executable_path()
+        if not runtime_exe:
+            return None
+
+        if UpdateInstaller._get_runtime_dir_depth(runtime_exe) <= 1:
+            return None
+
+        runtime_root = UpdateInstaller._get_runtime_root_from_executable(runtime_exe)
+        if runtime_root is None:
+            return None
+
+        candidate = (runtime_root / Path(runtime_exe).name).resolve()
+        if not UpdateInstaller._is_real_executable(candidate):
+            return None
+        if not candidate.exists():
+            return None
+        if candidate == Path(runtime_exe).resolve():
+            return None
+        return str(candidate)
+
+    @staticmethod
+    def find_stale_nested_runtime_dirs() -> List[str]:
+        """查找最外层运行目录中残留的套娃 onefile 目录。"""
+        runtime_root_path = UpdateInstaller.get_runtime_directory_path()
+        if not runtime_root_path:
+            return []
+
+        try:
+            runtime_root = Path(runtime_root_path).resolve()
+        except Exception:
+            return []
+
+        if not runtime_root.exists():
+            return []
+
+        nested_dirs: List[Path] = []
+        for candidate in runtime_root.rglob(UpdateInstaller.RUNTIME_DIR_NAME):
+            try:
+                resolved = candidate.resolve()
+            except Exception:
+                continue
+
+            if resolved == runtime_root:
+                continue
+
+            if any(
+                resolved == existing or UpdateInstaller._is_relative_to(resolved, existing)
+                for existing in nested_dirs
+            ):
+                continue
+
+            nested_dirs = [
+                existing
+                for existing in nested_dirs
+                if not UpdateInstaller._is_relative_to(existing, resolved)
+            ]
+            nested_dirs.append(resolved)
+
+        nested_dirs.sort(key=lambda path: len(path.parts))
+        return [str(path) for path in nested_dirs]
+
+    @staticmethod
+    def cleanup_stale_nested_runtime_dirs() -> List[str]:
+        """清理不再使用的套娃 onefile 目录。"""
+        if UpdateInstaller.get_runtime_nesting_depth() > 1:
+            logger.warning("当前运行体仍处于套娃 onefile 目录中，跳过残留目录清理")
+            return []
+
+        removed_dirs: List[str] = []
+        for dir_path in UpdateInstaller.find_stale_nested_runtime_dirs():
+            try:
+                shutil.rmtree(dir_path)
+                removed_dirs.append(dir_path)
+                logger.warning(f"已清理残留的套娃 onefile 目录: {dir_path}")
+            except FileNotFoundError:
+                continue
+            except Exception as e:
+                logger.warning(f"清理残留套娃 onefile 目录失败 {dir_path}: {e}")
+
+        return removed_dirs
 
     @staticmethod
     def get_launcher_executable_path() -> str:
@@ -637,18 +776,62 @@ class UpdateInstaller:
                 continue
             if UpdateInstaller._is_runtime_executable(candidate):
                 runtime_fallback = candidate
-                inferred_launcher = candidate.parent.parent / candidate.name
+                runtime_root = UpdateInstaller._get_runtime_root_from_executable(candidate)
+                if runtime_root is None:
+                    continue
+                inferred_launcher = runtime_root.parent / candidate.name
                 if inferred_launcher != candidate and inferred_launcher.suffix.lower() == '.exe':
                     return str(inferred_launcher)
                 continue
             return str(candidate)
 
         if runtime_fallback is not None:
-            inferred_launcher = runtime_fallback.parent.parent / runtime_fallback.name
-            return str(inferred_launcher)
+            runtime_root = UpdateInstaller._get_runtime_root_from_executable(runtime_fallback)
+            if runtime_root is not None:
+                inferred_launcher = runtime_root.parent / runtime_fallback.name
+                return str(inferred_launcher)
         if candidates:
             return str(candidates[0])
         return sys.executable
+
+    @staticmethod
+    def launch_runtime_self_heal(restart: bool = True) -> bool:
+        """检测并修复套娃 onefile 现场，成功拉起外部自愈流程后返回 True。"""
+        runtime_depth = UpdateInstaller.get_runtime_nesting_depth()
+        if runtime_depth <= 1:
+            return False
+
+        runtime_exe = UpdateInstaller.get_runtime_executable_path()
+        runtime_root = UpdateInstaller.get_runtime_directory_path()
+        launcher_exe = UpdateInstaller.get_launcher_executable_path()
+        repair_package = UpdateInstaller.get_runtime_repair_package_path()
+
+        if not repair_package:
+            logger.error(
+                "检测到套娃 onefile 运行体，但未找到可用于自愈的安装包。"
+                f" runtime_exe={runtime_exe}, launcher={launcher_exe}"
+            )
+            return False
+
+        logger.warning(
+            "检测到套娃 onefile 运行体，准备执行自愈。"
+            f" runtime_depth={runtime_depth}, runtime_exe={runtime_exe}"
+        )
+        logger.warning(f"自愈目标 launcher: {launcher_exe}")
+        logger.warning(f"自愈安装包: {repair_package}")
+        if runtime_root:
+            logger.warning(f"待清理运行体根目录: {runtime_root}")
+
+        try:
+            UpdateInstaller.launch_update_installer(
+                repair_package,
+                restart=restart,
+                parent_pid=os.getpid(),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"启动 onefile 自愈流程失败: {e}", exc_info=True)
+            return False
 
     @staticmethod
     def get_current_executable_path() -> str:
@@ -804,6 +987,9 @@ try {{
         runtime_exe = UpdateInstaller.get_runtime_executable_path()
         if runtime_exe:
             logger.info(f"当前运行体: {runtime_exe}")
+        runtime_dir = UpdateInstaller.get_runtime_directory_path()
+        if runtime_dir:
+            logger.info(f"onefile运行体根目录: {runtime_dir}")
 
         script_path = UpdateInstaller.create_update_script(
             new_exe_path,
