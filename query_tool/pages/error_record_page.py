@@ -4,6 +4,7 @@
 """
 import sys
 import os
+from time import monotonic
 
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
@@ -196,6 +197,8 @@ class DeviceInfoDialog(QDialog):
 class ErrorRecordPage(BasePage):
     """错误码记录查询页面"""
 
+    META_AUTO_REFRESH_INTERVAL_SECONDS = 3600
+
     # 表格列定义：(表头, 数据字段, 初始宽度, 最小宽度)
     COLUMNS = [
         ("设备SN (双击查看设备信息)", "deviceSn", 220, 140),
@@ -217,6 +220,9 @@ class ErrorRecordPage(BasePage):
 
         # 元数据
         self._meta_loaded = False
+        self._meta_loading = False
+        self._meta_last_loaded_at = 0.0
+        self._meta_request_label = "加载"
         self._model_map = {}        # {"TD53E30": ["TD53E30-3.0.x", ...]}
         self._module_list = []      # [{"key": "4G", "label": "4G模块"}]
         self._module_key_map = {}   # {"4G模块": "4G"}
@@ -246,6 +252,7 @@ class ErrorRecordPage(BasePage):
         layout.addWidget(self._create_result_group())
 
         self.main_buttons = self.btn_manager.create_group("main")
+        self.main_buttons.add(self.refresh_meta_btn)
         self.main_buttons.add(self.query_btn)
         self.main_buttons.add(self.reset_btn)
 
@@ -319,6 +326,13 @@ class ErrorRecordPage(BasePage):
         self.query_btn.setStyleSheet("QPushButton { padding-left: 8px; padding-right: 8px; }")
         self.query_btn.clicked.connect(self.on_query)
 
+        self.refresh_meta_btn = QPushButton("刷新数据")
+        self.refresh_meta_btn.setIcon(QIcon(":/icons/device/reflash.png"))
+        self.refresh_meta_btn.setIconSize(QSize(16, 16))
+        self.refresh_meta_btn.setFixedHeight(28)
+        self.refresh_meta_btn.setStyleSheet("QPushButton { padding-left: 8px; padding-right: 8px; }")
+        self.refresh_meta_btn.clicked.connect(self.on_refresh_meta)
+
         self.reset_btn = QPushButton("重置")
         self.reset_btn.setIcon(QIcon(":/icons/common/clean.png"))
         self.reset_btn.setIconSize(QSize(16, 16))
@@ -348,6 +362,8 @@ class ErrorRecordPage(BasePage):
         row2.addWidget(self.end_dt, 2)
         row2.addWidget(today_btn)
         row2.addSpacing(10)
+        row2.addWidget(self.refresh_meta_btn)
+        row2.addSpacing(4)
         row2.addWidget(self.query_btn)
         row2.addSpacing(4)
         row2.addWidget(self.reset_btn)
@@ -513,7 +529,7 @@ class ErrorRecordPage(BasePage):
 
     def _update_query_button_state(self):
         """根据筛选条件和元数据加载状态更新查询按钮可用性"""
-        can_query = self._meta_loaded and self._has_any_filter()
+        can_query = self._meta_loaded and not self._meta_loading and self._has_any_filter()
         self.query_btn.setEnabled(can_query)
 
     # ---------------------------------------------------- page lifecycle ----
@@ -523,6 +539,8 @@ class ErrorRecordPage(BasePage):
         self.adjust_table_columns()
         if not self._meta_loaded:
             self._load_meta()
+        elif self._is_meta_stale():
+            self._load_meta(force=True)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -535,9 +553,49 @@ class ErrorRecordPage(BasePage):
 
     # ---------------------------------------------------- meta loading ------
 
-    def _load_meta(self):
-        self.show_progress("正在加载型号和模块数据...")
-        self.query_btn.setEnabled(False)
+    def _is_meta_stale(self):
+        if not self._meta_loaded:
+            return True
+        if self._meta_last_loaded_at <= 0:
+            return True
+        return (monotonic() - self._meta_last_loaded_at) >= self.META_AUTO_REFRESH_INTERVAL_SECONDS
+
+    def _capture_filter_state(self):
+        return {
+            "model": self.model_combo.currentText(),
+            "version": self.version_combo.currentText(),
+            "module": self.module_combo.currentText(),
+        }
+
+    def _restore_filter_state(self, state):
+        if not state:
+            self._on_model_changed(self.model_combo.currentText().strip())
+            return
+
+        self.model_combo.setCurrentText(state.get("model", ""))
+        self._on_model_changed(self.model_combo.currentText().strip())
+        self.version_combo.setCurrentText(state.get("version", ""))
+        self.module_combo.setCurrentText(state.get("module", ""))
+
+    def _set_meta_loading_state(self, loading):
+        self._meta_loading = loading
+        if loading:
+            self.query_btn.setEnabled(False)
+            self.refresh_meta_btn.setEnabled(False)
+            self.refresh_meta_btn.setText("刷新中...")
+            return
+
+        self.refresh_meta_btn.setEnabled(True)
+        self.refresh_meta_btn.setText("刷新数据")
+        self._update_query_button_state()
+
+    def _load_meta(self, force=False):
+        if self._meta_loading or self.thread_mgr.is_running("meta"):
+            return
+
+        self._meta_request_label = "刷新" if force or self._meta_loaded else "加载"
+        self.show_progress(f"正在{self._meta_request_label}型号和模块数据...")
+        self._set_meta_loading_state(True)
 
         thread = MetaLoadThread()
         thread.finished.connect(self._on_meta_loaded)
@@ -547,10 +605,13 @@ class ErrorRecordPage(BasePage):
         thread.start()
 
     def _on_meta_loaded(self, model_map, module_list):
+        # 读取刷新完成时界面上的最新筛选值，避免覆盖用户在刷新期间的输入。
+        preserved_state = self._capture_filter_state()
         self._model_map = model_map
         self._module_list = module_list
         self._module_key_map = {m["label"]: m["key"] for m in module_list}
         self._meta_loaded = True
+        self._meta_last_loaded_at = monotonic()
 
         # 填充型号下拉框
         self._set_combo_items(self.model_combo, sorted(model_map.keys()))
@@ -558,12 +619,13 @@ class ErrorRecordPage(BasePage):
         # 填充模块下拉框（显示中文 label）
         self._set_combo_items(self.module_combo, [m["label"] for m in module_list])
 
-        self._update_query_button_state()
-        self.show_success(f"已加载 {len(model_map)} 个型号，{len(module_list)} 个模块")
+        self._restore_filter_state(preserved_state)
+        self._set_meta_loading_state(False)
+        self.show_success(f"已{self._meta_request_label} {len(model_map)} 个型号，{len(module_list)} 个模块")
 
     def _on_meta_error(self, msg):
-        self.query_btn.setEnabled(False)
-        self.show_error(f"加载元数据失败: {msg}")
+        self._set_meta_loading_state(False)
+        self.show_error(f"{self._meta_request_label}元数据失败: {msg}")
 
     # ---------------------------------------------------- model -> version --
 
@@ -586,6 +648,12 @@ class ErrorRecordPage(BasePage):
             return
         self.current_page = 1
         self._do_query(1)
+
+    def on_refresh_meta(self):
+        if self._meta_loading:
+            self.show_info("筛选条件正在刷新，请稍候")
+            return
+        self._load_meta(force=True)
 
     def on_reset(self):
         self.sn_input.clear()
@@ -654,7 +722,7 @@ class ErrorRecordPage(BasePage):
         self.total_count = total
         self._update_table()
         self._update_pagination()
-        self.query_btn.setEnabled(True)
+        self._update_query_button_state()
         self.query_btn.setText("查询")
         has_data = total > 0
         self.export_csv_btn.setEnabled(has_data)
@@ -662,7 +730,7 @@ class ErrorRecordPage(BasePage):
         self.show_success(f"查询成功，共 {total} 条记录，第 {current}/{pages} 页")
 
     def _on_query_error(self, msg):
-        self.query_btn.setEnabled(True)
+        self._update_query_button_state()
         self.query_btn.setText("查询")
         self._update_pagination()
         self.show_error(f"查询失败: {msg}")
