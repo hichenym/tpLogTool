@@ -12,10 +12,9 @@ from .custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
 from query_tool.utils.logger import logger
-from query_tool.utils.session_manager import SessionManager
 from query_tool.utils.thread_manager import ThreadManager
+from query_tool.utils.upgrade_service import prepare_and_send_upgrade
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import json
 from datetime import datetime
 
 
@@ -239,57 +238,17 @@ class BatchUpgradeWorker(QObject):
         if self._stop:
             return sn, 'failed', '任务已停止'
         try:
-            from query_tool.utils import ensure_device_online_for_upgrade
-
-            auth_context = self.device_query if self.device_query is not None else self.token
-            current_host = self.device_query.host if self.device_query is not None else self.host
-
-            can_upgrade, prepare_status, prepare_message = ensure_device_online_for_upgrade(
-                dev_id,
+            status, message = prepare_and_send_upgrade(
                 sn,
-                auth_context,
-                current_host,
+                dev_id,
+                self.device_identify,
+                self.file_url,
+                device_query=self.device_query,
+                token=self.token,
+                host=self.host,
                 max_wake_times=3,
             )
-            if not can_upgrade:
-                return sn, prepare_status, prepare_message
-
-            current_token = self.device_query.token if self.device_query is not None else self.token
-
-            session = SessionManager().get_session()
-            url = f"https://{current_host}/api/seetong-siot-device/console/device/operate/sendCommand"
-            
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA==",
-                "Seetong-Auth": current_token,
-            }
-            
-            params_dict = {
-                "device_identify": self.device_identify,
-                "file_url": self.file_url
-            }
-            params_json = json.dumps(params_dict)
-            
-            data = {
-                "moduleCode": "default",
-                "code": "upgrade",
-                "params": params_json,
-                "sn": sn,
-                "sourceType": "1"
-            }
-            
-            response = session.post(url, json=data, headers=headers, verify=False, timeout=10)
-            
-            if response.status_code == 200:
-                result = response.json()
-                if result.get('code') == 200 and result.get('success'):
-                    return sn, 'success', '升级命令已发送'
-                if result.get('code') == 20001:
-                    return sn, 'offline', '设备不在线，操作失败'
-                return sn, 'failed', result.get('msg', '操作失败')
-            else:
-                return sn, 'failed', f"HTTP {response.status_code}"
+            return sn, status, message
         except Exception as e:
             logger.error(f"升级设备 {sn} 出错: {e}")
             return sn, 'failed', str(e)

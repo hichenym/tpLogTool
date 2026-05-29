@@ -183,6 +183,7 @@ class UpdateManager(QObject):
             "release_notes_url": version_info.release_notes_url,
             "min_version": version_info.min_version,
             "update_strategy": version_info.update_strategy,
+            "show_change": version_info.show_change,
             "changelog": version_info.changelog,
         }
 

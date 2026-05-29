@@ -12,6 +12,15 @@ from datetime import datetime, timedelta
 from query_tool.utils.logger import logger
 
 
+def _flag_is_true(value: Any, default: bool = False) -> bool:
+    """Only bool True or string 'true' should be treated as enabled."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value is True
+    return str(value).strip().lower() == "true"
+
+
 class VersionInfo:
     """版本信息"""
     
@@ -27,6 +36,7 @@ class VersionInfo:
         self.release_notes_url = data.get('release_notes_url', '')
         self.min_version = data.get('min_version')
         self.update_strategy = data.get('update_strategy', 'prompt')
+        self.show_change = _flag_is_true(data.get('show_change'), default=True)
         # 兼容远程返回的 changelog 可能为字符串或列表。
         # 需要保证 self.changelog 为字符串列表，UI 侧按条目展示。
         changelog = data.get('changelog', [])

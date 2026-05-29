@@ -24,6 +24,13 @@ def dispatch_internal_command(argv: Sequence[str]) -> int | None:
         return _run_prepare_helper(argv[1:])
     if command == "--siot-helper-probe":
         return _run_probe_helper(argv[1:])
+    if command == "--upgrade-stress-runner":
+        from query_tool.utils.upgrade_stress_runner import run_task
+
+        if len(argv) < 2:
+            print("missing upgrade stress task id", file=sys.stderr)
+            return 220
+        return int(run_task(argv[1]) or 0)
     return None
 
 

@@ -24,6 +24,10 @@
 	<file>icons/common/connectting.png</file>
 	<file>icons/common/disconnect.png</file>
 	<file>icons/common/dir.png</file>
+	<file>icons/common/running.gif</file>
+	<file>icons/common/loadding.gif</file>
+	<file>icons/common/finish.gif</file>
+	<file>icons/common/finish2.gif</file>
 	
 	<!-- 设备操作 -->
 	<file>icons/device/werk_up.png</file>
@@ -33,6 +37,7 @@
 	<file>icons/device/nat.png</file>
 	<file>icons/device/reboot.png</file>
 	<file>icons/device/upgrade.png</file>
+	<file>icons/device/updata_test.png</file>
 	
 	<!-- 系统设置 -->
 	<file>icons/system/setting.png</file>

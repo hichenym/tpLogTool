@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 
 # 添加项目根目录到 Python 路径（支持直接运行 main.py）
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,7 +17,7 @@ from PyQt5.QtWidgets import (
     QSystemTrayIcon, QMenu, QAction
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QMovie
 import requests
 
 # 导入资源文件
@@ -33,11 +34,21 @@ from query_tool import pages
 # 导入工具和控件
 from query_tool.utils import config_manager
 from query_tool.utils.style_manager import StyleManager
+from query_tool.utils.task_center import (
+    TASK_STATUS_PAUSED,
+    count_all_tasks,
+    count_running_tasks,
+    list_tasks,
+    pause_all_actionable_tasks,
+)
 from query_tool.utils.theme_manager import theme_manager
-from query_tool.widgets import SettingsDialog
+from query_tool.widgets import SettingsDialog, TaskCenterDialog
 
 # 禁用SSL警告
 requests.packages.urllib3.disable_warnings()
+
+# 调试开关：改为 True 后，程序启动时会强制弹出“更新完成重启”弹窗
+FORCE_SHOW_UPDATE_COMPLETE_DIALOG = False
 
 
 def set_title_bar_theme(window, dark: bool = True):
@@ -83,7 +94,9 @@ class MainWindow(QMainWindow):
         self._force_close = False  # 是否允许真正退出
         self._tray_icon = None
         self._tray_message_shown = False
-        
+        self._task_button_movie = None
+        self._task_button_movie_path = None
+
         self.init_ui()
         self._setup_system_tray()
         self.load_config()
@@ -104,6 +117,12 @@ class MainWindow(QMainWindow):
         self._periodic_update_timer = QTimer(self)
         self._periodic_update_timer.timeout.connect(self._periodic_update_check)
         self._periodic_update_timer.start(6 * 60 * 60 * 1000)  # 6 小时
+
+        self._task_indicator_timer = QTimer(self)
+        self._task_indicator_timer.timeout.connect(self.refresh_running_task_indicator)
+        self._task_indicator_timer.start(2000)
+        QTimer.singleShot(0, self.refresh_running_task_indicator)
+        QTimer.singleShot(800, self._show_debug_update_complete_dialog_if_needed)
 
     def _get_available_geometry(self):
         """获取当前可用屏幕区域，避开任务栏。"""
@@ -173,8 +192,17 @@ class MainWindow(QMainWindow):
         self._update_theme_btn_icon()
         StyleManager.apply_to_widget(self.theme_btn, "SETTINGS_BUTTON")
         self.theme_btn.clicked.connect(self._toggle_theme)
+
+        self.task_center_btn = QPushButton("任务运行中")
+        self.task_center_btn.setIconSize(QSize(16, 16))
+        self.task_center_btn.setFixedHeight(28)
+        self.task_center_btn.setVisible(False)
+        StyleManager.apply_to_widget(self.task_center_btn, "SETTINGS_BUTTON")
+        self.task_center_btn.clicked.connect(self.open_task_center)
+        self._set_task_button_static_icon(":/icons/common/run.png")
         
         menu_layout.addStretch()
+        menu_layout.addWidget(self.task_center_btn)
         menu_layout.addWidget(self.theme_btn)
         menu_layout.addWidget(self.settings_btn)
         menu_layout.addSpacing(5)
@@ -397,6 +425,47 @@ class MainWindow(QMainWindow):
             self.theme_btn.setText("🌙")  # 浅色模式下显示月亮（切换到深色）
             self.theme_btn.setToolTip("切换到深色模式")
 
+    def _set_task_button_static_icon(self, icon_path: str):
+        if self._task_button_movie is not None:
+            self._task_button_movie.stop()
+            try:
+                self._task_button_movie.frameChanged.disconnect(self._on_task_button_movie_frame_changed)
+            except Exception:
+                pass
+            self._task_button_movie = None
+            self._task_button_movie_path = None
+        self.task_center_btn.setIcon(QIcon(icon_path))
+
+    def _start_task_button_movie(self, resource_path: str):
+        if self._task_button_movie_path == resource_path and self._task_button_movie is not None:
+            if self._task_button_movie.state() != QMovie.Running:
+                self._task_button_movie.start()
+            return
+        if self._task_button_movie is not None:
+            self._task_button_movie.stop()
+            try:
+                self._task_button_movie.frameChanged.disconnect(self._on_task_button_movie_frame_changed)
+            except Exception:
+                pass
+
+        movie = QMovie(resource_path)
+        if not movie.isValid():
+            self._set_task_button_static_icon(":/icons/common/run.png")
+            return
+        movie.setCacheMode(QMovie.CacheAll)
+        movie.frameChanged.connect(self._on_task_button_movie_frame_changed)
+        self._task_button_movie = movie
+        self._task_button_movie_path = resource_path
+        movie.start()
+
+    def _on_task_button_movie_frame_changed(self, _frame_number: int):
+        if self._task_button_movie is None:
+            return
+        pixmap = self._task_button_movie.currentPixmap()
+        if pixmap.isNull():
+            return
+        self.task_center_btn.setIcon(QIcon(pixmap))
+
     def _toggle_theme(self):
         """切换主题"""
         theme_manager.toggle()
@@ -417,6 +486,7 @@ class MainWindow(QMainWindow):
                 StyleManager.apply_to_widget(btn, "MENU_BUTTON")
             StyleManager.apply_to_widget(self.settings_btn, "SETTINGS_BUTTON")
             StyleManager.apply_to_widget(self.theme_btn, "SETTINGS_BUTTON")
+            StyleManager.apply_to_widget(self.task_center_btn, "SETTINGS_BUTTON")
             self._update_theme_btn_icon()
             # 刷新状态栏标签颜色
             self.status_label.setStyleSheet(
@@ -484,6 +554,42 @@ class MainWindow(QMainWindow):
         from query_tool.utils.message_manager import MessageManager, MessageType
         msg_manager = MessageManager(self.status_label)
         msg_manager.show(message, MessageType.PROGRESS, None)
+
+    def refresh_running_task_indicator(self):
+        """Refresh the running-task indicator in the title bar."""
+        try:
+            running_count = count_running_tasks()
+            total_count = count_all_tasks()
+            paused_count = len([task for task in list_tasks() if task.get("status") == TASK_STATUS_PAUSED])
+            finished_count = len([task for task in list_tasks() if task.get("status") in ("completed", "failed", "canceled")])
+        except Exception:
+            running_count = 0
+            total_count = 0
+            paused_count = 0
+            finished_count = 0
+
+        self.task_center_btn.setVisible(total_count > 0)
+        if running_count > 0:
+            self._start_task_button_movie(":/icons/common/loadding.gif")
+            self.task_center_btn.setText(f"任务运行中({running_count})")
+            self.task_center_btn.setToolTip(f"当前有 {running_count} 个后台任务运行中")
+            return
+        if paused_count > 0:
+            self._set_task_button_static_icon(":/icons/common/run.png")
+            self.task_center_btn.setText(f"任务已暂停({paused_count})")
+            self.task_center_btn.setToolTip(f"当前有 {paused_count} 个后台任务已暂停")
+            return
+        if finished_count > 0:
+            self._start_task_button_movie(":/icons/common/finish2.gif")
+            self.task_center_btn.setText("任务已完成")
+            self.task_center_btn.setToolTip(f"当前共有 {finished_count} 个后台任务已结束")
+            return
+        self._set_task_button_static_icon(":/icons/common/run.png")
+
+    def open_task_center(self):
+        """Open the background task center dialog."""
+        dialog = TaskCenterDialog(self)
+        dialog.exec_()
     
     def center_on_screen(self):
         """将窗口居中显示"""
@@ -597,6 +703,7 @@ class MainWindow(QMainWindow):
             "release_notes_url": cached_info.release_notes_url,
             "min_version": cached_info.min_version,
             "update_strategy": cached_info.update_strategy,
+            "show_change": cached_info.show_change,
             "changelog": cached_info.changelog,
         })
 
@@ -708,6 +815,8 @@ class MainWindow(QMainWindow):
         # 停止定时器
         if hasattr(self, '_periodic_update_timer'):
             self._periodic_update_timer.stop()
+        if hasattr(self, '_task_indicator_timer'):
+            self._task_indicator_timer.stop()
         
         # 停止呼吸动画
         if hasattr(self, 'breathing_label'):
@@ -719,6 +828,11 @@ class MainWindow(QMainWindow):
         self.save_config()
 
         self._cleanup_pages_for_exit(fast=self._update_shutdown_requested)
+
+        try:
+            pause_all_actionable_tasks(stop_processes=True)
+        except Exception:
+            pass
 
         event.accept()
     
@@ -964,15 +1078,15 @@ class MainWindow(QMainWindow):
             if strategy != 'silent':
                 self.show_error(f"下载更新失败: {result}", 5000)
     
-    def show_update_complete_dialog(self):
+    def show_update_complete_dialog(self, version_info=None):
         """显示更新完成对话框"""
         from query_tool.widgets.update_dialog import UpdateCompleteDialog
-        from query_tool.utils.logger import logger
         
-        if not self.update_manager.latest_version_info:
+        current_version_info = version_info or getattr(self.update_manager, "latest_version_info", None)
+        if not current_version_info:
             return
-        
-        dialog = UpdateCompleteDialog(self.update_manager.latest_version_info, self)
+
+        dialog = UpdateCompleteDialog(current_version_info, self)
         
         # 连接信号
         dialog.restart_now.connect(self.apply_update_and_restart)
@@ -983,6 +1097,30 @@ class MainWindow(QMainWindow):
         """拉起主窗口后显示更新完成对话框。"""
         self._bring_window_to_front()
         self.show_update_complete_dialog()
+
+    def _load_local_version_info_for_debug(self):
+        """加载本地 version.json，供调试强制弹窗使用。"""
+        from query_tool.utils.update_checker import VersionInfo
+
+        manifest_path = os.path.join(project_root, "version.json")
+        try:
+            if not os.path.exists(manifest_path):
+                return None
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            return VersionInfo(payload)
+        except Exception:
+            return None
+
+    def _show_debug_update_complete_dialog_if_needed(self):
+        """当代码中的调试开关打开时，启动后直接展示重启弹窗。"""
+        if not FORCE_SHOW_UPDATE_COMPLETE_DIALOG:
+            return
+        version_info = self._load_local_version_info_for_debug()
+        if not version_info:
+            return
+        self._bring_window_to_front()
+        self.show_update_complete_dialog(version_info=version_info)
     
     def _on_restart_later(self):
         """用户选择稍后重启"""
@@ -1043,7 +1181,7 @@ class MainWindow(QMainWindow):
             logger.info("用户选择立即重启，应用更新...")
             
             # 检查是否有下载的文件
-            if not self.update_manager.downloaded_file_path:
+            if not self.update_manager or not self.update_manager.downloaded_file_path:
                 error_msg = "没有找到下载的更新文件"
                 logger.error(error_msg)
                 QMessageBox.warning(self, "更新失败", error_msg)

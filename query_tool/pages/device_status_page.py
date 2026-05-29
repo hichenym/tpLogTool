@@ -21,7 +21,7 @@ from query_tool.utils import (
 from query_tool.utils.theme_manager import t, theme_manager
 from query_tool.utils.runtime_credential_cache import get_shared_device_query
 from query_tool.utils.workers import QueryThread, WakeThread, PhoneQueryThread
-from query_tool.widgets import PlainTextEdit, ClickableLineEdit, show_question_box
+from query_tool.widgets import PlainTextEdit, ClickableLineEdit, show_question_box, prompt_configure_account
 
 
 class NoWheelComboBox(QComboBox):
@@ -389,6 +389,13 @@ class DeviceStatusPage(BasePage):
         self.batch_upgrade_btn.setFixedSize(100, 28)
         self.batch_upgrade_btn.setEnabled(False)
         self.batch_upgrade_btn.clicked.connect(self.on_batch_upgrade)
+
+        self.upgrade_stress_btn = QPushButton("升级压测")
+        self.upgrade_stress_btn.setIcon(QIcon(":/icons/device/updata_test.png"))
+        self.upgrade_stress_btn.setIconSize(QSize(16, 16))
+        self.upgrade_stress_btn.setFixedSize(100, 28)
+        self.upgrade_stress_btn.setEnabled(False)
+        self.upgrade_stress_btn.clicked.connect(self.on_upgrade_stress)
         
         self.batch_collect_btn = QPushButton("批量采集")
         self.batch_collect_btn.setIcon(QIcon(":/icons/device/collect.png"))
@@ -406,6 +413,7 @@ class DeviceStatusPage(BasePage):
         batch_layout.addWidget(self.batch_reboot_btn)
         batch_layout.addWidget(self.batch_upgrade_btn)
         batch_layout.addWidget(self.batch_collect_btn)
+        batch_layout.addWidget(self.upgrade_stress_btn)
         batch_layout.addStretch()
         batch_layout.addWidget(result_tip)  # 添加提示到右侧
         group_layout.addWidget(batch_frame)
@@ -510,6 +518,7 @@ class DeviceStatusPage(BasePage):
         self.main_buttons.add(
             self.query_btn, self.clear_btn, self.phone_query_btn, self.batch_wake_btn,
             self.batch_reboot_btn, self.batch_upgrade_btn, self.batch_collect_btn, 
+            self.upgrade_stress_btn,
             self.select_all_checkbox, self.export_btn, self.export_json_btn
         )
         
@@ -1220,6 +1229,7 @@ class DeviceStatusPage(BasePage):
         self.batch_wake_btn.setEnabled(False)
         self.batch_reboot_btn.setEnabled(False)
         self.batch_upgrade_btn.setEnabled(False)
+        self.upgrade_stress_btn.setEnabled(False)
         self.batch_collect_btn.setEnabled(False)
         
         # 收集所有型号和版本号并更新下拉框
@@ -1250,6 +1260,7 @@ class DeviceStatusPage(BasePage):
         self.batch_wake_btn.setEnabled(False)
         self.batch_reboot_btn.setEnabled(False)
         self.batch_upgrade_btn.setEnabled(False)
+        self.upgrade_stress_btn.setEnabled(False)
         self.batch_collect_btn.setEnabled(False)
         
         # 重置筛选条件
@@ -1339,6 +1350,7 @@ class DeviceStatusPage(BasePage):
         self.batch_wake_btn.setEnabled(has_checked)
         self.batch_reboot_btn.setEnabled(has_checked)
         self.batch_upgrade_btn.setEnabled(has_checked)
+        self.upgrade_stress_btn.setEnabled(has_checked)
         self.batch_collect_btn.setEnabled(has_checked)
     
     def on_wake_single(self, row):
@@ -1734,6 +1746,47 @@ class DeviceStatusPage(BasePage):
         if dialog.exec_():
             # 对话框关闭后，刷新选中设备的在线状态
             self.refresh_selected_devices_status([(sn, dev_id, name) for sn, dev_id, name, _ in selected_devices])
+
+    def on_upgrade_stress(self):
+        """升级压测"""
+        selected_devices = []
+        for row in range(self.result_table.rowCount()):
+            checkbox_widget = self.result_table.cellWidget(row, 0)
+            checkbox = checkbox_widget.findChild(QCheckBox)
+            if checkbox and checkbox.isChecked():
+                device_name = self.result_table.item(row, 1).text()
+                model = self.result_table.item(row, 2).text()
+                sn = self.result_table.item(row, 3).text()
+                dev_id = self.result_table.item(row, 4).text()
+                if sn and dev_id and model:
+                    selected_devices.append((sn, dev_id, device_name, model))
+
+        if not selected_devices:
+            self.show_warning("请先选择要进行升级压测的设备")
+            return
+
+        models = set(model for _, _, _, model in selected_devices)
+        if len(models) > 1:
+            self.show_error("所选设备型号不一致，无法进行升级压测。请筛选相同型号的设备后再试。")
+            return
+
+        from query_tool.utils.config import get_firmware_account_config
+
+        firmware_username, firmware_password = get_firmware_account_config()
+        if not firmware_username or not firmware_password:
+            opened = prompt_configure_account(
+                self,
+                "需要配置固件账号",
+                "检测到固件账号未配置，是否现在配置？",
+                initial_tab=1,
+            )
+            if not opened:
+                return
+
+        from query_tool.widgets import UpgradeStressDialog
+
+        dialog = UpgradeStressDialog(selected_devices, self.thread_count, self)
+        dialog.exec_()
 
     def on_batch_collect(self):
         """批量数据采集 - 先选择采集类型"""

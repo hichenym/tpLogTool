@@ -48,12 +48,22 @@ class SessionManager:
                 session = requests.Session()
                 
                 # 配置重试策略
-                retry_strategy = Retry(
-                    total=max_retries,
-                    backoff_factor=1,  # 指数退避因子
-                    status_forcelist=[429, 500, 502, 503, 504],
-                    allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
-                )
+                retry_kwargs = {
+                    "total": max_retries,
+                    "backoff_factor": 1,
+                    "status_forcelist": [429, 500, 502, 503, 504],
+                }
+                allowed_methods = ["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
+                try:
+                    retry_strategy = Retry(
+                        allowed_methods=allowed_methods,
+                        **retry_kwargs,
+                    )
+                except TypeError:
+                    retry_strategy = Retry(
+                        method_whitelist=allowed_methods,
+                        **retry_kwargs,
+                    )
                 
                 # 配置适配器 - 增加连接池大小以避免连接耗尽
                 adapter = HTTPAdapter(

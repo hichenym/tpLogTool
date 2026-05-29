@@ -2,12 +2,13 @@
 更新对话框
 """
 import ctypes
+import resources.icon_res as icon_res
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QProgressBar, QTextEdit, QWidget, QFrame
 )
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtCore import Qt, pyqtSignal, QSize
+from PyQt5.QtGui import QFont, QIcon, QMovie
 
 from query_tool.utils.update_checker import VersionInfo
 from query_tool.utils.theme_manager import t
@@ -228,11 +229,18 @@ class UpdateCompleteDialog(QDialog):
         super().__init__(parent)
         
         self.version_info = version_info
+        self._change_lines = [str(item).strip() for item in self.version_info.changelog if str(item).strip()]
+        self._show_change_content = bool(self.version_info.show_change and self._change_lines)
+        self._icon_movie = None
         
         self.setWindowTitle("功能变更")
         self.setWindowIcon(QIcon(":/icons/app/logo.png"))
-        self.setFixedSize(480, 205)
-        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint)
+        fixed_size = QSize(500, 270 if self._show_change_content else 205)
+        self.setFixedSize(fixed_size)
+        self.setMinimumSize(fixed_size)
+        self.setMaximumSize(fixed_size)
+        self.setSizeGripEnabled(False)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.MSWindowsFixedSizeDialogHint)
         self.setWindowModality(Qt.ApplicationModal)
         
         self._init_ui()
@@ -245,44 +253,59 @@ class UpdateCompleteDialog(QDialog):
     def _init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(18)
+        layout.setSpacing(12)
         layout.setContentsMargins(18, 16, 18, 16)
 
-        header_frame = QFrame()
-        header_frame.setObjectName("headerFrame")
-        header_layout = QVBoxLayout(header_frame)
-        header_layout.setContentsMargins(18, 16, 18, 16)
-        header_layout.setSpacing(8)
+        panel_frame = QFrame()
+        panel_frame.setObjectName("panelFrame")
+        panel_layout = QVBoxLayout(panel_frame)
+        panel_layout.setContentsMargins(20, 18, 20, 16)
+        panel_layout.setSpacing(14)
 
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(12)
+        hero_row = QHBoxLayout()
+        hero_row.setContentsMargins(0, 0, 0, 0)
+        hero_row.setSpacing(14)
 
-        icon_label = QLabel("i")
-        icon_font = QFont()
-        icon_font.setPointSize(14)
-        icon_font.setBold(True)
-        icon_label.setFont(icon_font)
-        icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setFixedSize(30, 30)
-        icon_label.setObjectName("statusIcon")
-        title_row.addWidget(icon_label, 0, Qt.AlignVCenter)
+        self.icon_label = QLabel()
+        self.icon_label.setObjectName("heroIcon")
+        self.icon_label.setFixedSize(60, 60)
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        hero_row.addWidget(self.icon_label, 0, Qt.AlignTop)
+
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(6)
 
         title_label = QLabel("检测到功能变更")
         title_font = QFont()
-        title_font.setPointSize(14)
+        title_font.setPointSize(15)
         title_font.setBold(True)
         title_label.setFont(title_font)
         title_label.setObjectName("titleLabel")
-        title_row.addWidget(title_label, 0, Qt.AlignVCenter)
-        title_row.addStretch()
-        header_layout.addLayout(title_row)
+        text_layout.addWidget(title_label)
 
-        subtitle_label = QLabel("需要重启程序后生效，建议完成一次重启以确保功能正常加载。")
+        subtitle_label = QLabel(self._build_subtitle_text())
         subtitle_label.setWordWrap(True)
         subtitle_label.setObjectName("subtitleLabel")
-        header_layout.addWidget(subtitle_label)
-        layout.addWidget(header_frame)
+        text_layout.addWidget(subtitle_label)
+        hero_row.addLayout(text_layout, 1)
+        panel_layout.addLayout(hero_row)
+
+        if self._show_change_content:
+            divider = QFrame()
+            divider.setObjectName("divider")
+            divider.setFixedHeight(1)
+            panel_layout.addWidget(divider)
+
+            change_text = QTextEdit()
+            change_text.setReadOnly(True)
+            change_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            change_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            change_text.setMinimumHeight(74)
+            change_text.setMaximumHeight(88)
+            change_text.setObjectName("changeText")
+            change_text.setPlainText("\n".join([f"• {item}" for item in self._change_lines[:10]]))
+            panel_layout.addWidget(change_text)
         
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
@@ -295,8 +318,27 @@ class UpdateCompleteDialog(QDialog):
         restart_btn.clicked.connect(self._on_restart_now)
         button_layout.addWidget(restart_btn)
 
+        layout.addWidget(panel_frame)
         layout.addLayout(button_layout)
+        self._setup_movie()
         self._apply_styles()
+
+    def _build_subtitle_text(self) -> str:
+        if self._show_change_content:
+            return "检测到下列功能变更，重启程序以应用"
+        return "检测到功能变更，重启程序以应用"
+
+    def _setup_movie(self):
+        movie = QMovie(":/icons/common/running.gif")
+        if not movie.isValid():
+            self.icon_label.setText("i")
+            self.icon_label.setAlignment(Qt.AlignCenter)
+            self.icon_label.setObjectName("fallbackIcon")
+            return
+        movie.setScaledSize(QSize(60, 60))
+        self._icon_movie = movie
+        self.icon_label.setMovie(movie)
+        movie.start()
 
     def _apply_styles(self):
         self.setStyleSheet(
@@ -307,27 +349,33 @@ class UpdateCompleteDialog(QDialog):
             QFrame {{
                 border: none;
             }}
-            QFrame#headerFrame {{
-                border-radius: 12px;
-            }}
-            QFrame#headerFrame {{
+            QFrame#panelFrame {{
                 background-color: {t('bg_mid')};
                 border: 1px solid {t('border')};
+                border-radius: 14px;
+            }}
+            QFrame#divider {{
+                background-color: {t('border')};
             }}
             QLabel {{
                 color: {t('text_primary')};
                 background: transparent;
-            }}
-            QLabel#statusIcon {{
-                color: #ffffff;
-                background-color: {t('status_info')};
-                border-radius: 15px;
             }}
             QLabel#titleLabel {{
                 color: {t('text_primary')};
             }}
             QLabel#subtitleLabel {{
                 color: {t('text_secondary')};
+                font-size: 12px;
+            }}
+            QLabel#heroIcon, QLabel#fallbackIcon {{
+                background: transparent;
+            }}
+            QTextEdit#changeText {{
+                background-color: transparent;
+                color: {t('text_primary')};
+                border: none;
+                padding: 0px;
                 font-size: 12px;
             }}
             QPushButton {{

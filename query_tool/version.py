@@ -6,7 +6,7 @@ from datetime import datetime
 # 版本号配置
 VERSION_MAJOR = 3  # 主版本号：重大功能更新或架构变更
 VERSION_MINOR = 6  # 次版本号：新增功能或较大改进
-VERSION_PATCH = 3  # 修订号：Bug修复或小改进
+VERSION_PATCH = 5  # 修订号：Bug修复或小改进
 
 # 自动获取编译日期
 BUILD_DATE = "20260529"
@@ -37,9 +37,13 @@ def get_build_date_formatted():
 # 版本历史（仅记录用户感知的重要更新、功能改进和bug修复）
 VERSION_HISTORY = """
 
+V3.6.5(20260529)
+- 增加升级压测功能
+- 增加任务列表视图
+
 V3.6.3 (20260529)
 - 记录页数据增加自动和手动刷新机制，避免程序没有重启时数据长期不更新
-= 调试页连接信息增加型号展示
+- 调试页连接信息增加型号展示
 
 V3.6.1 (20260526)
 - 修复已知问题
