@@ -86,8 +86,30 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
     record = records[0]
     dev_id = str(record.get("devId") or "").strip()
     real_sn = str(record.get("devSN") or sn).strip()
+    model = str(
+        record.get("devModel")
+        or record.get("deviceModel")
+        or record.get("model")
+        or ""
+    ).strip()
     if not dev_id:
         raise RuntimeError("设备ID为空，无法获取设备密码")
+
+    if not model:
+        try:
+            header_info = query.get_device_header(real_sn)
+            header_data = header_info.get("data") or {}
+            model = str(header_data.get("productName") or "").strip()
+        except Exception:
+            model = ""
+
+    if not model:
+        try:
+            version = str(query.get_device_version(dev_id) or "").strip()
+            if "-" in version:
+                model = version.split("-", 1)[0].strip()
+        except Exception:
+            model = ""
 
     device_password = (query.get_cloud_password(dev_id) or "").strip()
     if not device_password:
@@ -95,6 +117,7 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
 
     context = {
         "sn": real_sn,
+        "model": model,
         "dev_id": dev_id,
         "device_password": device_password,
     }

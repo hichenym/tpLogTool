@@ -1547,9 +1547,17 @@ class DebugPage(BasePage):
             self.append_output(message)
         self.show_progress(message)
 
-    def _format_connect_result_message(self, result: str, sn: str = "", detail: str = "") -> str:
+    def _format_connect_result_message(self, result: str, sn: str = "", detail: str = "", model: str = "") -> str:
+        model = str(model or self.current_context.get("model") or "").strip()
         sn = str(sn or self.current_context.get("sn") or self.sn_input.text() or "").strip()
-        suffix = f"({sn})" if sn else ""
+        if model and sn:
+            suffix = f" [{model}] {sn}"
+        elif sn:
+            suffix = f" {sn}"
+        elif model:
+            suffix = f" [{model}]"
+        else:
+            suffix = ""
         detail = (detail or "").strip()
         if detail and sn:
             detail = detail.replace(f"设备：{sn}不在线", "设备不在线")
@@ -1573,7 +1581,11 @@ class DebugPage(BasePage):
         self.command_type_combo.setEnabled(True)
         self.update_shortcut_controls()
         self.update_send_button()
-        success_message = self._format_connect_result_message("连接成功", context.get("sn", ""))
+        success_message = self._format_connect_result_message(
+            "连接成功",
+            context.get("sn", ""),
+            model=context.get("model", ""),
+        )
         self.append_output(success_message)
         self._flush_pending_output()
         self.show_success(success_message)
