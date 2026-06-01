@@ -7,12 +7,13 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QWidget)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
+from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.widgets.custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
 
 
-class CollectTypeSelectorDialog(QDialog):
+class CollectTypeSelectorDialog(AdaptiveDialog):
     """批量采集类型选择对话框"""
     
     def __init__(self, devices, thread_count, device_query=None, parent=None):
@@ -31,12 +32,16 @@ class CollectTypeSelectorDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         self.setWindowTitle("批量采集类型")
-        self.setFixedSize(400, 120)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
-        
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+
+        layout = self.init_dialog_layout(
+            (400, 120),
+            min_size=(360, 120),
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+            max_width_ratio=0.72,
+            max_height_ratio=0.55,
+        )
         
         # 采集类型按钮区域
         button_widget = QWidget()

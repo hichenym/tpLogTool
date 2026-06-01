@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QDateTime, QEvent, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QIcon
+from .adaptive_dialog import AdaptiveDialog
 from .custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
@@ -175,7 +176,7 @@ class DeviceSnQueryThread(QThread):
             self.error.emit(f"查询失败：{str(e)}")
 
 
-class SnQueryDialog(QDialog):
+class SnQueryDialog(AdaptiveDialog):
     """设备SN查询结果对话框 - 打开时自动查询，按型号过滤"""
 
     def __init__(self, phone='', model_filter='', account_type="mobile", parent=None):
@@ -188,7 +189,6 @@ class SnQueryDialog(QDialog):
         self._checkboxes = []
         self.thread_mgr = ThreadManager()
         self.setWindowTitle("查询设备SN")
-        self.setFixedSize(500, 420)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         self._init_ui()
         # 打开后自动开始查询
@@ -200,9 +200,12 @@ class SnQueryDialog(QDialog):
         set_dark_title_bar(self)
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(15, 15, 15, 15)
+        layout = self.init_dialog_layout(
+            (500, 420),
+            min_size=(400, 320),
+            layout_margins=(15, 15, 15, 15),
+            spacing=10,
+        )
 
         # 状态标签
         self.status_label = QLabel("正在查询...")
@@ -372,7 +375,7 @@ class SnQueryDialog(QDialog):
         return self.selected_sns
 
 
-class EditFirmwareDialog(QDialog):
+class EditFirmwareDialog(AdaptiveDialog):
     """修改固件信息对话框"""
     ACCOUNT_QUERY_TYPES = [
         ("手机号", "mobile"),
@@ -419,13 +422,16 @@ class EditFirmwareDialog(QDialog):
             self.setWindowTitle("新增固件")
         else:
             self.setWindowTitle("固件信息修改")
-        
-        self.setFixedSize(700, 560)
+
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
-        
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+
+        layout = self.init_dialog_layout(
+            (700, 560),
+            min_size=(560, 420),
+            scrollable=True,
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+        )
         
         # 固件标识信息（在表单上方，无边框）- 仅编辑模式显示
         if not self.is_create_mode:

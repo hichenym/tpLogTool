@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
 from PyQt5.QtGui import QCursor, QIcon
+from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.utils.config import (
     get_account_config, save_account_config,
     get_firmware_account_config, save_firmware_account_config,
@@ -270,12 +271,11 @@ class ClickableLineEdit(QLineEdit):
         super().mouseDoubleClickEvent(event)
 
 
-class SettingsDialog(QDialog):
+class SettingsDialog(AdaptiveDialog):
     """设置对话框"""
     def __init__(self, parent=None, initial_tab=0):
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.setFixedSize(500, 480)  # 增加宽度和高度
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         
         # 保存父窗口引用，用于显示消息
@@ -314,9 +314,12 @@ class SettingsDialog(QDialog):
             self.tab_widget.setCurrentIndex(self.initial_tab)
         
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(15, 15, 15, 15)
+        layout = self.init_dialog_layout(
+            (500, 480),
+            min_size=(420, 340),
+            layout_margins=(15, 15, 15, 15),
+            spacing=10,
+        )
         
         # 创建标签页
         self.tab_widget = QTabWidget()

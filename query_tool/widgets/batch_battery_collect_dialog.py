@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QDateTimeEdit, QProgressBar, QWidget)
 from PyQt5.QtCore import Qt, QDateTime, pyqtSignal
 from PyQt5.QtGui import QIcon
+from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.widgets.custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
@@ -16,7 +17,7 @@ from query_tool.utils.logger import logger
 import csv
 
 
-class BatchBatteryCollectDialog(QDialog):
+class BatchBatteryCollectDialog(AdaptiveDialog):
     """批量电池电量数据采集对话框"""
 
     # 日志信号，发送到主界面左下角
@@ -40,12 +41,15 @@ class BatchBatteryCollectDialog(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("电池电量批量采集")
-        self.setFixedSize(900, 700)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout = self.init_dialog_layout(
+            (900, 700),
+            min_size=(680, 500),
+            scrollable=True,
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+        )
 
         device_count_label = QLabel(f"已选择 {len(self.devices)} 台设备，线程数: {self.thread_count}")
         device_count_label.setStyleSheet(f"color: {t('status_info')}; font-size: 14px;")
@@ -144,7 +148,7 @@ class BatchBatteryCollectDialog(QDialog):
         self.device_table.setColumnWidth(0, 300)
         self.device_table.setColumnWidth(1, 200)
         self.device_table.setColumnWidth(2, 150)
-        self.device_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.device_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.device_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         header.sectionResized.connect(self.on_column_resized)
 

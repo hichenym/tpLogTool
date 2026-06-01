@@ -10,6 +10,7 @@
   "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.6.5",
   "min_version": "3.0.0",
   "update_strategy": "silent",
+  "show_change": true,
   "changelog": ["增加升级压测功能","增加任务列表视图"],
   "analytics": {"doc_id":"IVx0bqWefaVflZssxeycgHvSn5J","sheet_id":"tblyZtqCQEC43Hzl"}
 }

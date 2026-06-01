@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize
 from PyQt5.QtGui import QColor, QIcon
+from .adaptive_dialog import AdaptiveDialog
 from .custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
@@ -306,7 +307,7 @@ class BatchUpgradeThread(QThread):
         self.worker.stop()
 
 
-class BatchUpgradeDialog(QDialog):
+class BatchUpgradeDialog(AdaptiveDialog):
     """批量设备固件升级对话框"""
     
     def __init__(self, devices, device_query, thread_count, parent=None):
@@ -359,12 +360,15 @@ class BatchUpgradeDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         self.setWindowTitle("批量设备固件升级")
-        self.setFixedSize(950, 820)  # 增加高度到820，给固件列表底部更多空间
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)  # 减少主布局间距从15到12，让内容更紧凑
+
+        layout = self.init_dialog_layout(
+            (950, 820),
+            min_size=(720, 600),
+            scrollable=True,
+            layout_margins=(20, 20, 20, 20),
+            spacing=12,
+        )
         
         # 设备列表分组
         device_group = QGroupBox("设备列表")

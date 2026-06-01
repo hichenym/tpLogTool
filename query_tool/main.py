@@ -126,10 +126,12 @@ class MainWindow(QMainWindow):
 
     def _get_available_geometry(self):
         """获取当前可用屏幕区域，避开任务栏。"""
-        app = QApplication.instance()
-        screen = app.primaryScreen() if app else None
-        if screen is not None:
-            return screen.availableGeometry()
+        desktop = QDesktopWidget()
+        if self.isVisible():
+            return desktop.availableGeometry(self)
+        parent = self.parentWidget()
+        if parent is not None:
+            return desktop.availableGeometry(parent)
         return QDesktopWidget().availableGeometry()
 
     def _apply_initial_window_size(self):

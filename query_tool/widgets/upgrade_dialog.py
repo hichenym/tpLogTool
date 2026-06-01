@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QColor, QIcon
+from .adaptive_dialog import AdaptiveDialog
 from .custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
@@ -147,7 +148,7 @@ class UpgradeThread(QThread):
             self.finished_signal.emit(False, f"升级出错: {str(e)}")
 
 
-class UpgradeDialog(QDialog):
+class UpgradeDialog(AdaptiveDialog):
     """设备固件升级对话框"""
     
     def __init__(self, sn, dev_id, device_name, model, device_query, parent=None):
@@ -186,12 +187,15 @@ class UpgradeDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         self.setWindowTitle("设备固件升级")
-        self.setFixedSize(900, 580)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
-        
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+
+        layout = self.init_dialog_layout(
+            (900, 580),
+            min_size=(680, 420),
+            scrollable=True,
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+        )
         
         # 设备信息
         info_label = QLabel(f"设备: {self.device_name}    SN: {self.sn}    型号: {self.model}")

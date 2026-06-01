@@ -39,6 +39,7 @@ from query_tool.utils.siot_debug import (
     is_syscmd_family_command,
     parse_startlogp2p_level,
 )
+from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.widgets.custom_widgets import prompt_configure_account, set_dark_title_bar
 
 
@@ -730,7 +731,7 @@ class DebugConsoleEdit(QTextEdit):
         return timestamp.strftime("%m-%d %H:%M:%S")
 
 
-class ShortcutEditDialog(QDialog):
+class ShortcutEditDialog(AdaptiveDialog):
     """快捷命令编辑对话框。"""
 
     def __init__(self, command: str, parent=None):
@@ -744,12 +745,16 @@ class ShortcutEditDialog(QDialog):
 
     def _build_ui(self, command: str):
         self.setWindowTitle("编辑快捷方式")
-        self.setFixedSize(280, 140)
-        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint | Qt.MSWindowsFixedSizeDialogHint)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(12)
+        layout = self.init_dialog_layout(
+            (280, 140),
+            min_size=(260, 140),
+            layout_margins=(16, 14, 16, 14),
+            spacing=12,
+            max_width_ratio=0.55,
+            max_height_ratio=0.45,
+        )
 
         label = QLabel("命令:")
         label.setStyleSheet(f"color: {t('text_primary')};")

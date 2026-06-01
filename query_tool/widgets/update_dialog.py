@@ -2,14 +2,16 @@
 更新对话框
 """
 import ctypes
+import html
 import resources.icon_res as icon_res
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QProgressBar, QTextEdit, QWidget, QFrame
+    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QProgressBar, QTextEdit, QWidget, QFrame, QScrollArea
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
-from PyQt5.QtGui import QFont, QIcon, QMovie
+from PyQt5.QtGui import QCursor, QFont, QIcon, QMovie
 
+from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.utils.update_checker import VersionInfo
 from query_tool.utils.theme_manager import t
 
@@ -21,7 +23,31 @@ def set_dark_title_bar(window):
     set_title_bar_theme(window, dark=theme_manager.is_dark)
 
 
-class UpdatePromptDialog(QDialog):
+def _compute_fixed_dialog_size(parent, preferred_size: QSize, min_size: QSize, max_width_ratio: float, max_height_ratio: float) -> QSize:
+    app = QApplication.instance()
+    desktop = app.desktop() if app is not None else None
+    if desktop is None:
+        return QSize(preferred_size)
+
+    if parent is not None:
+        available = desktop.availableGeometry(parent.window())
+    else:
+        available = desktop.availableGeometry(desktop.screenNumber(QCursor.pos()))
+
+    max_width = max(240, available.width() - 24)
+    max_height = max(180, available.height() - 24)
+    width = max(
+        min_size.width(),
+        min(preferred_size.width(), int(available.width() * max_width_ratio), max_width),
+    )
+    height = max(
+        min_size.height(),
+        min(preferred_size.height(), int(available.height() * max_height_ratio), max_height),
+    )
+    return QSize(width, height)
+
+
+class UpdatePromptDialog(AdaptiveDialog):
     """更新提示对话框"""
     
     # 信号
@@ -36,9 +62,6 @@ class UpdatePromptDialog(QDialog):
         self.current_version = current_version
         
         self.setWindowTitle("发现新版本")
-        self.setMinimumWidth(500)
-        self.setMinimumHeight(400)
-        
         self._init_ui()
     
     def showEvent(self, event):
@@ -48,9 +71,14 @@ class UpdatePromptDialog(QDialog):
     
     def _init_ui(self):
         """初始化UI"""
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout = self.init_dialog_layout(
+            (500, 400),
+            min_size=(380, 320),
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+            max_width_ratio=0.78,
+            max_height_ratio=0.82,
+        )
         
         # 标题
         title_label = QLabel(f"🎉 发现新版本 V{self.version_info.version}")
@@ -134,7 +162,7 @@ class UpdatePromptDialog(QDialog):
         self.reject()
 
 
-class UpdateDownloadDialog(QDialog):
+class UpdateDownloadDialog(AdaptiveDialog):
     """更新下载对话框"""
     
     # 信号
@@ -146,8 +174,6 @@ class UpdateDownloadDialog(QDialog):
         self.version_info = version_info
         
         self.setWindowTitle("下载更新")
-        self.setMinimumWidth(400)
-        self.setMinimumHeight(150)
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
         
         self._init_ui()
@@ -159,9 +185,14 @@ class UpdateDownloadDialog(QDialog):
     
     def _init_ui(self):
         """初始化UI"""
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout = self.init_dialog_layout(
+            (400, 150),
+            min_size=(360, 150),
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+            max_width_ratio=0.68,
+            max_height_ratio=0.50,
+        )
         
         # 标题
         title_label = QLabel(f"正在下载 V{self.version_info.version}")
@@ -232,49 +263,52 @@ class UpdateCompleteDialog(QDialog):
         self._change_lines = [str(item).strip() for item in self.version_info.changelog if str(item).strip()]
         self._show_change_content = bool(self.version_info.show_change and self._change_lines)
         self._icon_movie = None
-        
+        preferred_height = 270 if self._show_change_content else 205
+        self._dialog_size = _compute_fixed_dialog_size(
+            parent,
+            QSize(500, preferred_height),
+            QSize(420, 205),
+            0.72,
+            0.65,
+        )
+
         self.setWindowTitle("功能变更")
         self.setWindowIcon(QIcon(":/icons/app/logo.png"))
-        fixed_size = QSize(500, 270 if self._show_change_content else 205)
-        self.setFixedSize(fixed_size)
-        self.setMinimumSize(fixed_size)
-        self.setMaximumSize(fixed_size)
-        self.setSizeGripEnabled(False)
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.MSWindowsFixedSizeDialogHint)
         self.setWindowModality(Qt.ApplicationModal)
+        self.winId()
+        set_dark_title_bar(self)
         
         self._init_ui()
     
     def showEvent(self, event):
-        """对话框显示时设置深色标题栏"""
         super().showEvent(event)
-        set_dark_title_bar(self)
     
     def _init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         panel_frame = QFrame()
         panel_frame.setObjectName("panelFrame")
         panel_layout = QVBoxLayout(panel_frame)
-        panel_layout.setContentsMargins(20, 18, 20, 16)
-        panel_layout.setSpacing(14)
+        panel_layout.setContentsMargins(18, 16, 18, 14)
+        panel_layout.setSpacing(12)
 
         hero_row = QHBoxLayout()
         hero_row.setContentsMargins(0, 0, 0, 0)
-        hero_row.setSpacing(14)
+        hero_row.setSpacing(12)
 
         self.icon_label = QLabel()
         self.icon_label.setObjectName("heroIcon")
-        self.icon_label.setFixedSize(60, 60)
+        self.icon_label.setFixedSize(56, 56)
         self.icon_label.setAlignment(Qt.AlignCenter)
         hero_row.addWidget(self.icon_label, 0, Qt.AlignTop)
 
         text_layout = QVBoxLayout()
         text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(6)
+        text_layout.setSpacing(4)
 
         title_label = QLabel("检测到功能变更")
         title_font = QFont()
@@ -297,22 +331,39 @@ class UpdateCompleteDialog(QDialog):
             divider.setFixedHeight(1)
             panel_layout.addWidget(divider)
 
-            change_text = QTextEdit()
-            change_text.setReadOnly(True)
-            change_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            change_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            change_text.setMinimumHeight(74)
-            change_text.setMaximumHeight(88)
-            change_text.setObjectName("changeText")
-            change_text.setPlainText("\n".join([f"• {item}" for item in self._change_lines[:10]]))
-            panel_layout.addWidget(change_text)
+            change_scroll = QScrollArea()
+            change_scroll.setObjectName("changeScroll")
+            change_scroll.setWidgetResizable(True)
+            change_scroll.setFrameShape(QFrame.NoFrame)
+            change_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            change_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            change_scroll.setMinimumHeight(68)
+            change_scroll.setMaximumHeight(68)
+
+            change_label = QLabel()
+            change_label.setObjectName("changeTextLabel")
+            change_label.setTextFormat(Qt.RichText)
+            change_label.setWordWrap(True)
+            change_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            change_label.setText(self._build_change_list_html())
+            change_label.setContentsMargins(0, 0, 0, 0)
+
+            change_container = QWidget()
+            change_container_layout = QVBoxLayout(change_container)
+            change_container_layout.setContentsMargins(0, 0, 0, 0)
+            change_container_layout.setSpacing(0)
+            change_container_layout.addWidget(change_label)
+            change_container_layout.addStretch()
+
+            change_scroll.setWidget(change_container)
+            panel_layout.addWidget(change_scroll)
         
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         button_layout.addStretch()
 
         restart_btn = QPushButton("立即重启")
-        restart_btn.setFixedSize(116, 36)
+        restart_btn.setFixedSize(116, 34)
         restart_btn.setCursor(Qt.PointingHandCursor)
         restart_btn.setObjectName("primaryButton")
         restart_btn.clicked.connect(self._on_restart_now)
@@ -322,11 +373,47 @@ class UpdateCompleteDialog(QDialog):
         layout.addLayout(button_layout)
         self._setup_movie()
         self._apply_styles()
+        self._dialog_size = QSize(self._dialog_size.width(), 270 if self._show_change_content else self._dialog_size.height())
+        self.setFixedSize(self._dialog_size)
+        self.setSizeGripEnabled(False)
 
     def _build_subtitle_text(self) -> str:
         if self._show_change_content:
             return "检测到下列功能变更，重启程序以应用"
         return "检测到功能变更，重启程序以应用"
+
+    def _build_change_list_html(self) -> str:
+        items = "".join(
+            f"<li>{html.escape(item)}</li>"
+            for item in self._change_lines[:10]
+        )
+        return f"""
+        <html>
+            <head>
+                <style>
+                    body {{
+                        margin: 0;
+                        color: {t('text_primary')};
+                        font-size: 13px;
+                        line-height: 1.5;
+                    }}
+                    ul {{
+                        margin: 0;
+                        padding-left: 22px;
+                    }}
+                    li {{
+                        margin: 0 0 5px 0;
+                    }}
+                    li:last-child {{
+                        margin-bottom: 0;
+                    }}
+                </style>
+            </head>
+            <body>
+                <ul>{items}</ul>
+            </body>
+        </html>
+        """
 
     def _setup_movie(self):
         movie = QMovie(":/icons/common/running.gif")
@@ -335,7 +422,7 @@ class UpdateCompleteDialog(QDialog):
             self.icon_label.setAlignment(Qt.AlignCenter)
             self.icon_label.setObjectName("fallbackIcon")
             return
-        movie.setScaledSize(QSize(60, 60))
+        movie.setScaledSize(QSize(56, 56))
         self._icon_movie = movie
         self.icon_label.setMovie(movie)
         movie.start()
@@ -371,12 +458,19 @@ class UpdateCompleteDialog(QDialog):
             QLabel#heroIcon, QLabel#fallbackIcon {{
                 background: transparent;
             }}
-            QTextEdit#changeText {{
+            QScrollArea#changeScroll {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollArea#changeScroll QWidget {{
+                background: transparent;
+            }}
+            QLabel#changeTextLabel {{
                 background-color: transparent;
                 color: {t('text_primary')};
                 border: none;
                 padding: 0px;
-                font-size: 12px;
+                font-size: 13px;
             }}
             QPushButton {{
                 border-radius: 8px;

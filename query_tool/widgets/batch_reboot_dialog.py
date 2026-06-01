@@ -11,6 +11,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize
 from PyQt5.QtGui import QColor, QIcon
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.utils import StyleManager, check_device_online, wake_device_smart
 from query_tool.utils.logger import logger
 from query_tool.utils.thread_manager import ThreadManager
@@ -234,7 +235,7 @@ class BatchRebootThread(QThread):
         self.worker.stop()
 
 
-class BatchRebootDialog(QDialog):
+class BatchRebootDialog(AdaptiveDialog):
     """批量重启对话框"""
     
     def __init__(self, devices, device_query, thread_count, parent=None):
@@ -271,12 +272,14 @@ class BatchRebootDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         self.setWindowTitle("批量重启设备")
-        self.setFixedSize(600, 430)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+
+        layout = self.init_dialog_layout(
+            (600, 430),
+            min_size=(500, 340),
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+        )
         
         # 设备列表分组
         operation_group = QGroupBox("设备列表")

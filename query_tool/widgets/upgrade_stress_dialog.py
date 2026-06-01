@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
     QComboBox,
 )
 
+from .adaptive_dialog import AdaptiveDialog
 from .batch_upgrade_dialog import FirmwareQueryThread
 from .custom_widgets import ClickableLineEdit, set_dark_title_bar
 from query_tool.utils import StyleManager, get_account_config
@@ -42,7 +43,7 @@ class NoWheelComboBox(QComboBox):
         event.ignore()
 
 
-class UpgradeStressDialog(QDialog):
+class UpgradeStressDialog(AdaptiveDialog):
     """Configure and start firmware upgrade stress tasks."""
 
     def __init__(self, devices, thread_count, parent=None):
@@ -78,12 +79,15 @@ class UpgradeStressDialog(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("升级压测")
-        self.setFixedSize(980, 880)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        layout = self.init_dialog_layout(
+            (980, 880),
+            min_size=(760, 620),
+            scrollable=True,
+            layout_margins=(18, 18, 18, 18),
+            spacing=12,
+        )
 
         device_group = QGroupBox("设备列表")
         device_layout = QVBoxLayout(device_group)
@@ -261,6 +265,7 @@ class UpgradeStressDialog(QDialog):
         firmware_table_height = firmware_header_height + (firmware_row_height * firmware_visible_rows) + 10
         self.firmware_table.setMinimumHeight(firmware_table_height)
         self.firmware_table.setMaximumHeight(firmware_table_height)
+        self.firmware_table.setWordWrap(True)
         StyleManager.apply_to_widget(self.firmware_table, "TABLE")
         table_header = self.firmware_table.horizontalHeader()
         table_header.setSectionResizeMode(0, QHeaderView.Fixed)
@@ -270,10 +275,11 @@ class UpgradeStressDialog(QDialog):
         table_header.setSectionResizeMode(4, QHeaderView.Fixed)
         table_header.setSectionResizeMode(5, QHeaderView.Stretch)
         self.firmware_table.setColumnWidth(0, 50)
-        self.firmware_table.setColumnWidth(1, 260)
+        self.firmware_table.setColumnWidth(1, 280)
         self.firmware_table.setColumnWidth(2, 90)
-        self.firmware_table.setColumnWidth(3, 110)
-        self.firmware_table.setColumnWidth(4, 110)
+        self.firmware_table.setColumnWidth(3, 90)
+        self.firmware_table.setColumnWidth(4, 90)
+        self.firmware_table.setTextElideMode(Qt.ElideRight)
         self.firmware_table.cellClicked.connect(self.on_table_cell_clicked)
         list_layout.addWidget(self.firmware_table)
 
@@ -442,9 +448,19 @@ class UpgradeStressDialog(QDialog):
             audit_item.setTextAlignment(Qt.AlignCenter)
             self.firmware_table.setItem(row, 2, audit_item)
 
-            self.firmware_table.setItem(row, 3, QTableWidgetItem(firmware.get("start_time", "")))
-            self.firmware_table.setItem(row, 4, QTableWidgetItem(firmware.get("end_time", "")))
-            self.firmware_table.setItem(row, 5, QTableWidgetItem(firmware.get("remark", "")))
+            start_item = QTableWidgetItem(firmware.get("start_time", ""))
+            start_item.setTextAlignment(Qt.AlignCenter)
+            self.firmware_table.setItem(row, 3, start_item)
+
+            end_item = QTableWidgetItem(firmware.get("end_time", ""))
+            end_item.setTextAlignment(Qt.AlignCenter)
+            self.firmware_table.setItem(row, 4, end_item)
+
+            remark_item = QTableWidgetItem(firmware.get("remark", ""))
+            remark_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.firmware_table.setItem(row, 5, remark_item)
+
+        self.firmware_table.resizeRowsToContents()
 
     def on_checkbox_changed(self, row, state):
         checked = state == Qt.Checked

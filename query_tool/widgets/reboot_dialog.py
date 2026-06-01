@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QColor, QIcon
+from .adaptive_dialog import AdaptiveDialog
 from .custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
@@ -122,7 +123,7 @@ class RebootThread(QThread):
             self.finished_signal.emit(False, f"重启出错: {str(e)}")
 
 
-class RebootDialog(QDialog):
+class RebootDialog(AdaptiveDialog):
     """设备重启对话框"""
     
     def __init__(self, sn, dev_id, device_query, parent=None):
@@ -148,12 +149,16 @@ class RebootDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         self.setWindowTitle("设备重启")
-        self.setFixedSize(450, 250)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
-        
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+
+        layout = self.init_dialog_layout(
+            (450, 250),
+            min_size=(360, 220),
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+            max_width_ratio=0.75,
+            max_height_ratio=0.70,
+        )
         
         # 设备信息（设备名称和SN在一行，蓝色字体）
         # 获取设备名称

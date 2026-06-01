@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QColor, QIcon
+from .adaptive_dialog import AdaptiveDialog
 from .custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils.style_manager import StyleManager
@@ -121,7 +122,7 @@ class PortMappingThread(QThread):
             self.finished_signal.emit(False, f"端口穿透出错: {str(e)}", "")
 
 
-class PortMappingDialog(QDialog):
+class PortMappingDialog(AdaptiveDialog):
     """端口穿透对话框"""
     
     def __init__(self, sn, dev_id, device_name, device_query, parent=None):
@@ -151,12 +152,16 @@ class PortMappingDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         self.setWindowTitle("端口穿透")
-        self.setFixedSize(500, 280)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
-        
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+
+        layout = self.init_dialog_layout(
+            (500, 280),
+            min_size=(380, 240),
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+            max_width_ratio=0.78,
+            max_height_ratio=0.75,
+        )
         
         # 设备信息
         info_label = QLabel(f"设备: {self.device_name}    SN: {self.sn}")

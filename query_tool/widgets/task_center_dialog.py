@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (
     QHeaderView,
 )
 
+from .adaptive_dialog import AdaptiveDialog
 from .custom_widgets import set_dark_title_bar
 from query_tool.utils import StyleManager
 from query_tool.utils.task_center import (
@@ -38,7 +39,7 @@ from query_tool.utils.task_center import (
 from query_tool.utils.theme_manager import t
 
 
-class TaskCenterDialog(QDialog):
+class TaskCenterDialog(AdaptiveDialog):
     """Display and control persisted background tasks."""
 
     def __init__(self, parent=None):
@@ -58,7 +59,6 @@ class TaskCenterDialog(QDialog):
             6: 220,
         }
         self.setWindowTitle("后台任务")
-        self.setFixedSize(1040, 460)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         self.init_ui()
         self.refresh_tasks()
@@ -74,9 +74,12 @@ class TaskCenterDialog(QDialog):
         super().closeEvent(event)
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        layout = self.init_dialog_layout(
+            (1040, 460),
+            min_size=(760, 320),
+            layout_margins=(18, 18, 18, 18),
+            spacing=12,
+        )
 
         header_layout = QHBoxLayout()
         title = QLabel("后台任务列表")
@@ -124,7 +127,7 @@ class TaskCenterDialog(QDialog):
         self.task_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.task_table.setFocusPolicy(Qt.StrongFocus)
         self.task_table.setWordWrap(False)
-        self.task_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.task_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.task_table.cellDoubleClicked.connect(self.on_cell_double_clicked)
         StyleManager.apply_to_widget(self.task_table, "TABLE")
 

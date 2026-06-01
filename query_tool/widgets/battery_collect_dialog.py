@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QDateTimeEdit, QWidget)
 from PyQt5.QtCore import Qt, QDateTime, pyqtSignal
 from PyQt5.QtGui import QIcon
+from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.widgets.custom_widgets import set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
@@ -16,7 +17,7 @@ from query_tool.utils.logger import logger
 import csv
 
 
-class BatteryCollectDialog(QDialog):
+class BatteryCollectDialog(AdaptiveDialog):
     """单设备电池电量数据采集对话框"""
 
     # 日志信号，发送到主界面左下角
@@ -52,12 +53,15 @@ class BatteryCollectDialog(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("电池电量")
-        self.setFixedSize(700, 600)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout = self.init_dialog_layout(
+            (700, 600),
+            min_size=(560, 420),
+            scrollable=True,
+            layout_margins=(20, 20, 20, 20),
+            spacing=15,
+        )
 
         # 设备信息
         info_label = QLabel(f"设备: {self.device_name}    SN: {self.sn}    型号: {self.model}")
@@ -157,7 +161,7 @@ class BatteryCollectDialog(QDialog):
         header.setSectionResizeMode(1, QHeaderView.Interactive)
         self.result_table.setColumnWidth(0, 400)
         self.result_table.setColumnWidth(1, 200)
-        self.result_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.result_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.result_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         header.sectionResized.connect(self.on_column_resized)
 

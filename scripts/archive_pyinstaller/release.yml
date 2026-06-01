@@ -229,10 +229,26 @@ jobs:
           # 生成 version.json（包含文件哈希）
           # update_strategy: manual(手动), prompt(提示), silent(静默)
           
-          # 读取现有 version.json 中的 analytics 配置
+          # 读取现有 version.json 中需要保留的配置
           $analyticsJson = '{}'
+          $showChangeJson = 'true'
           if (Test-Path "version.json") {
               $existing = Get-Content "version.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+              if ($existing.PSObject.Properties.Name -contains 'show_change') {
+                  $showChangeValue = $existing.show_change
+                  if ($showChangeValue -is [bool]) {
+                      $showChangeJson = ($showChangeValue | ConvertTo-Json -Compress)
+                  }
+                  elseif ($showChangeValue -is [string]) {
+                      $normalizedShowChange = $showChangeValue.Trim().ToLowerInvariant()
+                      if ($normalizedShowChange -eq 'false') {
+                          $showChangeJson = 'false'
+                      }
+                      elseif ($normalizedShowChange -eq 'true') {
+                          $showChangeJson = 'true'
+                      }
+                  }
+              }
               if ($existing.analytics) {
                   $analyticsJson = $existing.analytics | ConvertTo-Json -Compress
               }
@@ -251,6 +267,7 @@ jobs:
             "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
             "min_version": "3.0.0",
             "update_strategy": "silent",
+            "show_change": $showChangeJson,
             "changelog": $changelogJson,
             "analytics": $analyticsJson
           }
