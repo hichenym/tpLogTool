@@ -6,6 +6,7 @@ import winreg
 import base64
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from typing import List
 
@@ -179,6 +180,20 @@ class ConfigManager:
             logger.error(f"保存固件账号配置失败: {e}")
             print(f"保存固件配置失败: {e}")
             return False
+
+    def load_firmware_file_dialog_dir(self) -> str:
+        """加载固件文件选择框的起始目录。"""
+        directory = str(self._get_value('firmware_file_dialog_dir', '') or '').strip()
+        if directory and os.path.isdir(directory):
+            return directory
+        return ''
+
+    def save_firmware_file_dialog_dir(self, directory: str) -> bool:
+        """保存固件文件选择框的起始目录。"""
+        normalized_dir = os.path.abspath(str(directory or '').strip())
+        if not normalized_dir or not os.path.isdir(normalized_dir):
+            return False
+        return self._set_value('firmware_file_dialog_dir', normalized_dir)
 
     def load_seetong_account_config(self) -> SeetongAccountConfig:
         """加载 Seetong 账号配置"""
@@ -457,6 +472,16 @@ def save_firmware_account_config(username, password):
     """保存固件账号配置"""
     config = FirmwareAccountConfig(username=username, password=password)
     return config_manager.save_firmware_account_config(config)
+
+
+def get_firmware_file_dialog_dir():
+    """获取固件文件选择框起始目录。"""
+    return config_manager.load_firmware_file_dialog_dir()
+
+
+def save_firmware_file_dialog_dir(directory):
+    """保存固件文件选择框起始目录。"""
+    return config_manager.save_firmware_file_dialog_dir(directory)
 
 
 def get_seetong_account_config():

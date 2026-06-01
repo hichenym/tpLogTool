@@ -377,6 +377,7 @@ class SnQueryDialog(AdaptiveDialog):
 
 class EditFirmwareDialog(AdaptiveDialog):
     """修改固件信息对话框"""
+    DEFAULT_TEMP_SN = "AABBCCDDEEFFGGHH"
     ACCOUNT_QUERY_TYPES = [
         ("手机号", "mobile"),
         ("ID", "id"),
@@ -506,7 +507,7 @@ class EditFirmwareDialog(AdaptiveDialog):
         form_layout.addRow(comment_label, self.comment_text)
         
         # 5. 支持升级的设备SN（标签、输入框、右侧账号+查询按钮）
-        sn_label = QLabel("<span style='color: red;'>*</span> 升级SN:")
+        sn_label = QLabel("升级SN:")
         sn_label.setToolTip("每行一个SN，支持多个设备")
         sn_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
@@ -517,7 +518,7 @@ class EditFirmwareDialog(AdaptiveDialog):
         sn_right_layout.setSpacing(self.SN_QUERY_CONTROL_SPACING)
 
         self.sn_text = QTextEdit()
-        self.sn_text.setPlaceholderText("每行输入一个设备SN...")
+        self.sn_text.setPlaceholderText("为空时默认使用临时SN保存")
         self.sn_text.setFixedHeight(100)
         self.sn_text.setMinimumWidth(250)
         self.sn_text.setMaximumWidth(290)
@@ -567,13 +568,8 @@ class EditFirmwareDialog(AdaptiveDialog):
         self.sn_query_btn.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 28)
         self.sn_query_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.sn_query_btn.clicked.connect(self.on_query_device_sn)
-
-        self.sn_temp_fill_btn = QPushButton("临时填充")
-        self.sn_temp_fill_btn.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 28)
-        self.sn_temp_fill_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
-        self.sn_temp_fill_btn.clicked.connect(self._on_temp_fill_sn)
         action_row.addWidget(self.sn_query_btn)
-        action_row.addWidget(self.sn_temp_fill_btn)
+        action_row.addStretch()
 
         sn_btn_layout.addStretch(1)
         sn_btn_layout.addLayout(account_row)
@@ -711,9 +707,6 @@ class EditFirmwareDialog(AdaptiveDialog):
         
         # 加载支持升级的设备SN
         support_sn = self.firmware_data.get('support_sn', '')
-        # 新增模式下，默认填写 "AABBCCDDEEFFGGHH"
-        if self.is_create_mode and not support_sn:
-            support_sn = 'AABBCCDDEEFFGGHH'
         self.sn_text.setPlainText(support_sn)
         
         # 加载开始时间
@@ -794,26 +787,26 @@ class EditFirmwareDialog(AdaptiveDialog):
         identifier = self.identifier_input.text().strip()
         md5 = self.md5_input.text().strip()
         comment = self.comment_text.toPlainText().strip()
-        sn_text = self.sn_text.toPlainText().strip()
+        sn_lines = self._get_entered_sn_lines()
         
-        # 获取非空SN行
-        sn_lines = [line.strip() for line in sn_text.split('\n') if line.strip()]
-        
-        # 检查SN是否有效（每行长度必须为16）
-        sn_valid = True
-        if sn_lines:
-            for line in sn_lines:
-                if len(line) != 16:
-                    sn_valid = False
-                    break
-        else:
-            sn_valid = False  # 没有SN也是无效的
+        # SN 为空时允许提交，提交时会自动补临时 SN
+        sn_valid = all(len(line) == 16 for line in sn_lines)
         
         # 所有必填字段都有值且SN有效时，启用确认按钮
         if identifier and md5 and comment and sn_valid:
             self.submit_btn.setEnabled(True)
         else:
             self.submit_btn.setEnabled(False)
+
+    def _get_entered_sn_lines(self):
+        """获取用户实际输入的非空 SN 列表。"""
+        sn_text = self.sn_text.toPlainText().strip()
+        return [line.strip() for line in sn_text.split('\n') if line.strip()]
+
+    def _get_effective_sn_lines(self):
+        """获取最终用于提交的 SN 列表；为空时回退到临时 SN。"""
+        sn_lines = self._get_entered_sn_lines()
+        return sn_lines or [self.DEFAULT_TEMP_SN]
     
     def on_sn_text_changed(self):
         """SN文本变化时，验证每行SN长度是否为16，以及是否为空"""
@@ -921,10 +914,6 @@ class EditFirmwareDialog(AdaptiveDialog):
             placeholder_map.get(account_type, "请输入账号...")
         )
 
-    def _on_temp_fill_sn(self):
-        """临时填充SN"""
-        self.sn_text.setPlainText('AABBCCDDEEFFGGHH')
-
     def _on_set_today(self):
         """将时间段设置为今天"""
         from PyQt5.QtCore import QDateTime, QDate, QTime
@@ -932,16 +921,48 @@ class EditFirmwareDialog(AdaptiveDialog):
         self.start_time_edit.setDateTime(QDateTime(today, QTime(0, 0, 0)))
         self.end_time_edit.setDateTime(QDateTime(today, QTime(23, 59, 59)))
 
+    @staticmethod
+    def _resolve_remembered_file_dialog_dir():
+        """读取已保存的固件文件选择起始目录。"""
+        from query_tool.utils.config import get_firmware_file_dialog_dir
+
+        directory = str(get_firmware_file_dialog_dir() or '').strip()
+        if directory and os.path.isdir(directory):
+            return directory
+        return ""
+
+    @staticmethod
+    def _build_remembered_file_dialog_dir(file_path):
+        """根据选中的文件，记录其所在目录的上一层。"""
+        selected_dir = os.path.dirname(os.path.abspath(file_path))
+        if not selected_dir or not os.path.isdir(selected_dir):
+            return ""
+        parent_dir = os.path.dirname(selected_dir) or selected_dir
+        if os.path.isdir(parent_dir):
+            return parent_dir
+        return selected_dir
+
+    def _save_file_dialog_dir(self, file_path):
+        """保存下次打开固件文件选择框的起始目录。"""
+        from query_tool.utils.config import save_firmware_file_dialog_dir
+
+        remembered_dir = self._build_remembered_file_dialog_dir(file_path)
+        if remembered_dir:
+            save_firmware_file_dialog_dir(remembered_dir)
+
     def on_select_file(self):
         """选择文件"""
+        initial_dir = self._resolve_remembered_file_dialog_dir()
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "选择固件文件",
-            "",
+            initial_dir,
             "所有文件 (*.*)"
         )
         
         if file_path:
+            self._save_file_dialog_dir(file_path)
+
             # 获取文件名
             file_name = os.path.basename(file_path)
             
@@ -1103,13 +1124,11 @@ class EditFirmwareDialog(AdaptiveDialog):
         identifier = self.identifier_input.text().strip()
         md5 = self.md5_input.text().strip()
         comment = self.comment_text.toPlainText().strip()
-        sn_text = self.sn_text.toPlainText().strip()
-        
-        # 获取非空SN行
-        sn_lines = [line.strip() for line in sn_text.split('\n') if line.strip()]
+        entered_sn_lines = self._get_entered_sn_lines()
+        sn_lines = self._get_effective_sn_lines()
         
         # 再次验证（防御性编程）
-        if not identifier or not md5 or not comment or not sn_lines:
+        if not identifier or not md5 or not comment:
             logger.warning("提交时发现必填字段为空，这不应该发生")
             return
         
@@ -1118,6 +1137,9 @@ class EditFirmwareDialog(AdaptiveDialog):
             if len(line) != 16:
                 logger.warning(f"提交时发现无效SN: {line}")
                 return
+
+        if not entered_sn_lines:
+            logger.info("SN 输入为空，提交时自动使用临时 SN")
         
         support_sn = '\n'.join(sn_lines)
         
