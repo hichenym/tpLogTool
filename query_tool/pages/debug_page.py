@@ -875,20 +875,21 @@ class DebugPage(BasePage):
     def init_ui(self):
         page_layout = QVBoxLayout(self)
         page_layout.setContentsMargins(5, 5, 5, 5)
-        page_layout.setSpacing(8)
+        page_layout.setSpacing(2)
 
-        connect_group = QGroupBox("连接")
-        connect_layout = QVBoxLayout(connect_group)
-        connect_layout.setContentsMargins(10, 15, 10, 10)
-        connect_layout.setSpacing(8)
+        self.connect_group = QGroupBox("连接")
+        self.connect_group.setStyleSheet(self._get_compact_group_box_stylesheet())
+        connect_layout = QVBoxLayout(self.connect_group)
+        connect_layout.setContentsMargins(8, 8, 4, 4)
+        connect_layout.setSpacing(4)
 
         connect_frame = QFrame()
-        connect_frame.setFrameShape(QFrame.StyledPanel)
-        connect_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._apply_plain_toolbar_style(connect_frame)
         self._connect_frame = connect_frame
+        connect_frame.setFixedHeight(34)
         connect_frame_layout = QHBoxLayout(connect_frame)
-        connect_frame_layout.setContentsMargins(8, 8, 8, 8)
-        connect_frame_layout.setSpacing(10)
+        connect_frame_layout.setContentsMargins(2, 2, 2, 2)
+        connect_frame_layout.setSpacing(8)
 
         login_panel = QFrame()
         login_panel.setFrameShape(QFrame.NoFrame)
@@ -944,10 +945,11 @@ class DebugPage(BasePage):
         connect_frame_layout.addWidget(download_panel, 1)
         connect_layout.addWidget(connect_frame)
 
-        command_group = QGroupBox()
-        command_layout = QVBoxLayout(command_group)
-        command_layout.setContentsMargins(10, 15, 10, 10)
-        command_layout.setSpacing(8)
+        self.command_group = QGroupBox()
+        self.command_group.setStyleSheet(self._get_compact_group_box_stylesheet())
+        command_layout = QVBoxLayout(self.command_group)
+        command_layout.setContentsMargins(8, 6, 8, 8)
+        command_layout.setSpacing(4)
 
         command_header = QHBoxLayout()
         command_header.setContentsMargins(0, 0, 0, 0)
@@ -974,11 +976,11 @@ class DebugPage(BasePage):
         command_layout.addWidget(self.console_edit, 1)
 
         command_input_frame = QFrame()
-        command_input_frame.setFrameShape(QFrame.StyledPanel)
-        command_input_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._apply_plain_toolbar_style(command_input_frame)
         self._command_input_frame = command_input_frame
+        command_input_frame.setFixedHeight(34)
         command_input_layout = QHBoxLayout(command_input_frame)
-        command_input_layout.setContentsMargins(8, 8, 8, 8)
+        command_input_layout.setContentsMargins(2, 2, 2, 2)
         command_input_layout.setSpacing(8)
 
         self.show_timestamp_checkbox = QPushButton()
@@ -1039,8 +1041,8 @@ class DebugPage(BasePage):
         self._shortcut_frame = self.shortcut_frame
         self.shortcut_frame.setFixedHeight(self.SHORTCUT_EXPANDED_HEIGHT)
         shortcut_layout = QVBoxLayout(self.shortcut_frame)
-        shortcut_layout.setContentsMargins(8, 8, 8, 8)
-        shortcut_layout.setSpacing(6)
+        shortcut_layout.setContentsMargins(4, 4, 4, 4)
+        shortcut_layout.setSpacing(4)
 
         self.shortcut_scroll = QScrollArea()
         self.shortcut_scroll.setWidgetResizable(False)
@@ -1072,12 +1074,40 @@ class DebugPage(BasePage):
         shortcut_layout.addWidget(self.shortcut_scroll)
         command_layout.addWidget(self.shortcut_frame, 0)
 
-        page_layout.addWidget(connect_group, 0)
-        page_layout.addWidget(command_group, 1)
+        page_layout.addWidget(self.connect_group, 0)
+        page_layout.addWidget(self.command_group, 1)
 
         self.on_command_type_changed()
         self.update_send_button()
         self.update_connect_button()
+
+    def _apply_plain_toolbar_style(self, frame):
+        """工具条容器不显示外层边框。"""
+        frame.setFrameShape(QFrame.NoFrame)
+        frame.setFrameShadow(QFrame.Plain)
+        frame.setStyleSheet("QFrame { border: none; background: transparent; }")
+
+    @staticmethod
+    def _get_compact_group_box_stylesheet():
+        return f"""
+        QGroupBox {{
+            color: {t('text_primary')};
+            font-size: 12px;
+            font-weight: bold;
+            border: 1px solid {t('border')};
+            border-radius: 4px;
+            margin-top: 6px;
+            margin-bottom: 4px;
+            padding-top: 4px;
+            background-color: transparent;
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 10px;
+            padding: 0 5px;
+        }}
+        """
 
     def init_worker(self):
         self.worker_thread = QThread(self)
@@ -1921,9 +1951,15 @@ class DebugPage(BasePage):
                 pass
 
     def refresh_theme(self):
-        for attr in ("_connect_frame", "_command_input_frame", "_shortcut_frame"):
+        if hasattr(self, "connect_group"):
+            self.connect_group.setStyleSheet(self._get_compact_group_box_stylesheet())
+        if hasattr(self, "command_group"):
+            self.command_group.setStyleSheet(self._get_compact_group_box_stylesheet())
+        for attr in ("_connect_frame", "_command_input_frame"):
             if hasattr(self, attr):
-                getattr(self, attr).setStyleSheet(StyleManager.get_QUERY_FRAME())
+                self._apply_plain_toolbar_style(getattr(self, attr))
+        if hasattr(self, "_shortcut_frame"):
+            self._shortcut_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
 
         if hasattr(self, "console_edit"):
             self.console_edit.setStyleSheet(self._get_console_stylesheet())

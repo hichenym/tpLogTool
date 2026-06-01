@@ -935,13 +935,13 @@ class LogPage(BasePage):
     def init_ui(self):
         page_layout = QVBoxLayout(self)
         page_layout.setContentsMargins(5, 5, 5, 5)
-        page_layout.setSpacing(8)
+        page_layout.setSpacing(4)
 
         self.query_group = QGroupBox("命令执行")
         self.query_group.setStyleSheet(self._get_compact_group_box_stylesheet())
         query_layout = QVBoxLayout(self.query_group)
-        query_layout.setContentsMargins(10, 4, 10, 10)
-        query_layout.setSpacing(8)
+        query_layout.setContentsMargins(8, 4, 8, 4)
+        query_layout.setSpacing(2)
 
         input_row_frame = QFrame()
         input_row_frame.setFrameShape(QFrame.NoFrame)
@@ -996,15 +996,18 @@ class LogPage(BasePage):
         query_layout.addWidget(input_row_frame)
 
         self.bottom_frame = QFrame()
-        self.bottom_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._apply_plain_toolbar_style(self.bottom_frame)
+        self.bottom_frame.setFixedHeight(32)
         bottom_layout = QHBoxLayout(self.bottom_frame)
-        bottom_layout.setContentsMargins(8, 8, 8, 8)
-        bottom_layout.setSpacing(8)
+        bottom_layout.setContentsMargins(2, 2, 2, 2)
+        bottom_layout.setSpacing(6)
 
         download_label = QLabel("保存位置:")
         download_label.setFixedWidth(64)
+        download_label.setFixedHeight(28)
+        download_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.download_path_label = PathDisplayLabel()
-        self.download_path_label.setMinimumHeight(28)
+        self.download_path_label.setFixedHeight(28)
         self.download_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.download_path_label.double_clicked.connect(self.open_download_directory)
         self.download_path_label.setStyleSheet(self._get_download_path_label_stylesheet())
@@ -1028,14 +1031,14 @@ class LogPage(BasePage):
         bottom_layout.addWidget(download_label)
         bottom_layout.addWidget(self.download_path_label, 1)
         bottom_layout.addWidget(self.choose_download_path_btn)
-        bottom_layout.addSpacing(8)
+        bottom_layout.addSpacing(6)
         bottom_layout.addWidget(self.fetch_btn)
         query_layout.addWidget(self.bottom_frame)
 
         self.result_group = QGroupBox("执行结果")
-        self.result_group.setStyleSheet(StyleManager.get_GROUP_BOX())
+        self.result_group.setStyleSheet(self._get_compact_group_box_stylesheet())
         result_layout = QVBoxLayout(self.result_group)
-        result_layout.setContentsMargins(10, 4, 10, 10)
+        result_layout.setContentsMargins(8, 2, 8, 8)
         result_layout.setSpacing(0)
 
         self.summary_label = QLabel("等待开始")
@@ -1565,17 +1568,23 @@ class LogPage(BasePage):
         finally:
             self._resizing_columns = False
 
+    def _apply_plain_toolbar_style(self, frame):
+        """工具条容器不显示外层边框。"""
+        frame.setFrameShape(QFrame.NoFrame)
+        frame.setFrameShadow(QFrame.Plain)
+        frame.setStyleSheet("QFrame { border: none; background: transparent; }")
+
     def refresh_theme(self):
         if hasattr(self, "query_group"):
             self.query_group.setStyleSheet(self._get_compact_group_box_stylesheet())
         if hasattr(self, "result_group"):
-            self.result_group.setStyleSheet(StyleManager.get_GROUP_BOX())
+            self.result_group.setStyleSheet(self._get_compact_group_box_stylesheet())
         if hasattr(self, "sn_panel"):
             self.sn_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
         if hasattr(self, "command_panel"):
             self.command_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
         if hasattr(self, "bottom_frame"):
-            self.bottom_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+            self._apply_plain_toolbar_style(self.bottom_frame)
         if hasattr(self, "sn_input"):
             self.sn_input.setStyleSheet(self._get_text_edit_stylesheet())
         if hasattr(self, "command_input"):

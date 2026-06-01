@@ -5,9 +5,9 @@
 import os
 from datetime import datetime
 from PyQt5.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
+    QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QCheckBox, QSplitter, QFrame,
-    QFileDialog, QMessageBox, QWidget, QComboBox
+    QFileDialog, QMessageBox, QWidget, QComboBox, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
 from PyQt5.QtGui import QIcon, QColor
@@ -83,6 +83,10 @@ class DeviceStatusPage(BasePage):
         # 列宽管理
         self.column_width_ratios = {}
         self.resize_timer = None
+        self._splitter_ratio_initialized = False
+        self._splitter_ratio_pending = False
+        self._splitter_user_resized = False
+        self._applying_splitter_ratio = False
         
         # 缓存的 DeviceQuery 对象
         self._device_query = None
@@ -115,6 +119,8 @@ class DeviceStatusPage(BasePage):
         splitter = QSplitter(Qt.Vertical)
         self._splitter = splitter  # 保存引用供主题刷新使用
         StyleManager.apply_to_widget(splitter, "SPLITTER")
+        splitter.setChildrenCollapsible(True)
+        splitter.splitterMoved.connect(self.on_splitter_moved)
         
         # 设置分割线样式：增加上下边距，使用柔和的颜色提示可拖动
         splitter.setHandleWidth(1)
@@ -136,11 +142,17 @@ class DeviceStatusPage(BasePage):
         
         # 底部结果与导出区
         bottom_widget = self.create_result_group()
+        top_widget.setMinimumHeight(0)
+        bottom_widget.setMinimumHeight(0)
+        top_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        bottom_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         splitter.addWidget(top_widget)
         splitter.addWidget(bottom_widget)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 5)
+        splitter.setCollapsible(0, True)
+        splitter.setCollapsible(1, True)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 6)
         
         page_layout.addWidget(splitter)
     
@@ -150,18 +162,17 @@ class DeviceStatusPage(BasePage):
         
         group = QGroupBox("查询")
         group_layout = QVBoxLayout(group)
-        group_layout.setContentsMargins(10, 15, 10, 10)
-        group_layout.setSpacing(8)
+        group_layout.setContentsMargins(8, 8, 8, 6)
+        group_layout.setSpacing(4)
         
         # ===== 账号查询区（带边框） =====
         account_frame = QFrame()
-        account_frame.setFrameShape(QFrame.StyledPanel)
-        account_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._apply_plain_result_toolbar_style(account_frame)
         self._account_frame = account_frame
-        account_frame.setFixedHeight(44)  # 设置固定高度，与其他区域保持一致
+        account_frame.setFixedHeight(34)
         account_frame_layout = QHBoxLayout(account_frame)
-        account_frame_layout.setContentsMargins(8, 8, 8, 8)
-        account_frame_layout.setSpacing(10)
+        account_frame_layout.setContentsMargins(2, 2, 2, 2)
+        account_frame_layout.setSpacing(6)
         
         self.account_type_combo = NoWheelComboBox()
         for label, value in self.ACCOUNT_QUERY_TYPES:
@@ -190,42 +201,36 @@ class DeviceStatusPage(BasePage):
         group_layout.addWidget(account_frame)
         self.on_account_query_type_changed()
         
-        # 标签行
-        label_layout = QHBoxLayout()
-        sn_label = QLabel("输入SN（每行一个）")
-        id_label = QLabel("输入ID（每行一个）")
-        label_layout.addWidget(sn_label, 1)
-        label_layout.addSpacing(1)  # 分割线宽度
-        label_layout.addWidget(id_label, 1)
-        label_layout.addSpacing(88)
-        group_layout.addLayout(label_layout)
-        
         # 输入框和按钮行
         input_layout = QHBoxLayout()
         
         # SN输入框
         self.sn_input = PlainTextEdit()
-        self.sn_input.setMinimumHeight(80)
+        self.sn_input.setMinimumHeight(48)
         self.sn_input.setPlaceholderText("")
         self.sn_input.selectionChanged.connect(self.on_text_selection_changed)
         self.sn_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+        self.sn_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         # ID输入框
         self.id_input = PlainTextEdit()
-        self.id_input.setMinimumHeight(80)
+        self.id_input.setMinimumHeight(48)
         self.id_input.setPlaceholderText("")
         self.id_input.selectionChanged.connect(self.on_text_selection_changed)
         self.id_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+        self.id_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # 按钮
         btn_widget = QWidget()
-        btn_layout = QVBoxLayout(btn_widget)
+        btn_layout = QGridLayout(btn_widget)
         btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setHorizontalSpacing(6)
+        btn_layout.setVerticalSpacing(4)
         
         # 线程数控件行
         thread_layout = QHBoxLayout()
         thread_layout.setContentsMargins(0, 0, 0, 0)
-        thread_layout.setSpacing(5)
+        thread_layout.setSpacing(4)
         thread_label = QLabel("线程:")
         self.thread_count_combo = NoWheelComboBox()
         # 填充 10-70，间隔 10
@@ -233,6 +238,7 @@ class DeviceStatusPage(BasePage):
             self.thread_count_combo.addItem(str(i))
         self.thread_count_combo.setCurrentText("40")
         self.thread_count_combo.setFixedWidth(50)
+        self.thread_count_combo.setFixedHeight(28)
         self.thread_count_combo.currentTextChanged.connect(self.on_thread_count_changed)
         thread_layout.addWidget(thread_label)
         thread_layout.addWidget(self.thread_count_combo)
@@ -249,13 +255,29 @@ class DeviceStatusPage(BasePage):
         self.clear_btn.setFixedSize(90, 28)  # 统一按钮宽度为90px
         self.clear_btn.clicked.connect(self.on_clear)
         
-        btn_layout.addStretch()
-        btn_layout.addLayout(thread_layout)
-        btn_layout.addSpacing(8)
-        btn_layout.addWidget(self.query_btn, 0, Qt.AlignRight)
-        btn_layout.addSpacing(8)
-        btn_layout.addWidget(self.clear_btn, 0, Qt.AlignRight)
-        btn_layout.addStretch()
+        btn_layout.addLayout(thread_layout, 0, 0, 1, 2)
+        btn_layout.addWidget(self.query_btn, 0, 2, 1, 1, Qt.AlignRight)
+        btn_layout.addWidget(self.clear_btn, 1, 2, 1, 1, Qt.AlignRight)
+        btn_layout.setColumnStretch(0, 0)
+        btn_layout.setColumnStretch(1, 0)
+        btn_layout.setColumnStretch(2, 1)
+        btn_layout.setRowStretch(0, 0)
+        btn_layout.setRowStretch(1, 0)
+
+        # 标签行与下方输入区保持相同的列结构，避免 ID 文案偏移
+        label_layout = QHBoxLayout()
+        label_layout.setContentsMargins(0, 0, 0, 0)
+        label_layout.setSpacing(0)
+        sn_label = QLabel("输入SN（每行一个）")
+        id_label = QLabel("输入ID（每行一个）")
+        sn_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        id_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        label_layout.addWidget(sn_label, 1)
+        label_layout.addSpacing(1)
+        label_layout.addWidget(id_label, 1)
+        label_layout.addSpacing(1)
+        label_layout.addSpacing(btn_widget.sizeHint().width())
+        group_layout.addLayout(label_layout)
         
         input_layout.addWidget(self.sn_input, 1)
         
@@ -290,18 +312,17 @@ class DeviceStatusPage(BasePage):
         
         group = QGroupBox("结果")
         group_layout = QVBoxLayout(group)
-        group_layout.setContentsMargins(10, 15, 10, 10)
-        group_layout.setSpacing(8)
+        group_layout.setContentsMargins(8, 10, 8, 8)
+        group_layout.setSpacing(4)
         
         # ===== 筛选条件区 =====
         filter_frame = QFrame()
-        filter_frame.setFrameShape(QFrame.StyledPanel)
-        filter_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._apply_plain_result_toolbar_style(filter_frame)
         self._filter_frame = filter_frame
-        filter_frame.setFixedHeight(44)  # 设置固定高度，与其他区域保持一致
+        filter_frame.setFixedHeight(34)
         filter_layout = QHBoxLayout(filter_frame)  # 改为水平布局，单行显示
-        filter_layout.setContentsMargins(8, 8, 8, 8)
-        filter_layout.setSpacing(10)
+        filter_layout.setContentsMargins(2, 2, 2, 2)
+        filter_layout.setSpacing(8)
         
         # SN筛选
         sn_filter_label = QLabel("SN:")
@@ -356,13 +377,12 @@ class DeviceStatusPage(BasePage):
         
         # ===== 批量操作区 =====
         batch_frame = QFrame()
-        batch_frame.setFrameShape(QFrame.StyledPanel)
-        batch_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._apply_plain_result_toolbar_style(batch_frame)
         self._batch_frame = batch_frame
-        batch_frame.setFixedHeight(44)  # 设置固定高度，与其他区域保持一致
+        batch_frame.setFixedHeight(34)
         batch_layout = QHBoxLayout(batch_frame)
-        batch_layout.setContentsMargins(8, 8, 8, 8)
-        batch_layout.setSpacing(10)
+        batch_layout.setContentsMargins(2, 2, 2, 2)
+        batch_layout.setSpacing(8)
         
         self.select_all_checkbox = QCheckBox("全选")
         self.select_all_checkbox.stateChanged.connect(self.on_select_all)
@@ -469,19 +489,18 @@ class DeviceStatusPage(BasePage):
         # 连接单击事件
         self.result_table.cellClicked.connect(self.on_cell_clicked)
         
-        self.result_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.result_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.result_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         group_layout.addWidget(self.result_table)
         
         # ===== 导出区域（带边框） =====
         export_frame = QFrame()
-        export_frame.setFrameShape(QFrame.StyledPanel)
-        export_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        self._apply_plain_result_toolbar_style(export_frame)
         self._export_frame = export_frame
-        export_frame.setFixedHeight(44)  # 设置固定高度，与其他区域保持一致
+        export_frame.setFixedHeight(38)
         export_layout = QHBoxLayout(export_frame)
-        export_layout.setContentsMargins(8, 8, 8, 8)
-        export_layout.setSpacing(10)
+        export_layout.setContentsMargins(4, 4, 4, 4)
+        export_layout.setSpacing(8)
         
         export_label = QLabel("保存位置:")
         export_label.setFixedWidth(60)
@@ -530,16 +549,58 @@ class DeviceStatusPage(BasePage):
         # 使用 setData 设置前景色，这样选中时颜色不会改变
         item.setData(Qt.ForegroundRole, QColor(color) if isinstance(color, str) else color)
         return item
+
+    def _apply_plain_result_toolbar_style(self, frame):
+        """结果区顶部工具行不显示外层边框，尽量给表格留更多空间。"""
+        frame.setFrameShape(QFrame.NoFrame)
+        frame.setFrameShadow(QFrame.Plain)
+        frame.setStyleSheet("QFrame { border: none; background: transparent; }")
     
     def on_page_show(self):
         """页面显示时"""
+        self.schedule_initial_splitter_ratio()
         self.show_info("设备页面")
         # 调整表格列宽以适应当前窗口
         self.adjust_table_columns()
+
+    def schedule_initial_splitter_ratio(self):
+        """在页面真实完成布局后应用首屏上下分区比例。"""
+        if self._splitter_user_resized or self._splitter_ratio_pending:
+            return
+        self._splitter_ratio_pending = True
+        QTimer.singleShot(0, self.apply_initial_splitter_ratio)
+
+    def apply_initial_splitter_ratio(self):
+        """首屏显示时设置上下区域初始比例，后续保留用户拖拽结果。"""
+        self._splitter_ratio_pending = False
+        if self._splitter_user_resized or not hasattr(self, '_splitter'):
+            return
+
+        splitter_height = self._splitter.height()
+        if splitter_height <= 0 or not self.isVisible():
+            self.schedule_initial_splitter_ratio()
+            return
+
+        top_height = max(1, splitter_height * 2 // 8)
+        bottom_height = max(1, splitter_height - top_height)
+        self._applying_splitter_ratio = True
+        try:
+            self._splitter.setSizes([top_height, bottom_height])
+        finally:
+            self._applying_splitter_ratio = False
+        self._splitter_ratio_initialized = True
+
+    def on_splitter_moved(self, pos, index):
+        """记录用户已经手动调整过分割比例，避免后续被自动重置。"""
+        if self._applying_splitter_ratio:
+            return
+        self._splitter_user_resized = True
     
     def resizeEvent(self, event):
         """窗口大小改变事件"""
         super().resizeEvent(event)
+        if not self._splitter_ratio_initialized and not self._splitter_user_resized:
+            self.schedule_initial_splitter_ratio()
         self.adjust_table_columns()
     
     def on_column_resized(self, logicalIndex):
@@ -560,8 +621,8 @@ class DeviceStatusPage(BasePage):
     
     def _do_column_resize(self, logicalIndex):
         """实际执行列宽调整"""
-        # 获取表格可用宽度（减去固定列）
-        table_width = self.result_table.width()
+        # 获取表格内容区可用宽度，避免把边框/表头宽度误算进列宽
+        table_width = self.result_table.viewport().width()
         fixed_width = 50  # 选择列
         available_width = table_width - fixed_width
         
@@ -592,8 +653,8 @@ class DeviceStatusPage(BasePage):
     
     def adjust_table_columns(self):
         """根据窗口宽度调整表格列宽，保持表格宽度与窗口一致"""
-        # 获取表格可用宽度（减去固定列）
-        table_width = self.result_table.width()
+        # 获取表格内容区可用宽度，避免横向滚动条因宽度误差出现
+        table_width = self.result_table.viewport().width()
         fixed_width = 50  # 选择列
         available_width = table_width - fixed_width
         
@@ -2121,10 +2182,10 @@ class DeviceStatusPage(BasePage):
         StyleManager.apply_to_widget(self.result_table, "TABLE")
         if hasattr(self, '_splitter'):
             StyleManager.apply_to_widget(self._splitter, "SPLITTER")
-        # 刷新各 Frame 边框
+        # 刷新各 Frame 样式
         for attr in ('_account_frame', '_filter_frame', '_batch_frame', '_export_frame'):
             if hasattr(self, attr):
-                getattr(self, attr).setStyleSheet(StyleManager.get_QUERY_FRAME())
+                self._apply_plain_result_toolbar_style(getattr(self, attr))
         # 刷新输入框
         if hasattr(self, 'sn_input'):
             self.sn_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
