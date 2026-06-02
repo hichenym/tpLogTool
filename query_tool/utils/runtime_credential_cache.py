@@ -3,11 +3,13 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import asdict
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from query_tool.utils.config import config_manager
 from query_tool.utils.device_query import DeviceQuery
-from query_tool.utils.siot_debug.models import CloudCredentials
+
+if TYPE_CHECKING:
+    from query_tool.utils.siot_debug.models import CloudCredentials
 
 
 DEVICE_QUERY_TTL_S = 90 * 60
@@ -60,7 +62,7 @@ def load_cached_cloud_credentials(
     password: str,
     *,
     ttl_seconds: float = SEETONG_CLOUD_CACHE_TTL_S,
-) -> Optional[CloudCredentials]:
+) -> Optional["CloudCredentials"]:
     """优先从进程内，其次从注册表加载 Seetong 云凭证缓存。"""
     key = _cloud_key(username, password)
     now = time.time()
@@ -75,6 +77,8 @@ def load_cached_cloud_credentials(
         return None
 
     try:
+        from query_tool.utils.siot_debug.models import CloudCredentials
+
         credentials = CloudCredentials(**payload)
     except Exception as exc:
         config_manager.clear_seetong_cloud_cache(username, password)
@@ -88,7 +92,7 @@ def load_cached_cloud_credentials(
     return credentials
 
 
-def save_cached_cloud_credentials(username: str, password: str, credentials: CloudCredentials) -> None:
+def save_cached_cloud_credentials(username: str, password: str, credentials: "CloudCredentials") -> None:
     """保存 Seetong 云凭证到进程内和注册表。"""
     key = _cloud_key(username, password)
     now = time.time()

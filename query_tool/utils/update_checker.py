@@ -21,6 +21,18 @@ def _flag_is_true(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() == "true"
 
 
+def _normalize_update_strategy(value: Any, default: str = "prompt") -> str:
+    """Normalize update strategy and fallback to auto for invalid values."""
+    if value is None:
+        return default
+
+    normalized = str(value).strip().lower()
+    valid_values = {"manual", "prompt", "silent", "auto"}
+    if normalized in valid_values:
+        return normalized
+    return "auto"
+
+
 class VersionInfo:
     """版本信息"""
     
@@ -35,7 +47,10 @@ class VersionInfo:
         self.checksum_url = data.get('checksum_url', '')
         self.release_notes_url = data.get('release_notes_url', '')
         self.min_version = data.get('min_version')
-        self.update_strategy = data.get('update_strategy', 'prompt')
+        self.update_strategy = _normalize_update_strategy(
+            data.get('update_strategy'),
+            default='prompt',
+        )
         self.show_change = _flag_is_true(data.get('show_change'), default=True)
         # 兼容远程返回的 changelog 可能为字符串或列表。
         # 需要保证 self.changelog 为字符串列表，UI 侧按条目展示。
@@ -387,8 +402,8 @@ class UpdateChecker:
         
         if strategy == 'manual':
             return False  # 手动更新，不自动检查
-        elif strategy in ['prompt', 'silent']:
-            return True   # 提示或静默更新，自动检查
+        elif strategy in ['prompt', 'silent', 'auto']:
+            return True   # 提示、静默下载、自动更新，自动检查
         else:
             return True   # 默认自动检查
     

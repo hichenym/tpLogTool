@@ -229,51 +229,54 @@ jobs:
           # 生成 version.json（包含文件哈希）
           # update_strategy: manual(手动), prompt(提示), silent(静默)
           
-          # 读取现有 version.json 中需要保留的配置
-          $analyticsJson = '{}'
-          $showChangeJson = 'true'
+          # 读取现有 version.json，保留未被发布流程覆盖的字段
+          $existing = @{}
           if (Test-Path "version.json") {
-              $existing = Get-Content "version.json" -Raw -Encoding UTF8 | ConvertFrom-Json
-              if ($existing.PSObject.Properties.Name -contains 'show_change') {
-                  $showChangeValue = $existing.show_change
-                  if ($showChangeValue -is [bool]) {
-                      $showChangeJson = ($showChangeValue | ConvertTo-Json -Compress)
-                  }
-                  elseif ($showChangeValue -is [string]) {
-                      $normalizedShowChange = $showChangeValue.Trim().ToLowerInvariant()
-                      if ($normalizedShowChange -eq 'false') {
-                          $showChangeJson = 'false'
-                      }
-                      elseif ($normalizedShowChange -eq 'true') {
-                          $showChangeJson = 'true'
-                      }
+              try {
+                  $loaded = Get-Content "version.json" -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable
+                  if ($loaded -is [System.Collections.IDictionary]) {
+                      $existing = $loaded
                   }
               }
-              if ($existing.analytics) {
-                  $analyticsJson = $existing.analytics | ConvertTo-Json -Compress
+              catch {
+                  Write-Warning "读取现有 version.json 失败，将使用默认配置重新生成: $_"
               }
           }
-          
-          $versionJson = @"
-          {
-            "version": "$version",
-            "build_date": "$buildDate",
-            "download_url": "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe",
-            "file_size_mb": $fileSize,
-            "file_size_bytes": $fileSizeBytes,
-            "file_hash": "$sha256",
-            "hash_algorithm": "sha256",
-            "checksum_url": "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256",
-            "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
-            "min_version": "3.0.0",
-            "update_strategy": "silent",
-            "show_change": $showChangeJson,
-            "changelog": $changelogJson,
-            "analytics": $analyticsJson
+
+          $showChangeValue = $true
+          if ($existing.Contains('show_change')) {
+              $showChangeValue = $existing['show_change']
           }
-          "@
-          
-          $versionJson | Set-Content "version.json" -Encoding UTF8
+
+          $analyticsValue = @{}
+          if ($existing.Contains('analytics') -and $null -ne $existing['analytics']) {
+              $analyticsValue = $existing['analytics']
+          }
+
+          $versionInfo = [ordered]@{
+            version = $version
+            build_date = $buildDate
+            download_url = "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe"
+            file_size_mb = $fileSize
+            file_size_bytes = $fileSizeBytes
+            file_hash = $sha256
+            hash_algorithm = "sha256"
+            checksum_url = "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256"
+            release_notes_url = "https://github.com/$repo/releases/tag/$tag"
+            min_version = "3.0.0"
+            update_strategy = "silent"
+            show_change = $showChangeValue
+            changelog = $changelogItems
+            analytics = $analyticsValue
+          }
+
+          foreach ($entry in $existing.GetEnumerator()) {
+              if (-not $versionInfo.Contains($entry.Key)) {
+                  $versionInfo[$entry.Key] = $entry.Value
+              }
+          }
+
+          $versionInfo | ConvertTo-Json -Depth 10 | Set-Content "version.json" -Encoding UTF8
           
           Write-Host "Generated version.json:"
           Get-Content "version.json"

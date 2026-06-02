@@ -134,7 +134,7 @@ class UpdateManager(QObject):
         获取更新策略
         
         Returns:
-            str: manual, prompt, 或 silent
+            str: manual, prompt, silent, 或 auto
         """
         if self.latest_version_info:
             return self.latest_version_info.update_strategy

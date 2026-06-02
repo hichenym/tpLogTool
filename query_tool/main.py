@@ -49,6 +49,10 @@ requests.packages.urllib3.disable_warnings()
 
 # 调试开关：改为 True 后，程序启动时会强制弹出“更新完成重启”弹窗
 FORCE_SHOW_UPDATE_COMPLETE_DIALOG = False
+# 调试开关：改为 True 后，在设置页“版本信息”区域强制显示“检查更新”按钮
+FORCE_SHOW_CHECK_UPDATE_BUTTON = False
+# 调试开关：改为 True 后，程序启动时会强制弹出“发现新版本”弹窗
+FORCE_SHOW_UPDATE_PROMPT_DIALOG = False
 
 
 def set_title_bar_theme(window, dark: bool = True):
@@ -92,6 +96,7 @@ class MainWindow(QMainWindow):
         self.pending_update_file = None  # 待安装的更新文件
         self._update_shutdown_requested = False  # 是否正在为更新快速退出
         self._force_close = False  # 是否允许真正退出
+        self.debug_force_show_check_update_button = FORCE_SHOW_CHECK_UPDATE_BUTTON
         self._tray_icon = None
         self._tray_message_shown = False
         self._task_button_movie = None
@@ -122,6 +127,7 @@ class MainWindow(QMainWindow):
         self._task_indicator_timer.timeout.connect(self.refresh_running_task_indicator)
         self._task_indicator_timer.start(2000)
         QTimer.singleShot(0, self.refresh_running_task_indicator)
+        QTimer.singleShot(600, self._show_debug_update_prompt_dialog_if_needed)
         QTimer.singleShot(800, self._show_debug_update_complete_dialog_if_needed)
 
     def _get_available_geometry(self):
@@ -887,16 +893,16 @@ class MainWindow(QMainWindow):
                 self.pending_update_file = str(latest_file)
 
                 strategy = recovered_info.update_strategy
-                if strategy == 'silent':
+                if strategy == 'auto':
                     from query_tool.utils.update_downloader import UpdateInstaller
                     if UpdateInstaller.can_apply_update():
-                        logger.info("静默模式，直接安装已下载的文件")
+                        logger.info("静默下载并自动重启模式，直接安装已下载的文件")
                         self._start_external_update_install(str(latest_file), restart=True)
                         return
                     logger.warning("当前运行方式不支持自动安装已下载更新，跳过启动时自动应用")
-                elif strategy == 'prompt':
-                    logger.info("提示模式，弹窗询问用户是否立即重启")
-                    self._show_update_ready_dialog(str(latest_file))
+                elif strategy in ('prompt', 'silent', 'manual'):
+                    logger.info("检测到已下载更新包，显示强制重启弹窗")
+                    self._show_update_complete_dialog_with_focus()
                     return
 
             # 检查是否应该自动检查更新
@@ -931,7 +937,7 @@ class MainWindow(QMainWindow):
             # 提示更新：显示对话框
             self.show_update_prompt_dialog(version_info, current_version)
         
-        elif strategy == 'silent':
+        elif strategy in ('silent', 'auto'):
             # 静默更新：后台下载，不显示任何提示
             logger.info("静默更新模式，开始后台下载...")
             self.start_download_update(version_info)
@@ -970,7 +976,7 @@ class MainWindow(QMainWindow):
         strategy = self.update_manager.get_update_strategy()
         logger.info(f"更新策略: {strategy}")
         
-        if strategy == 'silent':
+        if strategy in ('silent', 'auto'):
             # 静默模式：只显示绿色呼吸闪烁提示
             logger.info("静默更新模式，显示呼吸闪烁提示")
             logger.info(f"breathing_label 存在: {hasattr(self, 'breathing_label')}")
@@ -1020,36 +1026,12 @@ class MainWindow(QMainWindow):
             
             strategy = self.update_manager.get_update_strategy()
             
-            if strategy in ('manual', 'prompt'):
-                # 手动/提示模式：停止呼吸闪烁，隐藏呼吸标签
-                self.breathing_label.stop()
-                self.breathing_label.setVisible(False)
-                
-                # 显示下载完成消息，然后弹出重启对话框
-                self.show_success("更新下载完成", 2000)
-                
-                from query_tool.utils.update_downloader import UpdateInstaller
-                if not UpdateInstaller.can_apply_update():
-                    from PyQt5.QtWidgets import QMessageBox
-                    QMessageBox.information(
-                        self,
-                        "更新已下载",
-                        "更新已下载完成。\n\n"
-                        "当前运行方式不支持自动覆盖安装。\n"
-                        "已保留安装包，可手动替换或使用发布版程序完成更新。"
-                    )
-                    return
-                
-                # 延迟显示重启对话框，让用户看到成功消息
-                QTimer.singleShot(500, self._show_update_complete_dialog_with_focus)
-            
-            elif strategy == 'silent':
-                # 静默模式：下载完成后主动提醒用户重启升级
+            if strategy == 'auto':
+                # 静默下载并自动重启模式：下载完成后立即应用更新
                 self.breathing_label.stop()
                 self.breathing_label.set_color("#4a9eff", breathing=False)
                 self.pending_update_file = result
-                logger.info("静默更新已下载完成，准备提示用户重启安装")
-                self.show_success("更新下载完成，请重启程序完成升级", 4000)
+                logger.info("静默下载已完成，准备自动重启安装")
 
                 from query_tool.utils.update_downloader import UpdateInstaller
                 if not UpdateInstaller.can_apply_update():
@@ -1064,7 +1046,27 @@ class MainWindow(QMainWindow):
                     )
                     return
 
-                QTimer.singleShot(300, self._show_update_complete_dialog_with_focus)
+                QTimer.singleShot(300, self.apply_update_and_restart)
+            elif strategy in ('manual', 'prompt', 'silent'):
+                # 其余模式：下载完成后统一弹出强制重启对话框
+                self.breathing_label.stop()
+                self.breathing_label.setVisible(False)
+
+                self.show_success("更新下载完成", 2000)
+
+                from query_tool.utils.update_downloader import UpdateInstaller
+                if not UpdateInstaller.can_apply_update():
+                    from PyQt5.QtWidgets import QMessageBox
+                    QMessageBox.information(
+                        self,
+                        "更新已下载",
+                        "更新已下载完成。\n\n"
+                        "当前运行方式不支持自动覆盖安装。\n"
+                        "已保留安装包，可手动替换或使用发布版程序完成更新。"
+                    )
+                    return
+
+                QTimer.singleShot(500, self._show_update_complete_dialog_with_focus)
         
         else:
             logger.error(f"下载失败: {result}")
@@ -1076,8 +1078,8 @@ class MainWindow(QMainWindow):
             
             strategy = self.update_manager.get_update_strategy()
             
-            # 只在非 silent 模式下显示错误提示
-            if strategy != 'silent':
+            # 只在非静默自动下载模式下显示错误提示
+            if strategy not in ('silent', 'auto'):
                 self.show_error(f"下载更新失败: {result}", 5000)
     
     def show_update_complete_dialog(self, version_info=None):
@@ -1123,6 +1125,21 @@ class MainWindow(QMainWindow):
             return
         self._bring_window_to_front()
         self.show_update_complete_dialog(version_info=version_info)
+
+    def _show_debug_update_prompt_dialog_if_needed(self):
+        """当代码中的调试开关打开时，启动后直接展示更新检测弹窗。"""
+        if not FORCE_SHOW_UPDATE_PROMPT_DIALOG:
+            return
+
+        version_info = self._load_local_version_info_for_debug()
+        if not version_info:
+            return
+
+        from query_tool.version import get_short_version
+
+        current_version = get_short_version().replace('V', '')
+        self._bring_window_to_front()
+        self.show_update_prompt_dialog(version_info, current_version)
     
     def _on_restart_later(self):
         """用户选择稍后重启"""

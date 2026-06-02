@@ -544,9 +544,13 @@ class SettingsDialog(AdaptiveDialog):
             update_strategy_str = cached_info.update_strategy
         else:
             update_strategy_str = 'prompt'  # 默认策略
-        
-        # 只有当更新策略不是 'silent' 时才显示更新检测组
-        if update_strategy_str != 'silent':
+
+        force_show_check_update_btn = bool(
+            getattr(self.main_window, 'debug_force_show_check_update_button', False)
+        )
+
+        # 只有当更新策略不是静默自动下载类时才显示更新检测组
+        if force_show_check_update_btn or update_strategy_str not in ('silent', 'auto'):
             # 更新检测组
             update_group = QGroupBox("更新检测")
             update_group.setStyleSheet(StyleManager.get_GROUP_BOX())
@@ -563,7 +567,7 @@ class SettingsDialog(AdaptiveDialog):
 
             tab_layout.addWidget(update_group)
         else:
-            # 静默更新模式，不显示检查更新按钮
+            # 静默自动下载模式，不显示检查更新按钮
             self.check_update_btn_widget = None
 
         tab_layout.addStretch()

@@ -60,8 +60,24 @@ class UpdatePromptDialog(AdaptiveDialog):
         
         self.version_info = version_info
         self.current_version = current_version
+        self._change_lines = [str(item).strip() for item in self.version_info.changelog if str(item).strip()]
+        self._show_change_content = bool(self._change_lines)
+        self._icon_movie = None
+        preferred_height = 360 if self._show_change_content else 300
+        self._dialog_size = _compute_fixed_dialog_size(
+            parent,
+            QSize(560, preferred_height),
+            QSize(460, 300),
+            0.78,
+            0.82,
+        )
         
         self.setWindowTitle("发现新版本")
+        self.setWindowIcon(QIcon(":/icons/app/logo.png"))
+        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.MSWindowsFixedSizeDialogHint)
+        self.setWindowModality(Qt.ApplicationModal)
+        self.winId()
+        set_dark_title_bar(self)
         self._init_ui()
     
     def showEvent(self, event):
@@ -71,71 +87,120 @@ class UpdatePromptDialog(AdaptiveDialog):
     
     def _init_ui(self):
         """初始化UI"""
-        layout = self.init_dialog_layout(
-            (500, 400),
-            min_size=(380, 320),
-            layout_margins=(20, 20, 20, 20),
-            spacing=15,
-            max_width_ratio=0.78,
-            max_height_ratio=0.82,
-        )
-        
-        # 标题
-        title_label = QLabel(f"🎉 发现新版本 V{self.version_info.version}")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        panel_frame = QFrame()
+        panel_frame.setObjectName("panelFrame")
+        panel_layout = QVBoxLayout(panel_frame)
+        panel_layout.setContentsMargins(18, 16, 18, 14)
+        panel_layout.setSpacing(12)
+
+        hero_row = QHBoxLayout()
+        hero_row.setContentsMargins(0, 0, 0, 0)
+        hero_row.setSpacing(12)
+
+        self.icon_label = QLabel()
+        self.icon_label.setObjectName("heroIcon")
+        self.icon_label.setFixedSize(56, 56)
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        hero_row.addWidget(self.icon_label, 0, Qt.AlignTop)
+
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(4)
+
+        title_label = QLabel(f"发现新版本 V{self.version_info.version}")
         title_font = QFont()
-        title_font.setPointSize(14)
+        title_font.setPointSize(15)
         title_font.setBold(True)
         title_label.setFont(title_font)
-        layout.addWidget(title_label)
-        
-        # 版本信息
-        info_widget = QWidget()
-        info_layout = QVBoxLayout(info_widget)
-        info_layout.setSpacing(8)
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        
+        title_label.setObjectName("titleLabel")
+        text_layout.addWidget(title_label)
+
+        subtitle_label = QLabel(self._build_subtitle_text())
+        subtitle_label.setWordWrap(True)
+        subtitle_label.setObjectName("subtitleLabel")
+        text_layout.addWidget(subtitle_label)
+        hero_row.addLayout(text_layout, 1)
+        panel_layout.addLayout(hero_row)
+
+        info_frame = QFrame()
+        info_frame.setObjectName("metaFrame")
+        info_layout = QVBoxLayout(info_frame)
+        info_layout.setContentsMargins(12, 10, 12, 10)
+        info_layout.setSpacing(6)
         info_layout.addWidget(QLabel(f"当前版本：V{self.current_version}"))
         info_layout.addWidget(QLabel(f"最新版本：V{self.version_info.version}"))
         info_layout.addWidget(QLabel(f"编译日期：{self._format_date(self.version_info.build_date)}"))
         info_layout.addWidget(QLabel(f"文件大小：{self.version_info.file_size_mb} MB"))
-        
-        layout.addWidget(info_widget)
-        
-        # 更新内容
-        changelog_label = QLabel("更新内容：")
-        changelog_label.setFont(QFont("", 10, QFont.Bold))
-        layout.addWidget(changelog_label)
-        
-        changelog_text = QTextEdit()
-        changelog_text.setReadOnly(True)
-        changelog_text.setMaximumHeight(150)
-        
-        # 填充更新日志
-        changelog_content = "\n".join([f"• {item}" for item in self.version_info.changelog[:10]])
-        changelog_text.setPlainText(changelog_content)
-        
-        layout.addWidget(changelog_text)
-        
-        # 按钮
+        panel_layout.addWidget(info_frame)
+
+        if self._show_change_content:
+            divider = QFrame()
+            divider.setObjectName("divider")
+            divider.setFixedHeight(1)
+            panel_layout.addWidget(divider)
+
+            change_scroll = QScrollArea()
+            change_scroll.setObjectName("changeScroll")
+            change_scroll.setWidgetResizable(True)
+            change_scroll.setFrameShape(QFrame.NoFrame)
+            change_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            change_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            change_scroll.setMinimumHeight(78)
+            change_scroll.setMaximumHeight(78)
+
+            change_label = QLabel()
+            change_label.setObjectName("changeTextLabel")
+            change_label.setTextFormat(Qt.RichText)
+            change_label.setWordWrap(True)
+            change_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            change_label.setText(self._build_change_list_html())
+            change_label.setContentsMargins(0, 0, 0, 0)
+
+            change_container = QWidget()
+            change_container_layout = QVBoxLayout(change_container)
+            change_container_layout.setContentsMargins(0, 0, 0, 0)
+            change_container_layout.setSpacing(0)
+            change_container_layout.addWidget(change_label)
+            change_container_layout.addStretch()
+
+            change_scroll.setWidget(change_container)
+            panel_layout.addWidget(change_scroll)
+
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
         button_layout.addStretch()
-        
+
         update_btn = QPushButton("立即更新")
-        update_btn.setMinimumWidth(100)
+        update_btn.setFixedSize(104, 34)
+        update_btn.setCursor(Qt.PointingHandCursor)
+        update_btn.setObjectName("primaryButton")
         update_btn.clicked.connect(self._on_update_now)
         button_layout.addWidget(update_btn)
-        
+
         later_btn = QPushButton("稍后提醒")
-        later_btn.setMinimumWidth(100)
+        later_btn.setFixedSize(104, 34)
+        later_btn.setCursor(Qt.PointingHandCursor)
+        later_btn.setObjectName("secondaryButton")
         later_btn.clicked.connect(self._on_remind_later)
         button_layout.addWidget(later_btn)
-        
+
         skip_btn = QPushButton("跳过此版本")
-        skip_btn.setMinimumWidth(100)
+        skip_btn.setFixedSize(104, 34)
+        skip_btn.setCursor(Qt.PointingHandCursor)
+        skip_btn.setObjectName("secondaryButton")
         skip_btn.clicked.connect(self._on_skip_version)
         button_layout.addWidget(skip_btn)
-        
+
+        layout.addWidget(panel_frame)
         layout.addLayout(button_layout)
+        self._setup_movie()
+        self._apply_styles()
+        self.setFixedSize(self._dialog_size)
+        self.setSizeGripEnabled(False)
     
     def _format_date(self, date_str: str) -> str:
         """格式化日期"""
@@ -145,6 +210,126 @@ class UpdatePromptDialog(AdaptiveDialog):
             return date_str
         except:
             return date_str
+
+    def _build_subtitle_text(self) -> str:
+        if self._show_change_content:
+            return "检测到新版本可用，以下内容将在更新后生效。"
+        return "检测到新版本可用，可立即下载并准备更新。"
+
+    def _build_change_list_html(self) -> str:
+        items = "".join(
+            f"<li>{html.escape(item)}</li>"
+            for item in self._change_lines[:10]
+        )
+        return f"""
+        <html>
+            <head>
+                <style>
+                    body {{
+                        margin: 0;
+                        color: {t('text_primary')};
+                        font-size: 13px;
+                        line-height: 1.5;
+                    }}
+                    ul {{
+                        margin: 0;
+                        padding-left: 22px;
+                    }}
+                    li {{
+                        margin: 0 0 5px 0;
+                    }}
+                    li:last-child {{
+                        margin-bottom: 0;
+                    }}
+                </style>
+            </head>
+            <body>
+                <ul>{items}</ul>
+            </body>
+        </html>
+        """
+
+    def _setup_movie(self):
+        movie = QMovie(":/icons/common/running.gif")
+        if not movie.isValid():
+            self.icon_label.setText("i")
+            self.icon_label.setAlignment(Qt.AlignCenter)
+            self.icon_label.setObjectName("fallbackIcon")
+            return
+        movie.setScaledSize(QSize(56, 56))
+        self._icon_movie = movie
+        self.icon_label.setMovie(movie)
+        movie.start()
+
+    def _apply_styles(self):
+        self.setStyleSheet(
+            f"""
+            QDialog {{
+                background-color: {t('bg_dark')};
+            }}
+            QFrame {{
+                border: none;
+            }}
+            QFrame#panelFrame {{
+                background-color: {t('bg_mid')};
+                border: 1px solid {t('border')};
+                border-radius: 14px;
+            }}
+            QFrame#metaFrame {{
+                background-color: {t('bg_light')};
+                border: 1px solid {t('border')};
+                border-radius: 10px;
+            }}
+            QFrame#divider {{
+                background-color: {t('border')};
+            }}
+            QLabel {{
+                color: {t('text_primary')};
+                background: transparent;
+                border: none;
+            }}
+            QLabel#heroIcon {{
+                background-color: {t('bg_light')};
+                border: 1px solid {t('border')};
+                border-radius: 12px;
+            }}
+            QLabel#titleLabel {{
+                color: {t('text_primary')};
+            }}
+            QLabel#subtitleLabel {{
+                color: {t('text_secondary')};
+                font-size: 13px;
+            }}
+            QLabel#fallbackIcon {{
+                color: {t('status_info')};
+                background-color: {t('bg_light')};
+                border: 1px solid {t('border')};
+                border-radius: 12px;
+                font-size: 24px;
+                font-weight: 700;
+            }}
+            QScrollArea#changeScroll {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollArea#changeScroll QWidget {{
+                background: transparent;
+            }}
+            QLabel#changeTextLabel {{
+                background-color: transparent;
+                color: {t('text_primary')};
+                border: none;
+                padding: 0px;
+                font-size: 13px;
+            }}
+            QPushButton#primaryButton {{
+                min-width: 104px;
+            }}
+            QPushButton#secondaryButton {{
+                min-width: 104px;
+            }}
+            """
+        )
     
     def _on_update_now(self):
         """立即更新"""
