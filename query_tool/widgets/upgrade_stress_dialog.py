@@ -4,7 +4,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, QTimer
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QButtonGroup,
@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
     QWidget,
     QHeaderView,
     QComboBox,
+    QSizePolicy,
 )
 
 from .adaptive_dialog import AdaptiveDialog
@@ -76,6 +77,7 @@ class UpgradeStressDialog(AdaptiveDialog):
     def showEvent(self, event):
         super().showEvent(event)
         set_dark_title_bar(self)
+        QTimer.singleShot(0, self._fit_dialog_height_to_contents)
 
     def init_ui(self):
         self.setWindowTitle("升级压测")
@@ -83,15 +85,17 @@ class UpgradeStressDialog(AdaptiveDialog):
 
         layout = self.init_dialog_layout(
             (980, 880),
-            min_size=(760, 620),
+            min_size=(760, 420),
             scrollable=True,
             layout_margins=(18, 18, 18, 18),
             spacing=12,
         )
 
         device_group = QGroupBox("设备列表")
+        device_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         device_layout = QVBoxLayout(device_group)
         device_layout.setContentsMargins(12, 16, 12, 12)
+        device_layout.setSpacing(8)
 
         device_tip = QLabel(f"已选择 {len(self.devices)} 台设备，型号: {self.device_model or '混合型号'}")
         device_tip.setStyleSheet(f"color: {t('status_info')}; font-size: 13px;")
@@ -105,12 +109,10 @@ class UpgradeStressDialog(AdaptiveDialog):
         self.device_table.setFocusPolicy(Qt.NoFocus)
         row_height = 30
         header_height = 30
-        min_visible_rows = 3
-        min_table_height = header_height + (row_height * min_visible_rows) + 8
-        self.device_table.setMinimumHeight(min_table_height)
-        self.device_table.setMaximumHeight(180)
         StyleManager.apply_to_widget(self.device_table, "TABLE")
         header = self.device_table.horizontalHeader()
+        header.setFixedHeight(header_height)
+        self.device_table.verticalHeader().setDefaultSectionSize(row_height)
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.Fixed)
@@ -123,10 +125,17 @@ class UpgradeStressDialog(AdaptiveDialog):
             self.device_table.setItem(row, 1, QTableWidgetItem(sn))
             self.device_table.setItem(row, 2, QTableWidgetItem(str(dev_id)))
             self.device_table.setItem(row, 3, QTableWidgetItem(model))
+            self.device_table.setRowHeight(row, row_height)
+        visible_rows = max(1, min(3, len(self.devices)))
+        table_frame = self.device_table.frameWidth() * 2
+        visible_table_height = header_height + (row_height * visible_rows) + table_frame + 2
+        self.device_table.setFixedHeight(visible_table_height)
         device_layout.addWidget(self.device_table)
+        device_group.setFixedHeight(device_group.sizeHint().height())
         layout.addWidget(device_group)
 
         config_group = QGroupBox("任务配置")
+        config_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         config_layout = QVBoxLayout(config_group)
         config_layout.setContentsMargins(12, 16, 12, 12)
         config_layout.setSpacing(8)
@@ -194,20 +203,21 @@ class UpgradeStressDialog(AdaptiveDialog):
         result_layout.addWidget(self.result_dir_input, 1)
         result_layout.addWidget(browse_btn)
         config_layout.addWidget(result_frame)
+        config_group.setFixedHeight(config_group.sizeHint().height())
         layout.addWidget(config_group)
 
         query_group = QGroupBox("固件查询")
+        query_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         query_layout = QVBoxLayout(query_group)
         query_layout.setContentsMargins(12, 16, 12, 12)
         query_layout.setSpacing(8)
 
         query_frame = QFrame()
         query_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
-        query_frame_layout = QVBoxLayout(query_frame)
+        query_frame_layout = QHBoxLayout(query_frame)
         query_frame_layout.setContentsMargins(8, 8, 8, 8)
-        query_frame_layout.setSpacing(8)
+        query_frame_layout.setSpacing(10)
 
-        row1 = QHBoxLayout()
         self.publisher_combo = NoWheelComboBox()
         self.publisher_combo.addItem("当前登录用户", "cur")
         self.publisher_combo.addItem("全部", "all")
@@ -220,15 +230,6 @@ class UpgradeStressDialog(AdaptiveDialog):
         self.audit_combo.addItem("审核通过", "3")
         self.audit_combo.addItem("审核不通过", "4")
         self.audit_combo.setFixedHeight(28)
-
-        row1.addWidget(self._create_plain_label("发布人员:"))
-        row1.addWidget(self.publisher_combo, 1)
-        row1.addSpacing(12)
-        row1.addWidget(self._create_plain_label("审核状态:"))
-        row1.addWidget(self.audit_combo, 1)
-        query_frame_layout.addLayout(row1)
-
-        row2 = QHBoxLayout()
         self.identifier_input = QLineEdit()
         self.identifier_input.setPlaceholderText("输入固件标识...")
         self.identifier_input.setFixedHeight(28)
@@ -239,14 +240,19 @@ class UpgradeStressDialog(AdaptiveDialog):
         self.query_btn.setFixedSize(90, 28)
         self.query_btn.clicked.connect(self.query_firmware)
 
-        row2.addWidget(self._create_plain_label("固件标识:"))
-        row2.addWidget(self.identifier_input, 1)
-        row2.addWidget(self.query_btn)
-        query_frame_layout.addLayout(row2)
+        query_frame_layout.addWidget(self._create_plain_label("发布人员:"))
+        query_frame_layout.addWidget(self.publisher_combo, 1)
+        query_frame_layout.addWidget(self._create_plain_label("审核状态:"))
+        query_frame_layout.addWidget(self.audit_combo, 1)
+        query_frame_layout.addWidget(self._create_plain_label("固件标识:"))
+        query_frame_layout.addWidget(self.identifier_input, 2)
+        query_frame_layout.addWidget(self.query_btn)
         query_layout.addWidget(query_frame)
+        query_group.setFixedHeight(query_group.sizeHint().height())
         layout.addWidget(query_group)
 
         list_group = QGroupBox("固件列表")
+        list_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         list_layout = QVBoxLayout(list_group)
         list_layout.setContentsMargins(12, 16, 12, 12)
         list_layout.setSpacing(8)
@@ -312,6 +318,7 @@ class UpgradeStressDialog(AdaptiveDialog):
         bottom_layout.addStretch()
         bottom_layout.addWidget(self.selected_label)
         list_layout.addLayout(bottom_layout)
+        list_group.setFixedHeight(list_group.sizeHint().height())
         layout.addWidget(list_group)
 
         button_layout = QHBoxLayout()
@@ -333,6 +340,18 @@ class UpgradeStressDialog(AdaptiveDialog):
         button_layout.addWidget(self.confirm_btn)
         button_layout.addWidget(cancel_btn)
         layout.addLayout(button_layout)
+        QTimer.singleShot(0, self._fit_dialog_height_to_contents)
+
+    def _fit_dialog_height_to_contents(self):
+        if self._adaptive_scroll_area is None or self._adaptive_content_widget is None:
+            return
+
+        content_height = self._adaptive_content_widget.layout().sizeHint().height()
+        viewport_height = self._adaptive_scroll_area.viewport().height()
+        container_extra = self.height() - viewport_height
+        target_height = min(self.maximumHeight(), max(self.minimumHeight(), content_height + container_extra))
+        if target_height != self.height():
+            self.resize(self.width(), target_height)
 
     def on_browse_result_dir(self):
         directory = QFileDialog.getExistingDirectory(

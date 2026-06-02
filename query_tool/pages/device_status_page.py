@@ -5,7 +5,7 @@
 import os
 from datetime import datetime
 from PyQt5.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QTableWidget,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QCheckBox, QSplitter, QFrame,
     QFileDialog, QMessageBox, QWidget, QComboBox, QSizePolicy
 )
@@ -139,6 +139,7 @@ class DeviceStatusPage(BasePage):
         
         # 顶部查询区
         top_widget = self.create_query_group()
+        self._query_widget = top_widget
         
         # 底部结果与导出区
         bottom_widget = self.create_result_group()
@@ -158,28 +159,37 @@ class DeviceStatusPage(BasePage):
     
     def create_query_group(self):
         """创建设备查询分组"""
-        from PyQt5.QtWidgets import QGroupBox, QLineEdit, QCompleter
-        
+        from PyQt5.QtWidgets import QGroupBox
+
         group = QGroupBox("查询")
         group_layout = QVBoxLayout(group)
         group_layout.setContentsMargins(8, 8, 8, 6)
-        group_layout.setSpacing(4)
-        
-        # ===== 账号查询区（带边框） =====
-        account_frame = QFrame()
-        self._apply_plain_result_toolbar_style(account_frame)
-        self._account_frame = account_frame
-        account_frame.setFixedHeight(34)
-        account_frame_layout = QHBoxLayout(account_frame)
-        account_frame_layout.setContentsMargins(2, 2, 2, 2)
-        account_frame_layout.setSpacing(6)
-        
+        group_layout.setSpacing(6)
+
+        side_width = 135
+        control_width = side_width
+        control_height = 28
+        side_spacing = 6
+        side_content_height = control_height * 3 + side_spacing * 2
+
+        content_layout = QHBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(8)
+
+        # ===== 左侧账号查询区 =====
+        left_widget = QWidget()
+        left_widget.setFixedWidth(side_width)
+        left_widget.setFixedHeight(side_content_height)
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(side_spacing)
+
         self.account_type_combo = NoWheelComboBox()
         for label, value in self.ACCOUNT_QUERY_TYPES:
             self.account_type_combo.addItem(label, value)
         self.account_type_combo.setCurrentIndex(0)
-        self.account_type_combo.setFixedWidth(82)
-        self.account_type_combo.setFixedHeight(28)
+        self.account_type_combo.setFixedWidth(control_width)
+        self.account_type_combo.setFixedHeight(control_height)
         self.account_type_combo.currentIndexChanged.connect(self.on_account_query_type_changed)
 
         self.phone_input = NoWheelComboBox()
@@ -187,123 +197,134 @@ class DeviceStatusPage(BasePage):
         self.phone_input.setInsertPolicy(QComboBox.NoInsert)
         self.phone_input.setFocusPolicy(Qt.StrongFocus)
         self.phone_input.lineEdit().setPlaceholderText("请输入账号...")
-        self.phone_input.setFixedHeight(28)
-        
+        self.phone_input.setFixedWidth(control_width)
+        self.phone_input.setFixedHeight(control_height)
+
         self.phone_query_btn = QPushButton("账号查询")
         self.phone_query_btn.setIcon(QIcon(":/icons/common/search.png"))
         self.phone_query_btn.setIconSize(QSize(16, 16))
-        self.phone_query_btn.setFixedSize(90, 28)  # 统一按钮宽度为90px
+        self.phone_query_btn.setFixedSize(control_width, control_height)
         self.phone_query_btn.clicked.connect(self.on_phone_query)
-        
-        account_frame_layout.addWidget(self.account_type_combo)
-        account_frame_layout.addWidget(self.phone_input, 1)
-        account_frame_layout.addWidget(self.phone_query_btn)
-        group_layout.addWidget(account_frame)
-        self.on_account_query_type_changed()
-        
-        # 输入框和按钮行
-        input_layout = QHBoxLayout()
-        
-        # SN输入框
+
+        left_layout.addStretch()
+        left_layout.addWidget(self.account_type_combo)
+        left_layout.addWidget(self.phone_input)
+        left_layout.addWidget(self.phone_query_btn, 0, Qt.AlignHCenter)
+        left_layout.addStretch()
+
+        # ===== 中间 SN/ID 输入区 =====
+        center_widget = QWidget()
+        center_layout = QHBoxLayout(center_widget)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(8)
+
+        sn_widget = QWidget()
+        sn_widget.setFixedHeight(side_content_height)
+        sn_layout = QVBoxLayout(sn_widget)
+        sn_layout.setContentsMargins(0, 0, 0, 0)
+        sn_layout.setSpacing(4)
+        sn_label = QLabel("输入SN（每行一个）")
+        sn_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        label_height = sn_label.sizeHint().height()
+        text_edit_height = max(24, side_content_height - label_height - sn_layout.spacing())
+
         self.sn_input = PlainTextEdit()
-        self.sn_input.setMinimumHeight(48)
+        self.sn_input.setFixedHeight(text_edit_height)
         self.sn_input.setPlaceholderText("")
         self.sn_input.selectionChanged.connect(self.on_text_selection_changed)
         self.sn_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
-        self.sn_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-        # ID输入框
+        self.sn_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        sn_layout.addWidget(sn_label)
+        sn_layout.addWidget(self.sn_input, 1)
+
+        id_widget = QWidget()
+        id_widget.setFixedHeight(side_content_height)
+        id_layout = QVBoxLayout(id_widget)
+        id_layout.setContentsMargins(0, 0, 0, 0)
+        id_layout.setSpacing(4)
+        id_label = QLabel("输入ID（每行一个）")
+        id_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
         self.id_input = PlainTextEdit()
-        self.id_input.setMinimumHeight(48)
+        self.id_input.setFixedHeight(text_edit_height)
         self.id_input.setPlaceholderText("")
         self.id_input.selectionChanged.connect(self.on_text_selection_changed)
         self.id_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
-        self.id_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.id_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        # 按钮
-        btn_widget = QWidget()
-        btn_layout = QGridLayout(btn_widget)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setHorizontalSpacing(6)
-        btn_layout.setVerticalSpacing(4)
-        
-        # 线程数控件行
-        thread_layout = QHBoxLayout()
-        thread_layout.setContentsMargins(0, 0, 0, 0)
-        thread_layout.setSpacing(4)
-        thread_label = QLabel("线程:")
-        self.thread_count_combo = NoWheelComboBox()
-        # 填充 10-70，间隔 10
-        for i in range(10, 71, 10):
-            self.thread_count_combo.addItem(str(i))
-        self.thread_count_combo.setCurrentText("40")
-        self.thread_count_combo.setFixedWidth(50)
-        self.thread_count_combo.setFixedHeight(28)
-        self.thread_count_combo.currentTextChanged.connect(self.on_thread_count_changed)
-        thread_layout.addWidget(thread_label)
-        thread_layout.addWidget(self.thread_count_combo)
-        
-        self.query_btn = QPushButton("设备查询")
-        self.query_btn.setIcon(QIcon(":/icons/common/search.png"))
-        self.query_btn.setIconSize(QSize(16, 16))
-        self.query_btn.setFixedSize(90, 28)  # 统一按钮宽度为90px
-        self.query_btn.clicked.connect(self.on_query)
-        
-        self.clear_btn = QPushButton("清空结果")
-        self.clear_btn.setIcon(QIcon(":/icons/common/clean.png"))
-        self.clear_btn.setIconSize(QSize(16, 16))
-        self.clear_btn.setFixedSize(90, 28)  # 统一按钮宽度为90px
-        self.clear_btn.clicked.connect(self.on_clear)
-        
-        btn_layout.addLayout(thread_layout, 0, 0, 1, 2)
-        btn_layout.addWidget(self.query_btn, 0, 2, 1, 1, Qt.AlignRight)
-        btn_layout.addWidget(self.clear_btn, 1, 2, 1, 1, Qt.AlignRight)
-        btn_layout.setColumnStretch(0, 0)
-        btn_layout.setColumnStretch(1, 0)
-        btn_layout.setColumnStretch(2, 1)
-        btn_layout.setRowStretch(0, 0)
-        btn_layout.setRowStretch(1, 0)
+        id_layout.addWidget(id_label)
+        id_layout.addWidget(self.id_input, 1)
 
-        # 标签行与下方输入区保持相同的列结构，避免 ID 文案偏移
-        label_layout = QHBoxLayout()
-        label_layout.setContentsMargins(0, 0, 0, 0)
-        label_layout.setSpacing(0)
-        sn_label = QLabel("输入SN（每行一个）")
-        id_label = QLabel("输入ID（每行一个）")
-        sn_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        id_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        label_layout.addWidget(sn_label, 1)
-        label_layout.addSpacing(1)
-        label_layout.addWidget(id_label, 1)
-        label_layout.addSpacing(1)
-        label_layout.addSpacing(btn_widget.sizeHint().width())
-        group_layout.addLayout(label_layout)
-        
-        input_layout.addWidget(self.sn_input, 1)
-        
-        # 添加第一条垂直分割线
         separator1 = QFrame()
         separator1.setFrameShape(QFrame.VLine)
         separator1.setFrameShadow(QFrame.Plain)
         separator1.setFixedWidth(1)
         separator1.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
         self._separator1 = separator1
-        input_layout.addWidget(separator1)
-        
-        input_layout.addWidget(self.id_input, 1)
-        
-        # 添加第二条垂直分割线
+
+        center_layout.addWidget(sn_widget, 1)
+        center_layout.addWidget(separator1)
+        center_layout.addWidget(id_widget, 1)
+
+        # ===== 右侧设备查询操作区 =====
+        right_widget = QWidget()
+        right_widget.setFixedWidth(side_width)
+        right_widget.setFixedHeight(side_content_height)
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(side_spacing)
+
+        self.on_account_query_type_changed()
+
+        self.thread_count_combo = NoWheelComboBox()
+        for i in range(10, 71, 10):
+            self.thread_count_combo.addItem(str(i))
+        self.thread_count_combo.setCurrentText("40")
+        self.thread_count_combo.setFixedHeight(control_height)
+        self.thread_count_combo.setFixedWidth(control_width)
+        self.thread_count_combo.currentTextChanged.connect(self.on_thread_count_changed)
+
+        self.query_btn = QPushButton("设备查询")
+        self.query_btn.setIcon(QIcon(":/icons/common/search.png"))
+        self.query_btn.setIconSize(QSize(16, 16))
+        self.query_btn.setFixedSize(control_width, control_height)
+        self.query_btn.clicked.connect(self.on_query)
+
+        self.clear_btn = QPushButton("清空结果")
+        self.clear_btn.setIcon(QIcon(":/icons/common/clean.png"))
+        self.clear_btn.setIconSize(QSize(16, 16))
+        self.clear_btn.setFixedSize(control_width, control_height)
+        self.clear_btn.clicked.connect(self.on_clear)
+
+        right_layout.addStretch()
+        right_layout.addWidget(self.thread_count_combo, 0, Qt.AlignHCenter)
+        right_layout.addWidget(self.clear_btn, 0, Qt.AlignHCenter)
+        right_layout.addWidget(self.query_btn, 0, Qt.AlignHCenter)
+        right_layout.addStretch()
+
         separator2 = QFrame()
         separator2.setFrameShape(QFrame.VLine)
         separator2.setFrameShadow(QFrame.Plain)
         separator2.setFixedWidth(1)
         separator2.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
         self._separator2 = separator2
-        input_layout.addWidget(separator2)
-        
-        input_layout.addWidget(btn_widget)
-        group_layout.addLayout(input_layout)
-        
+
+        separator3 = QFrame()
+        separator3.setFrameShape(QFrame.VLine)
+        separator3.setFrameShadow(QFrame.Plain)
+        separator3.setFixedWidth(1)
+        separator3.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+        self._separator3 = separator3
+
+        content_layout.addWidget(left_widget)
+        content_layout.addWidget(separator2)
+        content_layout.addWidget(center_widget, 1)
+        content_layout.addWidget(separator3)
+        content_layout.addWidget(right_widget)
+        group_layout.addLayout(content_layout)
+        group.setFixedHeight(group.sizeHint().height())
+
         return group
     
     def create_result_group(self):
@@ -581,7 +602,13 @@ class DeviceStatusPage(BasePage):
             self.schedule_initial_splitter_ratio()
             return
 
-        top_height = max(1, splitter_height * 2 // 8)
+        query_hint_height = 0
+        if hasattr(self, '_query_widget'):
+            query_hint_height = self._query_widget.sizeHint().height()
+            if query_hint_height <= 0:
+                query_hint_height = self._query_widget.minimumSizeHint().height()
+
+        top_height = max(1, min(query_hint_height, splitter_height - 1))
         bottom_height = max(1, splitter_height - top_height)
         self._applying_splitter_ratio = True
         try:
@@ -2202,6 +2229,8 @@ class DeviceStatusPage(BasePage):
             self._separator1.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
         if hasattr(self, '_separator2'):
             self._separator2.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+        if hasattr(self, '_separator3'):
+            self._separator3.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
     
     # ===== 账号查询相关方法 =====
     
