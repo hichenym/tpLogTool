@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import ctypes
 import json
-import os
 import sys
 import threading
 from pathlib import Path
 from typing import Sequence
 
-from .config import resolve_sdk_bin_dir
+from .siot_client import SdkLibraries
 
 
 def dispatch_internal_command(argv: Sequence[str]) -> int | None:
@@ -34,13 +33,8 @@ def dispatch_internal_command(argv: Sequence[str]) -> int | None:
     return None
 
 
-def _load_sdk_library(sdk_bin_dir: Path):
-    sdk_bin_dir = resolve_sdk_bin_dir(sdk_bin_dir)
-    if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
-        os.add_dll_directory(str(sdk_bin_dir))
-    lib_name = "libsiot.dll" if sys.platform == "win32" else "libsiot.so"
-    loader = ctypes.WinDLL if sys.platform == "win32" else ctypes.CDLL
-    return loader(str(sdk_bin_dir / lib_name))
+def _load_sdk_runtime(sdk_bin_dir: Path) -> SdkLibraries:
+    return SdkLibraries(sdk_bin_dir)
 
 
 def _run_prepare_helper(argv: Sequence[str]) -> int:
@@ -54,7 +48,8 @@ def _run_prepare_helper(argv: Sequence[str]) -> int:
     user = argv[3].encode("utf-8")
     password = argv[4].encode("utf-8")
 
-    lib = _load_sdk_library(sdk_bin_dir)
+    sdk = _load_sdk_runtime(sdk_bin_dir)
+    lib = sdk.lib
     lib.Siot_CreateClient.restype = ctypes.c_void_p
     lib.Siot_CreateClient.argtypes = []
     lib.Siot_DestroyClient.restype = None
@@ -108,7 +103,8 @@ def _run_probe_helper(argv: Sequence[str]) -> int:
         print(json.dumps({"probe_error": f"invalid probe payload: {exc}"}, ensure_ascii=False))
         return 210
 
-    lib = _load_sdk_library(sdk_bin_dir)
+    sdk = _load_sdk_runtime(sdk_bin_dir)
+    lib = sdk.lib
 
     TPSIOT_EventCallback = ctypes.CFUNCTYPE(
         None,
