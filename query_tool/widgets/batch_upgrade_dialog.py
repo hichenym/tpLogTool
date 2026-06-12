@@ -41,13 +41,13 @@ class BatchStatusWorker(QObject):
     def stop(self):
         self._stop = True
     
-    def check_single_device(self, sn):
+    def check_single_device(self, sn, dev_id):
         """查询单个设备在线状态"""
         if self._stop:
             return sn, False
         try:
             from query_tool.utils import check_device_online
-            is_online = check_device_online(sn, self.device_query)
+            is_online = check_device_online(sn, self.device_query, dev_id=dev_id)
             return sn, is_online
         except Exception as e:
             return sn, False
@@ -59,8 +59,8 @@ class BatchStatusWorker(QObject):
             
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
-                    executor.submit(self.check_single_device, sn): sn
-                    for sn, _, _, _ in self.devices
+                    executor.submit(self.check_single_device, sn, dev_id): sn
+                    for sn, dev_id, _, _ in self.devices
                 }
                 
                 for future in as_completed(futures):

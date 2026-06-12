@@ -24,6 +24,9 @@ class DeviceQuery:
         self.refresh_token = None
         self.init_error = None  # 记录初始化错误
         self._token_lock = Lock()  # Token刷新锁
+        self._dev_id_by_sn = {}
+        self._sn_by_dev_id = {}
+        self._siot_platform_cache = {}
         
         # 获取Session
         self.session = session_manager.get_session(f'device_query_{env}_{username}')
@@ -48,6 +51,35 @@ class DeviceQuery:
         except Exception as e:
             self.init_error = f"初始化失败: {str(e)}"
             logger.exception("DeviceQuery初始化失败")
+
+    def _build_auth_headers(self, token=None):
+        return {
+            "Content-Type": "application/json",
+            "Authorization": "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA==",
+            "Seetong-Auth": token or self.token,
+        }
+
+    def _cache_device_identity(self, dev_id=None, sn=None, is_siot=None):
+        dev_id = str(dev_id or "").strip()
+        sn = str(sn or "").strip()
+
+        if dev_id and sn:
+            self._dev_id_by_sn[sn] = dev_id
+            self._sn_by_dev_id[dev_id] = sn
+        elif dev_id and dev_id in self._sn_by_dev_id:
+            sn = self._sn_by_dev_id[dev_id]
+        elif sn and sn in self._dev_id_by_sn:
+            dev_id = self._dev_id_by_sn[sn]
+
+        if is_siot is not None and dev_id:
+            self._siot_platform_cache[dev_id] = bool(is_siot)
+
+    def _cache_device_records(self, records):
+        for record in records or []:
+            self._cache_device_identity(
+                dev_id=record.get('devId') or record.get('id') or record.get('deviceId'),
+                sn=record.get('devSN') or record.get('deviceSn') or record.get('sn'),
+            )
 
     def _get_captcha(self):
         """获取验证码"""
@@ -117,12 +149,7 @@ class DeviceQuery:
         last_error = None
         for attempt in range(retry):
             try:
-                # 每次循环都用最新的 token 构建 headers
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA==",
-                    "Seetong-Auth": self.token,
-                }
+                headers = self._build_auth_headers()
                 r = self.session.get(url, params=params, headers=headers, verify=False, timeout=10)
                 
                 if r.status_code == 401:
@@ -148,13 +175,48 @@ class DeviceQuery:
         logger.error(error_msg)
         raise Exception(error_msg)
 
+    def _request_json(self, api_path, payload, retry=3):
+        """发送 JSON POST 请求，带重试机制。"""
+        url = f'https://{self.host}{api_path}'
+
+        logger.debug(f"API请求: {api_path}, 数据: {payload}")
+
+        last_error = None
+        for attempt in range(retry):
+            try:
+                headers = self._build_auth_headers()
+                r = self.session.post(url, json=payload, headers=headers, verify=False, timeout=10)
+
+                if r.status_code == 401:
+                    with self._token_lock:
+                        logger.info(f"Token过期，重新登录: {self.username}@{self.env}")
+                        self.token, self.refresh_token = self._get_token()
+                        config_manager.save_token_cache(self.env, self.username, self.token, self.refresh_token)
+                    continue
+
+                r.raise_for_status()
+                logger.debug(f"API请求成功: {api_path}, 状态码: {r.status_code}")
+                return r.json()
+
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"API请求尝试 {attempt+1}/{retry} 失败: {api_path}, {last_error}")
+                if attempt < retry - 1:
+                    time.sleep(2 ** attempt)
+
+        error_msg = f"API 请求失败（重试{retry}次）: {api_path}, {last_error}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+
     def get_device_info(self, dev_sn=None, dev_id=None):
         params = {"current": "1", "size": "10", "descs": "devId"}
         if dev_sn:
             params['deviceSn'] = dev_sn
         if dev_id:
             params['devId'] = dev_id
-        return self._request('/api/seetong-device/device-basic-info/list', params)
+        res = self._request('/api/seetong-device/device-basic-info/list', params)
+        self._cache_device_records(res.get('data', {}).get('records', []) if res else [])
+        return res
 
     def get_cloud_password(self, dev_id):
         params = {"deviceId": dev_id, "password": hashlib.md5(self.password.encode()).hexdigest()}
@@ -171,7 +233,14 @@ class DeviceQuery:
 
     def get_device_detail(self, dev_id):
         params = {"devId": dev_id}
-        return self._request('/api/seetong-device/device-basic-info/detail', params)
+        res = self._request('/api/seetong-device/device-basic-info/detail', params)
+        if res and res.get('data'):
+            data = res.get('data') or {}
+            self._cache_device_identity(
+                dev_id=data.get('devId') or dev_id,
+                sn=data.get('devSN') or data.get('deviceSn') or data.get('sn'),
+            )
+        return res
 
     def get_device_version(self, dev_id):
         res = self.get_device_detail(dev_id)
@@ -179,13 +248,182 @@ class DeviceQuery:
             return res['data'].get('fileVersion', '')
         return ''
 
-    def get_device_last_heartbeat(self, dev_id):
-        """获取设备最后心跳时间"""
+    def get_device_running_status(self, dev_id):
+        """获取设备运行状态详情。"""
         params = {"devId": dev_id}
         res = self._request('/api/seetong-device/device-running-status/running_info', params)
         if res and res.get('data'):
-            return res['data'].get('devLastLoginTM', '')
-        return ''
+            return res.get('data') or {}
+        return {}
+
+    def get_device_last_heartbeat(self, dev_id):
+        """获取设备最后心跳时间"""
+        return self.get_device_running_status(dev_id).get('devLastLoginTM', '')
+
+    def get_non_siot_online_status(self, dev_sn):
+        """获取非 siot 设备的 P2P 在线状态（刷新接口）。"""
+        params = {"sn": dev_sn}
+        res = self._request('/api/seetong-device/device-running-status/online-status-info', params)
+        if res and res.get('data'):
+            return res.get('data', {}).get('onlineStatus')
+        return None
+
+    def check_siot_platform(self, dev_ids):
+        """批量查询设备是否为 siot 平台设备。"""
+        normalized_ids = [str(dev_id).strip() for dev_id in (dev_ids or []) if str(dev_id).strip()]
+        if not normalized_ids:
+            return {}
+
+        res = self._request_json(
+            '/api/seetong-siot-device/console/device/siot-platform/check',
+            {"devIds": normalized_ids},
+        )
+        data = res.get('data') if res else {}
+
+        if not isinstance(data, dict):
+            return {}
+
+        normalized = {}
+        for raw_dev_id, is_siot in data.items():
+            normalized[str(raw_dev_id)] = bool(is_siot)
+            self._cache_device_identity(dev_id=raw_dev_id, is_siot=is_siot)
+        return normalized
+
+    def is_siot_platform_device(self, dev_id=None, sn=None):
+        """判断设备是否为 siot 平台设备。"""
+        resolved_dev_id = str(dev_id or "").strip()
+        resolved_sn = str(sn or "").strip()
+
+        if not resolved_dev_id and resolved_sn:
+            resolved_dev_id = self._dev_id_by_sn.get(resolved_sn, '')
+        if not resolved_sn and resolved_dev_id:
+            resolved_sn = self._sn_by_dev_id.get(resolved_dev_id, '')
+
+        if resolved_dev_id in self._siot_platform_cache:
+            return self._siot_platform_cache[resolved_dev_id]
+
+        if not resolved_dev_id and resolved_sn:
+            info = self.get_device_info(dev_sn=resolved_sn)
+            records = info.get('data', {}).get('records', []) if info else []
+            if records:
+                record = records[0]
+                resolved_dev_id = str(record.get('devId') or record.get('id') or "").strip()
+                resolved_sn = str(record.get('devSN') or record.get('deviceSn') or resolved_sn).strip()
+                self._cache_device_identity(dev_id=resolved_dev_id, sn=resolved_sn)
+
+        if not resolved_dev_id:
+            return None
+
+        try:
+            mapping = self.check_siot_platform([resolved_dev_id])
+        except Exception as e:
+            logger.warning(f"查询设备 siot 平台标记失败 {resolved_dev_id}: {e}")
+            return None
+        if resolved_dev_id in mapping:
+            self._cache_device_identity(dev_id=resolved_dev_id, sn=resolved_sn, is_siot=mapping[resolved_dev_id])
+            return mapping[resolved_dev_id]
+        return None
+
+    def query_device_online_state(self, sn, dev_id=None):
+        """查询设备在线状态，返回 True/False/None（None 表示查询失败或无法判定）。"""
+        resolved_sn = str(sn or "").strip()
+        resolved_dev_id = str(dev_id or "").strip()
+        if not resolved_sn:
+            return None
+
+        if not resolved_dev_id and resolved_sn:
+            resolved_dev_id = self._dev_id_by_sn.get(resolved_sn, '')
+
+        is_siot = self.is_siot_platform_device(dev_id=resolved_dev_id, sn=resolved_sn)
+        if not resolved_dev_id and resolved_sn:
+            resolved_dev_id = self._dev_id_by_sn.get(resolved_sn, '')
+        if is_siot is True:
+            res = self.get_device_header(resolved_sn)
+            data = res.get('data', {}) if res else {}
+            normalized = _normalize_online_status_value(data.get('onlineStatus'), default=None)
+            return normalized == 1 if normalized is not None else None
+
+        if is_siot is False:
+            normalized = _normalize_online_status_value(self.get_non_siot_online_status(resolved_sn), default=None)
+            if normalized is not None:
+                return normalized == 1
+
+            if resolved_dev_id:
+                running_data = self.get_device_running_status(resolved_dev_id)
+                normalized = _normalize_online_status_value(running_data.get('devOnLine'), default=None)
+                return normalized == 1 if normalized is not None else None
+            return None
+
+        normalized = _normalize_online_status_value(
+            self.get_non_siot_online_status(resolved_sn) if resolved_sn else None,
+            default=None,
+        )
+        if normalized is not None:
+            return normalized == 1
+
+        if resolved_dev_id:
+            running_data = self.get_device_running_status(resolved_dev_id)
+            normalized = _normalize_online_status_value(running_data.get('devOnLine'), default=None)
+            if normalized is not None:
+                return normalized == 1
+
+        if resolved_sn:
+            res = self.get_device_header(resolved_sn)
+            data = res.get('data', {}) if res else {}
+            normalized = _normalize_online_status_value(data.get('onlineStatus'), default=None)
+            if normalized is not None:
+                return normalized == 1
+
+        return None
+
+    def get_device_status_snapshot(self, dev_id=None, sn=None, is_siot=None):
+        """统一返回设备页所需的在线状态和最后心跳时间。"""
+        resolved_dev_id = str(dev_id or "").strip()
+        resolved_sn = str(sn or "").strip()
+
+        if not resolved_dev_id and resolved_sn:
+            resolved_dev_id = self._dev_id_by_sn.get(resolved_sn, '')
+        if not resolved_sn and resolved_dev_id:
+            resolved_sn = self._sn_by_dev_id.get(resolved_dev_id, '')
+
+        if is_siot is None:
+            is_siot = self.is_siot_platform_device(dev_id=resolved_dev_id, sn=resolved_sn)
+            if not resolved_dev_id and resolved_sn:
+                resolved_dev_id = self._dev_id_by_sn.get(resolved_sn, '')
+            if not resolved_sn and resolved_dev_id:
+                resolved_sn = self._sn_by_dev_id.get(resolved_dev_id, '')
+
+        running_data = self.get_device_running_status(resolved_dev_id) if resolved_dev_id else {}
+        last_heartbeat = str(running_data.get('devLastLoginTM') or '')
+
+        if is_siot is True:
+            header_data = self.get_device_header(resolved_sn).get('data', {}) if resolved_sn else {}
+            online_status = _normalize_online_status_value(header_data.get('onlineStatus'), default=-2)
+        elif is_siot is False:
+            online_status = _normalize_online_status_value(
+                self.get_non_siot_online_status(resolved_sn) if resolved_sn else None,
+                default=None,
+            )
+            if online_status is None:
+                online_status = _normalize_online_status_value(running_data.get('devOnLine'), default=-2)
+        else:
+            online_status = _normalize_online_status_value(
+                self.get_non_siot_online_status(resolved_sn) if resolved_sn else None,
+                default=None,
+            )
+            if online_status is None:
+                online_status = _normalize_online_status_value(running_data.get('devOnLine'), default=None)
+            if online_status is None and resolved_sn:
+                header_data = self.get_device_header(resolved_sn).get('data', {}) if resolved_sn else {}
+                online_status = _normalize_online_status_value(header_data.get('onlineStatus'), default=None)
+            if online_status is None:
+                online_status = -2
+
+        return {
+            'is_siot': is_siot,
+            'online': online_status,
+            'last_heartbeat': last_heartbeat,
+        }
 
     def get_device_bind_user(self, dev_id):
         """获取设备绑定用户信息"""
@@ -296,12 +534,67 @@ def _resolve_auth_context(token_or_query, host='console.seetong.com'):
     return token_or_query, host, None
 
 
-def _is_online_status(online_status):
-    """统一解析在线状态字段，兼容 int / str。"""
+def _build_auth_headers(token):
+    return {
+        "Content-Type": "application/json",
+        "Authorization": "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA==",
+        "Seetong-Auth": token,
+    }
+
+
+def _request_with_token(api_path, token, host='console.seetong.com', params=None, payload=None, method='get', retry=3):
+    """在只有 token 的场景下直接发请求，不做自动登录刷新。"""
+    session = session_manager.get_session(f'device_query_{method}_direct')
+    url = f'https://{host}{api_path}'
+    last_error = None
+
+    for attempt in range(retry):
+        try:
+            headers = _build_auth_headers(token)
+            if method.lower() == 'post':
+                response = session.post(url, json=payload, headers=headers, verify=False, timeout=10)
+            else:
+                response = session.get(url, params=params, headers=headers, verify=False, timeout=10)
+
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"API请求尝试 {attempt+1}/{retry} 失败: {api_path}, {last_error}")
+            if attempt < retry - 1:
+                time.sleep(2 ** attempt)
+
+    raise Exception(f"API 请求失败（重试{retry}次）: {api_path}, {last_error}")
+
+
+def _normalize_online_status_value(online_status, default=-2):
+    """统一把在线状态归一化为 1/0/None 或指定默认值。"""
+    if online_status is None or online_status == "":
+        return default
+
+    if isinstance(online_status, bool):
+        return 1 if online_status else 0
+
+    if isinstance(online_status, str):
+        lowered = online_status.strip().lower()
+        if lowered in {"true", "online", "在线"}:
+            return 1
+        if lowered in {"false", "offline", "离线"}:
+            return 0
+
     try:
-        return int(online_status) == 1
+        normalized = int(online_status)
     except (TypeError, ValueError):
-        return False
+        return default
+
+    if normalized in (1, 0, -1, -2):
+        return normalized
+    return default
+
+
+def _is_online_status(online_status):
+    """统一解析在线状态字段，兼容 int / str / bool。"""
+    return _normalize_online_status_value(online_status, default=0) == 1
 
 
 def wake_device(dev_id, sn, token_or_query, host='console.seetong.com', times=3):
@@ -323,42 +616,91 @@ def wake_device(dev_id, sn, token_or_query, host='console.seetong.com', times=3)
         time.sleep(1)
 
 
-def query_device_online_state(sn, token_or_query, host='console.seetong.com'):
+def query_device_online_state(sn, token_or_query, host='console.seetong.com', dev_id=None):
     """查询设备在线状态，返回 True/False/None（None 表示查询失败）。"""
     try:
         token, host, query = _resolve_auth_context(token_or_query, host)
 
         if query is not None:
-            res = query.get_device_header(sn)
-            data = res.get('data', {}) if res else {}
-            online_status = data.get('onlineStatus', 0)
-            return _is_online_status(online_status)
+            return query.query_device_online_state(sn, dev_id=dev_id)
 
-        session = session_manager.get_session('check_online')
-        url = f'https://{host}/api/seetong-siot-device/console/device/header'
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA==",
-            "Seetong-Auth": token,
-        }
-        params = {"sn": sn}
-        r = session.get(url, params=params, headers=headers, verify=False, timeout=5)
-        r.raise_for_status()
-        res = r.json()
-        data = res.get('data', {})
-        online_status = data.get('onlineStatus', 0)
-        return _is_online_status(online_status)
+        resolved_sn = str(sn or "").strip()
+        resolved_dev_id = str(dev_id or "").strip()
+        if not resolved_sn:
+            return None
+
+        if not resolved_dev_id:
+            info = _request_with_token(
+                '/api/seetong-device/device-basic-info/list',
+                token,
+                host,
+                params={
+                    "current": "1",
+                    "size": "10",
+                    "descs": "devId",
+                    "deviceSn": resolved_sn,
+                },
+            )
+            records = info.get('data', {}).get('records', []) if info else []
+            if records:
+                record = records[0]
+                resolved_dev_id = str(record.get('devId') or record.get('id') or '').strip()
+                resolved_sn = str(record.get('devSN') or record.get('deviceSn') or resolved_sn).strip()
+
+        if not resolved_dev_id:
+            return None
+
+        siot_check = _request_with_token(
+            '/api/seetong-siot-device/console/device/siot-platform/check',
+            token,
+            host,
+            payload={"devIds": [resolved_dev_id]},
+            method='post',
+        )
+        is_siot = bool((siot_check.get('data') or {}).get(resolved_dev_id))
+
+        if is_siot:
+            res = _request_with_token(
+                '/api/seetong-siot-device/console/device/header',
+                token,
+                host,
+                params={"sn": resolved_sn},
+            )
+            data = res.get('data', {}) if res else {}
+            normalized = _normalize_online_status_value(data.get('onlineStatus'), default=None)
+            return normalized == 1 if normalized is not None else None
+
+        res = _request_with_token(
+            '/api/seetong-device/device-running-status/online-status-info',
+            token,
+            host,
+            params={"sn": resolved_sn},
+        )
+        data = res.get('data', {}) if res else {}
+        normalized = _normalize_online_status_value(data.get('onlineStatus'), default=None)
+        if normalized is not None:
+            return normalized == 1
+
+        running_info = _request_with_token(
+            '/api/seetong-device/device-running-status/running_info',
+            token,
+            host,
+            params={"devId": resolved_dev_id},
+        )
+        running_data = running_info.get('data', {}) if running_info else {}
+        normalized = _normalize_online_status_value(running_data.get('devOnLine'), default=None)
+        return normalized == 1 if normalized is not None else None
     except Exception as e:
         logger.warning(f"查询在线状态失败: {e}")
         return None
 
 
-def check_device_online(sn, token_or_query, host='console.seetong.com'):
+def check_device_online(sn, token_or_query, host='console.seetong.com', dev_id=None):
     """查询设备在线状态。
 
     优先复用 DeviceQuery，确保与主查询页使用同一套 host、token 刷新和接口逻辑。
     """
-    return query_device_online_state(sn, token_or_query, host) is True
+    return query_device_online_state(sn, token_or_query, host, dev_id=dev_id) is True
 
 
 def ensure_device_online_for_upgrade(dev_id, sn, token_or_query, host='console.seetong.com', max_wake_times=3):
@@ -373,7 +715,7 @@ def ensure_device_online_for_upgrade(dev_id, sn, token_or_query, host='console.s
     token, host, query = _resolve_auth_context(token_or_query, host)
     auth_context = query if query is not None else token
 
-    online_state = query_device_online_state(sn, auth_context, host)
+    online_state = query_device_online_state(sn, auth_context, host, dev_id=dev_id)
     if online_state is True:
         return True, 'online', '设备在线'
     if online_state is None:
@@ -427,7 +769,7 @@ def wake_device_smart(dev_id, sn, token_or_query, host='console.seetong.com', ma
         
         # 等待 2 秒后查询在线状态
         time.sleep(2)
-        if check_device_online(sn, query if query is not None else token, host):
+        if check_device_online(sn, query if query is not None else token, host, dev_id=dev_id):
             logger.info(f"设备 {sn} 唤醒成功")
             return True  # 设备已在线，停止唤醒
         

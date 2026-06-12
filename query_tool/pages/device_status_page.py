@@ -748,6 +748,59 @@ class DeviceStatusPage(BasePage):
         
         # 选中当前行
         self.result_table.selectRow(row)
+
+    def _get_row_query_item(self, row):
+        """按当前显示行获取原始查询结果。"""
+        original_row = self.display_row_to_original.get(row, row)
+        return self.query_results.get(original_row) or self.filtered_results.get(original_row)
+
+    def _is_non_siot_row(self, row):
+        """当前行是否为明确的非 SIOT 设备。"""
+        item = self._get_row_query_item(row)
+        return bool(item and item.get('is_siot') is False)
+
+    def _get_checked_rows(self):
+        """获取当前勾选的显示行号。"""
+        checked_rows = []
+        for row in range(self.result_table.rowCount()):
+            checkbox_widget = self.result_table.cellWidget(row, 0)
+            checkbox = checkbox_widget.findChild(QCheckBox) if checkbox_widget else None
+            if checkbox and checkbox.isChecked():
+                checked_rows.append(row)
+        return checked_rows
+
+    def _split_siot_rows(self, rows):
+        """拆分出可处理的 SIOT 行和需要跳过的非 SIOT 行。"""
+        siot_rows = []
+        skipped_rows = []
+        for row in rows:
+            if self._is_non_siot_row(row):
+                skipped_rows.append(row)
+            else:
+                siot_rows.append(row)
+        return siot_rows, skipped_rows
+
+    def _get_supported_checked_rows(self, empty_warning):
+        """获取勾选的可处理设备行；非 SIOT 设备会被跳过。"""
+        checked_rows = self._get_checked_rows()
+        if not checked_rows:
+            self.show_warning(empty_warning)
+            return []
+
+        siot_rows, skipped_rows = self._split_siot_rows(checked_rows)
+        if not siot_rows:
+            self.show_warning("所选设备均为非SIOT设备，不支持该操作")
+            return []
+
+        if skipped_rows:
+            self._show_skipped_non_siot_warning(len(skipped_rows))
+        return siot_rows
+
+    def _show_non_siot_unsupported_warning(self):
+        self.show_warning("非SIOT设备不支持该操作")
+
+    def _show_skipped_non_siot_warning(self, count):
+        self.show_warning(f"已跳过 {count} 台非SIOT设备，仅处理SIOT设备")
     
     def on_context_menu(self, pos):
         """显示右键菜单"""
@@ -863,6 +916,10 @@ class DeviceStatusPage(BasePage):
 
     def on_debug_single(self, row):
         """切换到调试页并连接当前设备"""
+        if self._is_non_siot_row(row):
+            self._show_non_siot_unsupported_warning()
+            return
+
         sn_item = self.result_table.item(row, 3)
         if not sn_item:
             self.show_warning("未获取到设备SN")
@@ -885,6 +942,10 @@ class DeviceStatusPage(BasePage):
 
     def on_reboot_single(self, row):
         """单个设备重启"""
+        if self._is_non_siot_row(row):
+            self._show_non_siot_unsupported_warning()
+            return
+
         # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
         sn = self.result_table.item(row, 3).text()
         dev_id = self.result_table.item(row, 4).text()
@@ -908,6 +969,10 @@ class DeviceStatusPage(BasePage):
     
     def on_upgrade_single(self, row):
         """单个设备升级"""
+        if self._is_non_siot_row(row):
+            self._show_non_siot_unsupported_warning()
+            return
+
         # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
         device_name = self.result_table.item(row, 1).text()
         model = self.result_table.item(row, 2).text()
@@ -979,6 +1044,10 @@ class DeviceStatusPage(BasePage):
     
     def on_port_mapping_single(self, row):
         """单个设备端口穿透"""
+        if self._is_non_siot_row(row):
+            self._show_non_siot_unsupported_warning()
+            return
+
         # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
         device_name = self.result_table.item(row, 1).text()
         sn = self.result_table.item(row, 3).text()
@@ -1003,6 +1072,10 @@ class DeviceStatusPage(BasePage):
     
     def on_collect_single(self, row, collect_type_id):
         """单设备数据采集"""
+        if self._is_non_siot_row(row):
+            self._show_non_siot_unsupported_warning()
+            return
+
         # 获取设备信息
         device_name_item = self.result_table.item(row, 1)
         model_item = self.result_table.item(row, 2)
@@ -1033,6 +1106,19 @@ class DeviceStatusPage(BasePage):
     def on_thread_count_changed(self, text):
         """线程数改变事件"""
         self.thread_count = int(text)
+
+    @staticmethod
+    def _dedupe_query_values(text):
+        """按输入顺序去重，保留首个有效值。"""
+        values = []
+        seen = set()
+        for line in text.split('\n'):
+            value = line.strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            values.append(value)
+        return values
     
     def on_query(self):
         """查询按钮点击"""
@@ -1083,9 +1169,14 @@ class DeviceStatusPage(BasePage):
                 dialog.exec_()
             return
         
-        # 解析输入
-        sn_list = [line.strip() for line in sn_text.split('\n') if line.strip()]
-        id_list = [line.strip() for line in id_text.split('\n') if line.strip()]
+        # 解析输入并去重（保留输入顺序）
+        sn_list = self._dedupe_query_values(sn_text)
+        id_list = self._dedupe_query_values(id_text)
+
+        if sn_text:
+            self.sn_input.setPlainText('\n'.join(sn_list))
+        if id_text:
+            self.id_input.setPlainText('\n'.join(id_list))
         
         # 判断查询类型
         if self.query_input_type == 'sn' and sn_list:
@@ -1443,8 +1534,9 @@ class DeviceStatusPage(BasePage):
     
     def on_wake_single(self, row):
         """单个设备唤醒"""
-        # 获取原始行号
-        original_row = self.display_row_to_original.get(row, row)
+        if self._is_non_siot_row(row):
+            self._show_non_siot_unsupported_warning()
+            return
         
         # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
         sn = self.result_table.item(row, 3).text()
@@ -1496,7 +1588,9 @@ class DeviceStatusPage(BasePage):
                 # 使用缓存的 DeviceQuery 对象
                 query = self.ensure_device_query(env, username, password)
                 if not query.init_error:
-                    is_online = check_device_online(sn, query)
+                    dev_id_item = self.result_table.item(row, 4)
+                    dev_id = dev_id_item.text().strip() if dev_id_item else ""
+                    is_online = check_device_online(sn, query, dev_id=dev_id)
                     status_text = "在线" if is_online else "离线"
                     status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
                     
@@ -1521,21 +1615,20 @@ class DeviceStatusPage(BasePage):
     def on_batch_wake(self):
         """批量唤醒"""
         selected_devices = []
-        selected_rows = []
+        selected_rows = self._get_supported_checked_rows("请先选择要唤醒的设备")
         sn_to_row_map = {}  # 创建SN到行号的映射
-        
-        for row in range(self.result_table.rowCount()):
-            checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
-            if checkbox and checkbox.isChecked():
-                # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
-                sn = self.result_table.item(row, 3).text()
-                dev_id = self.result_table.item(row, 4).text()
-                if sn and dev_id:
-                    selected_devices.append((dev_id, sn))
-                    selected_rows.append(row)
-                    sn_to_row_map[sn] = row  # 保存SN到行号的映射
-        
+
+        if not selected_rows:
+            return
+
+        for row in selected_rows:
+            # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+            sn = self.result_table.item(row, 3).text()
+            dev_id = self.result_table.item(row, 4).text()
+            if sn and dev_id:
+                selected_devices.append((dev_id, sn))
+                sn_to_row_map[sn] = row  # 保存SN到行号的映射
+
         if not selected_devices:
             self.show_warning("请先选择要唤醒的设备")
             return
@@ -1628,7 +1721,9 @@ class DeviceStatusPage(BasePage):
                 # 使用缓存的 DeviceQuery 对象
                 query = self.ensure_device_query(env, username, password)
                 if not query.init_error:
-                    is_online = check_device_online(sn, query)
+                    dev_id_item = self.result_table.item(row, 4)
+                    dev_id = dev_id_item.text().strip() if dev_id_item else ""
+                    is_online = check_device_online(sn, query, dev_id=dev_id)
                     status_text = "在线" if is_online else "离线"
                     status_color = QColor(Qt.green) if is_online else QColor(Qt.red)
                     
@@ -1678,17 +1773,18 @@ class DeviceStatusPage(BasePage):
         """批量重启"""
         # 获取所有选中的设备
         selected_devices = []
-        for row in range(self.result_table.rowCount()):
-            checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
-            if checkbox and checkbox.isChecked():
-                # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
-                device_name = self.result_table.item(row, 1).text()
-                sn = self.result_table.item(row, 3).text()
-                dev_id = self.result_table.item(row, 4).text()
-                if sn and dev_id:
-                    selected_devices.append((sn, dev_id, device_name))
-        
+        selected_rows = self._get_supported_checked_rows("请先选择要重启的设备")
+        if not selected_rows:
+            return
+
+        for row in selected_rows:
+            # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+            device_name = self.result_table.item(row, 1).text()
+            sn = self.result_table.item(row, 3).text()
+            dev_id = self.result_table.item(row, 4).text()
+            if sn and dev_id:
+                selected_devices.append((sn, dev_id, device_name))
+
         if not selected_devices:
             self.show_warning("请先选择要重启的设备")
             return
@@ -1722,12 +1818,12 @@ class DeviceStatusPage(BasePage):
                 if sn:
                     sn_to_row_map[sn] = row
         
-        def query_status(sn):
+        def query_status(sn, dev_id):
             try:
                 env, username, password = get_account_config()
                 query = self.ensure_device_query(env, username, password)
                 if not query.init_error:
-                    is_online = check_device_online(sn, query)
+                    is_online = check_device_online(sn, query, dev_id=dev_id)
                     return sn, is_online
             except Exception as e:
                 from query_tool.utils.logger import logger
@@ -1735,7 +1831,7 @@ class DeviceStatusPage(BasePage):
             return sn, None
         
         with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
-            futures = {executor.submit(query_status, sn): sn for sn, _, _ in devices}
+            futures = {executor.submit(query_status, sn, dev_id): sn for sn, dev_id, _ in devices}
             
             for future in as_completed(futures):
                 sn, is_online = future.result()
@@ -1752,18 +1848,19 @@ class DeviceStatusPage(BasePage):
         """批量升级"""
         # 获取所有选中的设备
         selected_devices = []
-        for row in range(self.result_table.rowCount()):
-            checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
-            if checkbox and checkbox.isChecked():
-                # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
-                device_name = self.result_table.item(row, 1).text()
-                model = self.result_table.item(row, 2).text()
-                sn = self.result_table.item(row, 3).text()
-                dev_id = self.result_table.item(row, 4).text()
-                if sn and dev_id and model:
-                    selected_devices.append((sn, dev_id, device_name, model))
-        
+        selected_rows = self._get_supported_checked_rows("请先选择要升级的设备")
+        if not selected_rows:
+            return
+
+        for row in selected_rows:
+            # 列顺序：选择 | 设备名称 | 型号 | SN | ID | 密码 | 接入节点 | 版本号 | 在线状态 | 最后心跳
+            device_name = self.result_table.item(row, 1).text()
+            model = self.result_table.item(row, 2).text()
+            sn = self.result_table.item(row, 3).text()
+            dev_id = self.result_table.item(row, 4).text()
+            if sn and dev_id and model:
+                selected_devices.append((sn, dev_id, device_name, model))
+
         if not selected_devices:
             self.show_warning("请先选择要升级的设备")
             return
@@ -1838,16 +1935,17 @@ class DeviceStatusPage(BasePage):
     def on_upgrade_stress(self):
         """升级压测"""
         selected_devices = []
-        for row in range(self.result_table.rowCount()):
-            checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
-            if checkbox and checkbox.isChecked():
-                device_name = self.result_table.item(row, 1).text()
-                model = self.result_table.item(row, 2).text()
-                sn = self.result_table.item(row, 3).text()
-                dev_id = self.result_table.item(row, 4).text()
-                if sn and dev_id and model:
-                    selected_devices.append((sn, dev_id, device_name, model))
+        selected_rows = self._get_supported_checked_rows("请先选择要进行升级压测的设备")
+        if not selected_rows:
+            return
+
+        for row in selected_rows:
+            device_name = self.result_table.item(row, 1).text()
+            model = self.result_table.item(row, 2).text()
+            sn = self.result_table.item(row, 3).text()
+            dev_id = self.result_table.item(row, 4).text()
+            if sn and dev_id and model:
+                selected_devices.append((sn, dev_id, device_name, model))
 
         if not selected_devices:
             self.show_warning("请先选择要进行升级压测的设备")
@@ -1882,22 +1980,23 @@ class DeviceStatusPage(BasePage):
         
         # 获取选中的设备
         selected_devices = []
-        for row in range(self.result_table.rowCount()):
-            checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
-            if checkbox and checkbox.isChecked():
-                device_name = self.result_table.item(row, 1).text()
-                model = self.result_table.item(row, 2).text()
-                sn = self.result_table.item(row, 3).text()
-                dev_id = self.result_table.item(row, 4).text()
-                
-                selected_devices.append({
-                    'device_name': device_name,
-                    'model': model,
-                    'sn': sn,
-                    'dev_id': dev_id
-                })
-        
+        selected_rows = self._get_supported_checked_rows("请先选择要采集数据的设备")
+        if not selected_rows:
+            return
+
+        for row in selected_rows:
+            device_name = self.result_table.item(row, 1).text()
+            model = self.result_table.item(row, 2).text()
+            sn = self.result_table.item(row, 3).text()
+            dev_id = self.result_table.item(row, 4).text()
+
+            selected_devices.append({
+                'device_name': device_name,
+                'model': model,
+                'sn': sn,
+                'dev_id': dev_id
+            })
+
         if not selected_devices:
             self.show_warning("请先选择要采集数据的设备")
             return
@@ -1938,7 +2037,7 @@ class DeviceStatusPage(BasePage):
             count = TableHelper.export_to_csv(
                 self.result_table,
                 file_path=file_path,
-                columns={1: "设备名称", 2: "型号", 3: "SN", 4: "ID", 5: "密码"},
+                columns={1: "设备名称", 2: "型号", 3: "SN", 4: "ID", 5: "密码", 8: "最后心跳"},
                 skip_text=["查询中..."]
             )
             

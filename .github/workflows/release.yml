@@ -201,10 +201,14 @@ jobs:
           }
           $changelogJson = $changelogItems | ConvertTo-Json -Compress
 
+          $showChangeJson = 'true'
           $analyticsJson = '{}'
           if (Test-Path "version.json") {
               $existing = Get-Content "version.json" -Raw -Encoding UTF8 | ConvertFrom-Json
-              if ($existing.analytics) {
+              if ($existing.PSObject.Properties.Name -contains 'show_change') {
+                  $showChangeJson = $existing.show_change | ConvertTo-Json -Compress
+              }
+              if ($existing.PSObject.Properties.Name -contains 'analytics' -and $null -ne $existing.analytics) {
                   $analyticsJson = $existing.analytics | ConvertTo-Json -Compress
               }
           }
@@ -222,6 +226,7 @@ jobs:
             "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
             "min_version": "3.0.0",
             "update_strategy": "silent",
+            "show_change": $showChangeJson,
             "changelog": $changelogJson,
             "analytics": $analyticsJson
           }

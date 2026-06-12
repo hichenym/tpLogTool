@@ -21,15 +21,16 @@ class StatusQueryThread(QThread):
     """状态查询线程"""
     finished_signal = pyqtSignal(bool, str)  # is_online, message
     
-    def __init__(self, sn, device_query):
+    def __init__(self, sn, device_query, dev_id=None):
         super().__init__()
         self.sn = sn
         self.device_query = device_query
+        self.dev_id = dev_id
     
     def run(self):
         try:
             from query_tool.utils import check_device_online
-            is_online = check_device_online(self.sn, self.device_query)
+            is_online = check_device_online(self.sn, self.device_query, dev_id=self.dev_id)
             if is_online:
                 self.finished_signal.emit(True, "在线")
             else:
@@ -54,8 +55,7 @@ class WakeDeviceThread(QThread):
             is_online = wake_device_smart(
                 self.dev_id, 
                 self.sn, 
-                self.device_query.token, 
-                self.device_query.host,
+                self.device_query,
                 max_times=3
             )
             if is_online:
@@ -294,7 +294,7 @@ class PortMappingDialog(AdaptiveDialog):
         self.refresh_btn.setEnabled(False)
         
         if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query)
+            thread = StatusQueryThread(self.sn, self.device_query, self.dev_id)
             thread.finished_signal.connect(self.on_status_query_finished)
             thread.finished.connect(lambda: thread.deleteLater())
             self.thread_mgr.add("status_query", thread)
@@ -437,7 +437,7 @@ class PortMappingDialog(AdaptiveDialog):
         
         # 重新查询状态
         if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query)
+            thread = StatusQueryThread(self.sn, self.device_query, self.dev_id)
             thread.finished_signal.connect(
                 lambda is_online, msg: self.on_confirm_status_checked(is_online, msg, ip, port)
             )

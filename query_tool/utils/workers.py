@@ -57,12 +57,21 @@ class QueryWorker(QObject):
                 node_info = self.query.get_access_node(dev_id=dev_id) if dev_id else {}
                 # 使用新接口获取版本号
                 version = self.query.get_device_version(dev_id) if dev_id else ''
-                # 使用新接口获取在线状态和型号
-                header_info = self.query.get_device_header(sn) if sn else {}
-                online_status = header_info.get('data', {}).get('onlineStatus', -1) if header_info and header_info.get('data') else -1
-                model = header_info.get('data', {}).get('productName', '') if header_info else ''
-                # 获取最后心跳时间
-                last_heartbeat = self.query.get_device_last_heartbeat(dev_id) if dev_id else ''
+                try:
+                    status_snapshot = self.query.get_device_status_snapshot(dev_id=dev_id, sn=sn)
+                except Exception as e:
+                    logger.warning(f"查询设备状态快照失败 {sn}: {e}")
+                    status_snapshot = {}
+                online_status = status_snapshot.get('online', -2)
+                last_heartbeat = status_snapshot.get('last_heartbeat', '')
+                is_siot = status_snapshot.get('is_siot')
+                # 型号优先沿用原有 header 取值逻辑；非 siot 场景允许失败后回退到版本提取。
+                model = ''
+                try:
+                    header_info = self.query.get_device_header(sn) if sn else {}
+                    model = header_info.get('data', {}).get('productName', '') if header_info else ''
+                except Exception:
+                    model = ''
                 # 获取设备名称
                 device_name = self.query.get_device_name(dev_id) if dev_id else ''
                 
@@ -82,14 +91,15 @@ class QueryWorker(QObject):
                     'model': model or '',
                     'version': version or '',
                     'online': online_status,
-                    'last_heartbeat': last_heartbeat or ''
+                    'last_heartbeat': last_heartbeat or '',
+                    'is_siot': is_siot,
                 }
             else:
                 return row, {
                     'device_name': '',
                     'sn': value if query_type == 'sn' else '',
                     'id': value if query_type == 'id' else '',
-                    'password': '', 'node': '', 'model': '', 'version': '', 'online': -1, 'last_heartbeat': ''
+                    'password': '', 'node': '', 'model': '', 'version': '', 'online': -1, 'last_heartbeat': '', 'is_siot': None
                 }
         except Exception as e:
             logger.error(f"查询设备失败 {value}: {e}")
@@ -98,7 +108,7 @@ class QueryWorker(QObject):
                 'sn': value if query_type == 'sn' else '',
                 'id': value if query_type == 'id' else '',
                 'password': '', 'node': '', 'model': '', 'version': '',
-                'online': -2, 'last_heartbeat': '', 'error': str(e)
+                'online': -2, 'last_heartbeat': '', 'is_siot': None, 'error': str(e)
             }
     
     def run(self):
@@ -403,20 +413,28 @@ class PhoneQueryWorker(QObject):
                     version = ''
                     online_status = -1
                     last_heartbeat = ''
-                    
-                    # 获取型号和在线状态（使用标准化的SN）
+                    is_siot = None
+
+                    try:
+                        status_snapshot = query.get_device_status_snapshot(dev_id=dev_id, sn=standard_sn) if dev_id or standard_sn else {}
+                    except Exception as e:
+                        logger.warning(f"查询设备状态快照失败 {standard_sn}: {e}")
+                        status_snapshot = {}
+                    online_status = status_snapshot.get('online', -2)
+                    last_heartbeat = status_snapshot.get('last_heartbeat', '')
+                    is_siot = status_snapshot.get('is_siot')
+
+                    # 获取型号（使用标准化的SN）
                     try:
                         header_info = query.get_device_header(standard_sn)
                         if header_info:
                             if header_info.get('data'):
                                 model = header_info['data'].get('productName', '')
-                                online_status = header_info['data'].get('onlineStatus', 0)
                             elif header_info.get('code') == 20001:
                                 # 设备不存在
                                 model = '设备不存在'
-                                online_status = -1
                     except Exception as e:
-                        # 型号和在线状态获取失败
+                        # 型号获取失败
                         pass
                     
                     # 以下信息需要dev_id
@@ -443,13 +461,6 @@ class PhoneQueryWorker(QObject):
                             # 版本获取失败不影响其他信息
                             pass
                         
-                        try:
-                            # 获取最后心跳
-                            last_heartbeat = query.get_device_last_heartbeat(dev_id) or ''
-                        except Exception as e:
-                            # 心跳获取失败不影响其他信息
-                            pass
-                    
                     # 如果型号为空或未找到，尝试从版本号中提取
                     if not model or model in ['设备不存在', '未知型号', '查询失败', '未找到']:
                         if version and '-' in version:
@@ -467,7 +478,8 @@ class PhoneQueryWorker(QObject):
                         'model': model,
                         'version': version,
                         'online': online_status,
-                        'last_heartbeat': last_heartbeat
+                        'last_heartbeat': last_heartbeat,
+                        'is_siot': is_siot,
                     }
                 except Exception as e:
                     return {
@@ -480,6 +492,7 @@ class PhoneQueryWorker(QObject):
                         'version': '',
                         'online': -2,
                         'last_heartbeat': '',
+                        'is_siot': None,
                         'error': str(e)
                     }
             

@@ -28,15 +28,16 @@ class StatusQueryThread(QThread):
     """状态查询线程"""
     finished_signal = pyqtSignal(bool, str)  # is_online, message
     
-    def __init__(self, sn, device_query):
+    def __init__(self, sn, device_query, dev_id=None):
         super().__init__()
         self.sn = sn
         self.device_query = device_query
+        self.dev_id = dev_id
     
     def run(self):
         try:
             from query_tool.utils.device_query import query_device_online_state
-            online_state = query_device_online_state(self.sn, self.device_query)
+            online_state = query_device_online_state(self.sn, self.device_query, dev_id=self.dev_id)
             if online_state is True:
                 self.finished_signal.emit(True, "在线")
             elif online_state is False:
@@ -63,8 +64,7 @@ class WakeDeviceThread(QThread):
             is_online = wake_device_smart(
                 self.dev_id, 
                 self.sn, 
-                self.device_query.token, 
-                self.device_query.host,
+                self.device_query,
                 max_times=3
             )
             if is_online:
@@ -461,7 +461,7 @@ class UpgradeDialog(AdaptiveDialog):
         self.refresh_btn.setEnabled(False)
         
         if self.device_query and not self.device_query.init_error:
-            thread = StatusQueryThread(self.sn, self.device_query)
+            thread = StatusQueryThread(self.sn, self.device_query, self.dev_id)
             thread.finished_signal.connect(self.on_status_query_finished)
             thread.finished.connect(lambda: thread.deleteLater())
             self.thread_mgr.add("status_query", thread)
