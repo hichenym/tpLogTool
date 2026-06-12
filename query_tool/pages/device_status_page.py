@@ -40,6 +40,7 @@ class DeviceStatusPage(BasePage):
         ("用户名", "username"),
         ("邮箱", "email"),
     ]
+    STATUS_FILTER_OPTIONS = ("全部", "在线", "离线")
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -70,6 +71,7 @@ class DeviceStatusPage(BasePage):
         self.all_versions = set()  # 所有版本
         self.current_sn_filter = ""  # 当前SN筛选
         self.current_model_filter = None  # 当前型号筛选
+        self.current_status_filter = None  # 当前状态筛选
         self.current_version_filter = None  # 当前版本筛选
         self.filtered_results = {}  # 存储过滤后的结果
         self.display_row_to_original = {}  # 映射显示行号到原始行号
@@ -366,7 +368,19 @@ class DeviceStatusPage(BasePage):
         self.model_combo.addItem("全部")
         self.model_combo.setEnabled(False)
         self.model_combo.currentTextChanged.connect(self.on_filter_changed)
-        
+
+        # 状态筛选
+        status_filter_label = QLabel("状态:")
+        status_filter_label.setFixedWidth(40)
+        status_filter_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        status_filter_label.setStyleSheet("border: none;")  # 去掉边框
+        self.status_combo = NoWheelComboBox()
+        self.status_combo.setFixedHeight(28)
+        for status in self.STATUS_FILTER_OPTIONS:
+            self.status_combo.addItem(status)
+        self.status_combo.setEnabled(False)
+        self.status_combo.currentTextChanged.connect(self.on_filter_changed)
+
         # 版本筛选
         version_filter_label = QLabel("版本:")
         version_filter_label.setFixedWidth(40)
@@ -382,15 +396,18 @@ class DeviceStatusPage(BasePage):
         self.match_count_label = QLabel("数量: 0 / 0")
         self.match_count_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px; border: none;")
         
-        # 按比例 1:1:3 添加控件
+        # 按比例分配筛选控件宽度
         filter_layout.addWidget(sn_filter_label)
         filter_layout.addWidget(self.sn_filter_input, 1)
         filter_layout.addSpacing(10)
         filter_layout.addWidget(model_filter_label)
         filter_layout.addWidget(self.model_combo, 1)
         filter_layout.addSpacing(10)
+        filter_layout.addWidget(status_filter_label)
+        filter_layout.addWidget(self.status_combo, 1)
+        filter_layout.addSpacing(10)
         filter_layout.addWidget(version_filter_label)
-        filter_layout.addWidget(self.version_combo, 3)
+        filter_layout.addWidget(self.version_combo, 2)
         filter_layout.addSpacing(20)
         filter_layout.addWidget(self.match_count_label)
         
@@ -916,10 +933,6 @@ class DeviceStatusPage(BasePage):
 
     def on_debug_single(self, row):
         """切换到调试页并连接当前设备"""
-        if self._is_non_siot_row(row):
-            self._show_non_siot_unsupported_warning()
-            return
-
         sn_item = self.result_table.item(row, 3)
         if not sn_item:
             self.show_warning("未获取到设备SN")
@@ -1199,19 +1212,7 @@ class DeviceStatusPage(BasePage):
         # 清空当前数据和筛选条件
         self.result_table.setRowCount(0)
         self.select_all_checkbox.setChecked(False)  # 取消全选
-        self.sn_filter_input.clear()
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-        self.model_combo.addItem("全部")
-        self.model_combo.blockSignals(False)
-        self.version_combo.blockSignals(True)
-        self.version_combo.clear()
-        self.version_combo.addItem("全部")
-        self.version_combo.blockSignals(False)
-        self.all_models = set()
-        self.all_versions = set()
-        self.filtered_results = {}
-        self.match_count_label.setText("数量: 0 / 0")
+        self._reset_filter_controls()
         
         # 重置数据
         self.query_results = {}
@@ -1224,9 +1225,7 @@ class DeviceStatusPage(BasePage):
         self.query_btn.setText("查询中...")
         
         # 禁用筛选控件
-        self.sn_filter_input.setEnabled(False)
-        self.model_combo.setEnabled(False)
-        self.version_combo.setEnabled(False)
+        self._update_filter_control_enabled_states()
         
         # 清理旧的查询线程
         if hasattr(self, '_query_thread') and self._query_thread:
@@ -1348,9 +1347,7 @@ class DeviceStatusPage(BasePage):
         self.main_buttons.enable()
         
         # 启用筛选控件
-        self.sn_filter_input.setEnabled(True)
-        self.model_combo.setEnabled(True)
-        self.version_combo.setEnabled(True)
+        self._update_filter_control_enabled_states()
         
         self.show_error(f"查询失败: {error_msg}")
     
@@ -1415,11 +1412,7 @@ class DeviceStatusPage(BasePage):
         self.update_filter_combos()
         
         # 启用筛选控件
-        self.sn_filter_input.setEnabled(True)
-        if len(self.all_models) > 0:
-            self.model_combo.setEnabled(True)
-        if len(self.all_versions) > 0:
-            self.version_combo.setEnabled(True)
+        self._update_filter_control_enabled_states()
         
         # 初始化匹配数量为全部数量
         self.match_count_label.setText(f"数量: {self.result_table.rowCount()} / {self.total_count}")
@@ -1443,28 +1436,7 @@ class DeviceStatusPage(BasePage):
         self.batch_collect_btn.setEnabled(False)
         
         # 重置筛选条件
-        self.sn_filter_input.clear()
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-        self.model_combo.addItem("全部")
-        self.model_combo.setEnabled(False)
-        self.model_combo.blockSignals(False)
-        
-        self.version_combo.blockSignals(True)
-        self.version_combo.clear()
-        self.version_combo.addItem("全部")
-        self.version_combo.setEnabled(False)
-        self.version_combo.blockSignals(False)
-        
-        self.all_models = set()
-        self.all_versions = set()
-        self.current_sn_filter = ""
-        self.current_model_filter = None
-        self.current_version_filter = None
-        self.filtered_results = {}
-        
-        # 重置匹配数量
-        self.match_count_label.setText("数量: 0 / 0")
+        self._reset_filter_controls()
         
         # 重置原始文本和列表
         self.original_sn_text = ""
@@ -2142,7 +2114,7 @@ class DeviceStatusPage(BasePage):
     def refresh_table_display(self):
         """刷新表格显示"""
         # 确定要显示的数据
-        display_data = self.filtered_results if self.filtered_results else self.query_results
+        display_data = self.filtered_results if self._has_active_filters() else self.query_results
         
         # 清空表格
         self.result_table.setRowCount(0)
@@ -2243,8 +2215,14 @@ class DeviceStatusPage(BasePage):
         # 检查是否有筛选条件
         sn_filter = self.sn_filter_input.text().strip().lower()
         selected_model = self.model_combo.currentText()
+        selected_status = self.status_combo.currentText()
         selected_version = self.version_combo.currentText()
-        has_filter = sn_filter or selected_model != "全部" or selected_version != "全部"
+        has_filter = self._has_active_filters(
+            sn_filter,
+            selected_model,
+            selected_status,
+            selected_version,
+        )
         
         # 如果没有筛选条件，恢复原始数据
         if not has_filter:
@@ -2460,18 +2438,7 @@ class DeviceStatusPage(BasePage):
         self.offline_count = 0
         
         # 清空筛选条件
-        self.sn_filter_input.clear()
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-        self.model_combo.addItem("全部")
-        self.model_combo.blockSignals(False)
-        self.version_combo.blockSignals(True)
-        self.version_combo.clear()
-        self.version_combo.addItem("全部")
-        self.version_combo.blockSignals(False)
-        self.all_models = set()
-        self.all_versions = set()
-        self.filtered_results = {}
+        self._reset_filter_controls()
         
         # 保存原始SN和ID列表
         self.original_sn_list = sn_list.copy()
@@ -2527,9 +2494,81 @@ class DeviceStatusPage(BasePage):
         )
     
     # ===== 筛选相关方法 =====
+
+    def _update_filter_control_enabled_states(self):
+        """根据当前查询结果刷新筛选控件启用状态。"""
+        has_results = bool(self.query_results)
+        self.sn_filter_input.setEnabled(has_results)
+        self.model_combo.setEnabled(bool(self.all_models))
+        self.status_combo.setEnabled(has_results)
+        self.version_combo.setEnabled(bool(self.all_versions))
+
+    def _reset_filter_controls(self):
+        """重置筛选控件及其状态。"""
+        self.sn_filter_input.blockSignals(True)
+        self.sn_filter_input.clear()
+        self.sn_filter_input.blockSignals(False)
+
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        self.model_combo.addItem("全部")
+        self.model_combo.blockSignals(False)
+
+        self.status_combo.blockSignals(True)
+        self.status_combo.clear()
+        for status in self.STATUS_FILTER_OPTIONS:
+            self.status_combo.addItem(status)
+        self.status_combo.blockSignals(False)
+
+        self.version_combo.blockSignals(True)
+        self.version_combo.clear()
+        self.version_combo.addItem("全部")
+        self.version_combo.blockSignals(False)
+
+        self.all_models = set()
+        self.all_versions = set()
+        self.current_sn_filter = ""
+        self.current_model_filter = None
+        self.current_status_filter = None
+        self.current_version_filter = None
+        self.filtered_results = {}
+        self.match_count_label.setText("数量: 0 / 0")
+        self._update_filter_control_enabled_states()
+
+    def _has_active_filters(
+        self,
+        sn_filter=None,
+        selected_model=None,
+        selected_status=None,
+        selected_version=None,
+    ):
+        """判断当前是否存在有效筛选条件。"""
+        if sn_filter is None:
+            sn_filter = self.sn_filter_input.text().strip().lower()
+        if selected_model is None:
+            selected_model = self.model_combo.currentText()
+        if selected_status is None:
+            selected_status = self.status_combo.currentText()
+        if selected_version is None:
+            selected_version = self.version_combo.currentText()
+        return (
+            bool(sn_filter)
+            or selected_model != "全部"
+            or selected_status != "全部"
+            or selected_version != "全部"
+        )
+
+    @staticmethod
+    def _matches_status_filter(result, selected_status):
+        """判断设备是否匹配状态筛选条件。"""
+        if selected_status == "在线":
+            return result.get('online', -1) == 1
+        if selected_status == "离线":
+            return result.get('online', -1) == 0
+        return True
     
     def update_filter_combos(self):
-        """更新型号和版本下拉框"""
+        """更新型号、状态和版本下拉框"""
         # 收集所有型号和版本号
         self.all_models = set()
         self.all_versions = set()
@@ -2548,8 +2587,14 @@ class DeviceStatusPage(BasePage):
         self.model_combo.addItem("全部")
         for model in sorted(self.all_models):
             self.model_combo.addItem(model)
-        self.model_combo.setEnabled(len(self.all_models) > 0)
         self.model_combo.blockSignals(False)
+
+        # 更新状态下拉框
+        self.status_combo.blockSignals(True)
+        self.status_combo.clear()
+        for status in self.STATUS_FILTER_OPTIONS:
+            self.status_combo.addItem(status)
+        self.status_combo.blockSignals(False)
         
         # 更新版本下拉框
         self.version_combo.blockSignals(True)
@@ -2557,14 +2602,15 @@ class DeviceStatusPage(BasePage):
         self.version_combo.addItem("全部")
         for version in sorted(self.all_versions):
             self.version_combo.addItem(version)
-        self.version_combo.setEnabled(len(self.all_versions) > 0)
         self.version_combo.blockSignals(False)
         
         # 重置筛选
         self.current_sn_filter = ""
         self.current_model_filter = None
+        self.current_status_filter = None
         self.current_version_filter = None
         self.filtered_results = {}
+        self._update_filter_control_enabled_states()
     
     def on_filter_changed(self):
         """筛选条件变化"""
@@ -2573,21 +2619,27 @@ class DeviceStatusPage(BasePage):
         # 获取当前筛选条件
         sn_filter = self.sn_filter_input.text().strip().lower()
         selected_model = self.model_combo.currentText()
+        selected_status = self.status_combo.currentText()
         selected_version = self.version_combo.currentText()
         
         # 根据触发源处理逻辑
         if sender == self.sn_filter_input:
-            # SN筛选时，型号和版本自动选择"全部"
+            # SN筛选时，型号、状态和版本自动选择"全部"
             if sn_filter:
                 self.model_combo.blockSignals(True)
                 self.model_combo.setCurrentText("全部")
                 self.model_combo.blockSignals(False)
+
+                self.status_combo.blockSignals(True)
+                self.status_combo.setCurrentText("全部")
+                self.status_combo.blockSignals(False)
                 
                 self.version_combo.blockSignals(True)
                 self.version_combo.setCurrentText("全部")
                 self.version_combo.blockSignals(False)
                 
                 selected_model = "全部"
+                selected_status = "全部"
                 selected_version = "全部"
         
         elif sender == self.model_combo:
@@ -2598,8 +2650,21 @@ class DeviceStatusPage(BasePage):
                 self.sn_filter_input.blockSignals(False)
                 sn_filter = ""
             
-            # 更新版本下拉框以匹配该型号的所有版本
-            self.update_version_combo_by_model(selected_model)
+            # 更新版本下拉框以匹配当前筛选条件下的版本
+            self.update_version_combo_by_filters(selected_model, selected_status)
+            selected_version = self.version_combo.currentText()
+
+        elif sender == self.status_combo:
+            # 选择状态时，清空SN筛选
+            if selected_status != "全部":
+                self.sn_filter_input.blockSignals(True)
+                self.sn_filter_input.clear()
+                self.sn_filter_input.blockSignals(False)
+                sn_filter = ""
+
+            # 更新版本下拉框以匹配当前筛选条件下的版本
+            self.update_version_combo_by_filters(selected_model, selected_status)
+            selected_version = self.version_combo.currentText()
         
         elif sender == self.version_combo:
             # 选择版本时，清空SN筛选
@@ -2610,10 +2675,10 @@ class DeviceStatusPage(BasePage):
                 sn_filter = ""
         
         # 应用筛选
-        self.apply_filters(sn_filter, selected_model, selected_version)
+        self.apply_filters(sn_filter, selected_model, selected_status, selected_version)
     
-    def update_version_combo_by_model(self, selected_model):
-        """根据型号更新版本下拉框"""
+    def update_version_combo_by_filters(self, selected_model, selected_status):
+        """根据型号和状态更新版本下拉框"""
         # 获取当前选中的版本
         current_version = self.version_combo.currentText()
         
@@ -2630,6 +2695,10 @@ class DeviceStatusPage(BasePage):
             if selected_model != "全部":
                 if result.get('model', '') != selected_model:
                     continue
+
+            # 按状态筛选
+            if not self._matches_status_filter(result, selected_status):
+                continue
             
             # 提取版本号
             version = result.get('version', '')
@@ -2649,10 +2718,19 @@ class DeviceStatusPage(BasePage):
         
         self.version_combo.blockSignals(False)
     
-    def apply_filters(self, sn_filter, selected_model, selected_version):
+    def apply_filters(self, sn_filter, selected_model, selected_status, selected_version):
         """应用筛选条件"""
         # 检查是否有任何筛选条件
-        has_filter = sn_filter or selected_model != "全部" or selected_version != "全部"
+        has_filter = self._has_active_filters(
+            sn_filter,
+            selected_model,
+            selected_status,
+            selected_version,
+        )
+        self.current_sn_filter = sn_filter
+        self.current_model_filter = None if selected_model == "全部" else selected_model
+        self.current_status_filter = None if selected_status == "全部" else selected_status
+        self.current_version_filter = None if selected_version == "全部" else selected_version
         
         # 筛选设备
         self.filtered_results = {}
@@ -2669,6 +2747,10 @@ class DeviceStatusPage(BasePage):
                 if selected_model != "全部":
                     if result.get('model', '') != selected_model:
                         continue
+
+                # 按状态筛选
+                if not self._matches_status_filter(result, selected_status):
+                    continue
                 
                 # 按版本筛选
                 if selected_version != "全部":
@@ -2698,7 +2780,7 @@ class DeviceStatusPage(BasePage):
         self.update_input_boxes_from_filtered_table()
         
         # 更新统计信息
-        if has_filter and len(self.filtered_results) < len(self.query_results):
+        if has_filter:
             self.update_filtered_status_summary()
         else:
             self.update_device_status_summary()

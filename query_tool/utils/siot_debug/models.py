@@ -7,6 +7,9 @@ class DeviceCredentials:
     sn: str
     username: str
     password: str
+    dev_id: str = ""
+    is_siot: Optional[bool] = None
+    protocol: str = "siot"
 
 
 @dataclass(frozen=True)

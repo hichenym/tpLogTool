@@ -27,6 +27,14 @@ sys.path.insert(0, PROJECT_ROOT)
 RELEASE_OUTPUT_DIR = "dist"
 FAST_OUTPUT_DIR = os.path.join("dist", "fast")
 APP_NAME = "TPQueryTool"
+REQUIRED_SDK_DLLS = (
+    "Funclib.dll",
+    "libgcc_s_seh-1.dll",
+    "libsiot.dll",
+    "libstdc++-6.dll",
+    "libtps_crypt.dll",
+    "libwinpthread-1.dll",
+)
 
 
 def configure_stdio():
@@ -73,7 +81,7 @@ def clean_build(output_dir=RELEASE_OUTPUT_DIR):
 
 
 def get_sdk_dll_include_args():
-    """显式包含 SIOT SDK DLL，避免 Nuitka 将纯 DLL 目录视为“无 data files”而跳过。"""
+    """显式包含设备 SDK DLL，避免 Nuitka 将纯 DLL 目录视为“无 data files”而跳过。"""
     dll_dir = os.path.join(PROJECT_ROOT, "query_tool", "dll")
     if not os.path.isdir(dll_dir):
         print(f"[WARN] DLL目录不存在: {dll_dir}")
@@ -85,12 +93,22 @@ def get_sdk_dll_include_args():
         print(f"[WARN] DLL目录中未找到 .dll 文件: {dll_dir}")
         return []
 
+    lower_name_map = {name.lower(): name for name in dll_names}
+    missing_required = [
+        dll_name
+        for dll_name in REQUIRED_SDK_DLLS
+        if dll_name.lower() not in lower_name_map
+    ]
+    if missing_required:
+        missing_text = ", ".join(missing_required)
+        raise FileNotFoundError(f"缺少必要的SDK DLL: {missing_text}")
+
     for dll_name in dll_names:
         source = os.path.join("query_tool", "dll", dll_name)
         target = f"query_tool/dll/{dll_name}"
         include_args.append(f"--include-data-files={source}={target}")
 
-    print(f"[OK] 将显式包含 {len(dll_names)} 个SIOT DLL")
+    print(f"[OK] 将显式包含 {len(dll_names)} 个SDK DLL")
     for dll_name in dll_names:
         print(f"     - {dll_name}")
     return include_args

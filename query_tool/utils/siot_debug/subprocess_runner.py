@@ -7,12 +7,14 @@ import shlex
 import sys
 import threading
 import time
+from typing import Callable
 from datetime import datetime
 from pathlib import Path
 
-from .command_catalog import is_getsystemcfg_command, is_startlogp2p_command, is_syscmd_family_command, is_syscmdex_command, parse_startlogp2p_level
+from .command_catalog import is_getsystemcfg_command, is_startlogp2p_command, is_syscmd_family_command, parse_startlogp2p_level
 from .config import APP_LOG_DIR, DEFAULT_COMMAND_TIMEOUT_MS, RUN_LOG_PATH
 from .models import CommandResult, DeviceCredentials, TransferProgress
+from .p2p_session import P2PDeviceSession
 from .session import DeviceSession
 
 CONNECT_WAKEUP_ATTEMPTS = 1
@@ -271,7 +273,42 @@ def _is_wakeup_failed_message(message: str) -> bool:
     )
 
 
-def _try_probe_file_size(session: DeviceSession, command: str) -> int:
+def _normalized_protocol(credentials: DeviceCredentials) -> str:
+    protocol = (credentials.protocol or "").strip().lower()
+    if protocol in {"siot", "p2p", "auto"}:
+        return protocol
+    if credentials.is_siot is True:
+        return "siot"
+    if credentials.is_siot is False:
+        return "p2p"
+    return "auto"
+
+
+def _build_session_factories(
+    credentials: DeviceCredentials,
+    cloud_username: str,
+    cloud_password: str,
+) -> list[tuple[str, Callable[[], object]]]:
+    protocol = _normalized_protocol(credentials)
+    factories: list[tuple[str, Callable[[], object]]] = []
+
+    if protocol == "p2p":
+        factories.append(("p2p", P2PDeviceSession))
+        return factories
+
+    if protocol == "siot":
+        if not cloud_username or not cloud_password:
+            raise RuntimeError("当前设备为SIOT设备，请先在设置中配置Seetong账号")
+        factories.append(("siot", lambda: DeviceSession(cloud_username, cloud_password)))
+        return factories
+
+    if cloud_username and cloud_password:
+        factories.append(("siot", lambda: DeviceSession(cloud_username, cloud_password)))
+    factories.append(("p2p", P2PDeviceSession))
+    return factories
+
+
+def _try_probe_file_size(session, command: str) -> int:
     file_path = _extract_getsystemcfg_path(command)
     if not file_path:
         return 0
@@ -296,7 +333,7 @@ def _try_probe_file_size(session: DeviceSession, command: str) -> int:
     return 0
 
 
-def _handle_command(session: DeviceSession, payload: dict):
+def _handle_command(session, payload: dict):
     command = str(payload.get("command") or "").strip()
     timeout_ms = int(payload.get("timeout_ms") or DEFAULT_COMMAND_TIMEOUT_MS)
     download_root = str(payload.get("download_root") or "").strip()
@@ -369,6 +406,57 @@ def _handle_command(session: DeviceSession, payload: dict):
         _emit("command_finished")
 
 
+def _connect_with_retries(session_factory: Callable[[], object], credentials: DeviceCredentials):
+    wakeup_failures = []
+    last_connect_error = ""
+
+    for attempt in range(1, CONNECT_WAKEUP_ATTEMPTS + 1):
+        for auth_retry_index in range(AUTH_RETRY_ATTEMPTS):
+            session = session_factory()
+            try:
+                session.connect(credentials, status_callback=lambda msg: _emit("status", message=msg))
+                init_result = None
+                for init_attempt in range(INIT_START_ATTEMPTS):
+                    init_result = session.execute_command(
+                        "syscmd start",
+                        timeout_ms=INIT_START_TIMEOUT_MS,
+                        progress_callback=None,
+                        stream_log_callback=None,
+                    )
+                    if init_result.success:
+                        break
+                    if _is_empty_start_result(init_result):
+                        if init_attempt < INIT_START_ATTEMPTS - 1:
+                            time.sleep(INIT_START_RETRY_DELAY_S)
+                            continue
+                        logging.warning("syscmd start returned empty result during connect; treating as soft success")
+                        break
+                    init_message = (init_result.display_text or _format_command_result("syscmd start", init_result)).strip()
+                    raise RuntimeError(init_message or "初始化交互终端失败")
+                return session
+            except Exception as exc:
+                last_connect_error = str(exc)
+                try:
+                    session.close()
+                except Exception:
+                    pass
+
+                if _is_auth_failed_message(last_connect_error) and auth_retry_index < AUTH_RETRY_ATTEMPTS - 1:
+                    time.sleep(AUTH_RETRY_DELAY_S)
+                    continue
+
+                if not _is_wakeup_failed_message(last_connect_error):
+                    raise
+
+                wakeup_failures.append(f"第{attempt}轮唤醒失败")
+                if attempt < CONNECT_WAKEUP_ATTEMPTS:
+                    _emit("status", message=f"第{attempt}轮唤醒失败，准备第{attempt + 1}轮重试...")
+                    continue
+                raise RuntimeError("\n".join(wakeup_failures) or "唤醒失败")
+
+    raise RuntimeError(last_connect_error or "登录设备失败")
+
+
 def main():
     session = None
     connected = False
@@ -390,65 +478,33 @@ def main():
             sn=str(device.get("sn") or "").strip(),
             username=str(device.get("username") or "").strip(),
             password=str(device.get("password") or "").strip(),
+            dev_id=str(device.get("dev_id") or "").strip(),
+            is_siot=device.get("is_siot"),
+            protocol=str(device.get("protocol") or "").strip() or "auto",
         )
 
         cloud_username = str(cloud.get("username") or "").strip()
         cloud_password = str(cloud.get("password") or "").strip()
-        wakeup_failures = []
-        last_connect_error = ""
+        connect_errors = []
+        session_factories = _build_session_factories(credentials, cloud_username, cloud_password)
+        if len(session_factories) > 1:
+            protocol_names = " -> ".join(name.upper() for name, _ in session_factories)
+            _emit("status", message=f"设备类型未明确，按 {protocol_names} 顺序尝试连接...")
 
-        for attempt in range(1, CONNECT_WAKEUP_ATTEMPTS + 1):
-            for auth_retry_index in range(AUTH_RETRY_ATTEMPTS):
-                session = DeviceSession(cloud_username, cloud_password)
-                try:
-                    session.connect(credentials, status_callback=lambda msg: _emit("status", message=msg))
-                    init_result = None
-                    for init_attempt in range(INIT_START_ATTEMPTS):
-                        init_result = session.execute_command(
-                            "syscmd start",
-                            timeout_ms=INIT_START_TIMEOUT_MS,
-                            progress_callback=None,
-                            stream_log_callback=None,
-                        )
-                        if init_result.success:
-                            break
-                        if _is_empty_start_result(init_result):
-                            if init_attempt < INIT_START_ATTEMPTS - 1:
-                                time.sleep(INIT_START_RETRY_DELAY_S)
-                                continue
-                            logging.warning("syscmd start returned empty result during connect; treating as soft success")
-                            break
-                        init_message = (init_result.display_text or _format_command_result("syscmd start", init_result)).strip()
-                        raise RuntimeError(init_message or "初始化交互终端失败")
-                    connected = True
-                    _emit("connected")
-                    break
-                except Exception as exc:
-                    last_connect_error = str(exc)
-                    if session is not None:
-                        try:
-                            session.close()
-                        except Exception:
-                            pass
-                        session = None
-
-                    if _is_auth_failed_message(last_connect_error) and auth_retry_index < AUTH_RETRY_ATTEMPTS - 1:
-                        time.sleep(AUTH_RETRY_DELAY_S)
-                        continue
-
-                    if not _is_wakeup_failed_message(last_connect_error):
-                        raise
-
-                    wakeup_failures.append(f"第{attempt}轮唤醒失败")
-                    if attempt < CONNECT_WAKEUP_ATTEMPTS:
-                        _emit("status", message=f"第{attempt}轮唤醒失败，准备第{attempt + 1}轮重试...")
-                        continue
-                    raise RuntimeError("\n".join(wakeup_failures) or "唤醒失败")
-            if connected:
+        for index, (protocol_name, session_factory) in enumerate(session_factories):
+            try:
+                session = _connect_with_retries(session_factory, credentials)
+                connected = True
+                _emit("connected")
                 break
-
-        if not connected:
-            raise RuntimeError(last_connect_error or "登录设备失败")
+            except Exception as exc:
+                connect_errors.append(str(exc))
+                if index < len(session_factories) - 1:
+                    _emit("status", message=f"{protocol_name.upper()}连接失败，正在尝试备用协议...")
+                    continue
+                if len(connect_errors) > 1:
+                    raise RuntimeError("\n".join(connect_errors))
+                raise
 
         while True:
             line = sys.stdin.readline()

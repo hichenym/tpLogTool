@@ -45,7 +45,7 @@ from query_tool.utils.logger import logger
 from query_tool.utils.siot_debug import DEFAULT_COMMAND_TIMEOUT_MS, is_getsystemcfg_command, is_syscmd_family_command
 from query_tool.utils.siot_debug.service import resolve_device_credentials
 from query_tool.utils.theme_manager import t
-from query_tool.widgets import PlainTextEdit, prompt_configure_account
+from query_tool.widgets import PlainTextEdit
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -133,7 +133,10 @@ class RichTextItemDelegate(QStyledItemDelegate):
         for segment in segments:
             text = html.escape(str(segment.get("text") or " "))
             color = str(segment.get("color") or t("text_primary"))
-            lines.append(f'<div style="color: {color}; white-space: pre-wrap;">{text}</div>')
+            lines.append(
+                f'<div style="color: {color}; white-space: pre-wrap; '
+                f'overflow-wrap: anywhere; word-break: break-word;">{text}</div>'
+            )
         return "".join(lines)
 
 
@@ -620,6 +623,9 @@ class BatchLogFetchThread(QThread):
                     "sn": credentials.sn,
                     "username": credentials.username,
                     "password": credentials.password,
+                    "dev_id": credentials.dev_id,
+                    "protocol": credentials.protocol,
+                    "is_siot": credentials.is_siot,
                 },
             },
         )
@@ -911,9 +917,22 @@ class LogPage(BasePage):
     """日志批量拉取页面。"""
 
     MAX_WORKERS = 20
+    MAX_COMMANDS = 50
     RESULT_ROW_HEIGHT = 34
     RESULT_HEADERS = ("选择", "SN", "状态", "概览")
     RESULT_MIN_WIDTHS = {0: 56, 1: 170, 2: 110, 3: 220}
+    DEFAULT_LOG_COMMANDS = [
+        "GetSystemCfg /mnt/nand/keylog.data",
+        "GetSystemCfg /mnt/nand/dmsg1.txt",
+        "GetSystemCfg /mnt/nand/dmsg3.txt",
+        "GetSystemCfg /mnt/nand/dmsg4.txt",
+        "GetSystemCfg /tmp/sd_room/IPC_Log/Tps_RecordLogNew.log",
+        "GetSystemCfg /tmp/sd_room/IPC_Log/panic.log",
+        "GetSystemCfg /tmp/sd_room/dmesg0.log",
+        "GetSystemCfg /tmp/sd_room/dmesg1.log",
+        "GetSystemCfg /tmp/sd_room/4gErrLog",
+        "GetSystemCfg /tmp/sd_room/test_sysinfo.txt",
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -924,6 +943,7 @@ class LogPage(BasePage):
         self.worker_thread = None
         self.fetch_running = False
         self.fetch_canceling = False
+        self._config_loading = False
         self._commands_updating = False
         self.command_editing = False
         self._resizing_columns = False
@@ -989,6 +1009,8 @@ class LogPage(BasePage):
         self.command_input.setStyleSheet(self._get_text_edit_stylesheet())
         self.command_input.textChanged.connect(self.save_config)
         self.command_input.focus_lost.connect(self.on_command_input_focus_lost)
+        self.command_input.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.command_input.customContextMenuRequested.connect(self.on_command_input_context_menu)
         command_panel_layout.addWidget(self.command_input, 1)
 
         input_row_layout.addWidget(self.sn_panel, 1)
@@ -1069,6 +1091,8 @@ class LogPage(BasePage):
         self.result_table.horizontalHeader().sectionResized.connect(self.on_result_section_resized)
         self.result_table.itemDoubleClicked.connect(self.on_result_item_double_clicked)
         self.result_table.itemSelectionChanged.connect(self.on_result_selection_changed)
+        self._overview_delegate = RichTextItemDelegate(self.result_table)
+        self.result_table.setItemDelegateForColumn(3, self._overview_delegate)
         StyleManager.apply_to_widget(self.result_table, "TABLE")
 
         result_content = QHBoxLayout()
@@ -1144,17 +1168,29 @@ class LogPage(BasePage):
 
     def load_config(self):
         app_config = config_manager.load_app_config()
-        self.sn_input.setPlainText(app_config.last_log_sn or "")
-        self.download_root = self._normalize_download_root(app_config.log_download_path)
-        self.update_download_path_label()
-        self.command_input.setPlainText("\n".join(app_config.log_commands or []))
-        self.set_command_editing(False)
+        command_list, should_save = self._resolve_initial_command_list(app_config)
+
+        self._config_loading = True
+        try:
+            self.sn_input.setPlainText(app_config.last_log_sn or "")
+            self.download_root = self._normalize_download_root(app_config.log_download_path)
+            self.update_download_path_label()
+            self._set_command_list(command_list)
+            self.set_command_editing(False)
+        finally:
+            self._config_loading = False
+
+        if should_save:
+            config_manager.save_app_config(app_config)
 
     def save_config(self):
+        if self._config_loading or self._commands_updating:
+            return
         app_config = config_manager.load_app_config()
         app_config.last_log_sn = self.sn_input.toPlainText().strip()
         app_config.log_download_path = self.download_root
-        app_config.log_commands = self.get_command_list()[:50]
+        app_config.log_commands = self.get_command_list()[:self.MAX_COMMANDS]
+        app_config.log_commands_initialized = True
         config_manager.save_app_config(app_config)
 
     def on_page_show(self):
@@ -1179,6 +1215,16 @@ class LogPage(BasePage):
         self.save_config()
         self.set_command_editing(False)
 
+    def on_command_input_context_menu(self, pos):
+        menu = self.command_input.createStandardContextMenu()
+        menu.setStyleSheet(self._get_context_menu_stylesheet())
+        menu.addSeparator()
+        restore_action = menu.addAction("恢复默认命令列表")
+        restore_action.setEnabled(not self.fetch_running)
+        selected_action = menu.exec_(self.command_input.viewport().mapToGlobal(pos))
+        if selected_action == restore_action:
+            self.on_restore_default_commands_clicked()
+
     def get_command_list(self):
         commands = []
         for line in self.command_input.toPlainText().splitlines():
@@ -1186,6 +1232,13 @@ class LogPage(BasePage):
             if text:
                 commands.append(text)
         return commands
+
+    def on_restore_default_commands_clicked(self):
+        self._set_command_list(self._default_command_list())
+        self.save_config()
+        if self.command_editing:
+            self.set_command_editing(False)
+        self.show_success("已恢复默认命令列表", 1500)
 
     def on_fetch_clicked(self):
         if self.worker_thread is not None and self.worker_thread.isRunning():
@@ -1225,15 +1278,6 @@ class LogPage(BasePage):
         seetong_username, seetong_password = get_seetong_account_config()
         seetong_username = (seetong_username or "").strip()
         seetong_password = (seetong_password or "").strip()
-        if not seetong_username or not seetong_password:
-            prompt_configure_account(
-                self,
-                "需要配置Seetong账号",
-                "检测到Seetong账号未配置，是否现在配置？",
-                initial_tab=0,
-            )
-            return None
-
         return {
             "commands": commands,
             "env": env,
@@ -1307,9 +1351,8 @@ class LogPage(BasePage):
 
         status_text = str(payload.get("status") or "")
         file_text = "\n".join(payload.get("files") or [])
-        overview_text = self._build_overview_text(payload)
         self.result_table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
-        values = [sn, status_text, overview_text]
+        values = [sn, status_text]
 
         for column, value in enumerate(values, start=1):
             item = self.result_table.item(row, column)
@@ -1317,11 +1360,15 @@ class LogPage(BasePage):
                 item = QTableWidgetItem()
                 self.result_table.setItem(row, column, item)
             item.setText(value)
-            item.setToolTip(value if column < 3 else (overview_text if not file_text else f"{overview_text}\n{file_text}"))
             item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             self._apply_item_color(item, column, value)
 
-        self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
+        overview_item = self.result_table.item(row, 3)
+        if overview_item is None:
+            overview_item = QTableWidgetItem()
+            self.result_table.setItem(row, 3, overview_item)
+        self._update_overview_item(overview_item, payload, file_text)
+        self._update_result_row_height(row)
 
         current_row = self.result_table.currentRow()
         if current_row == row:
@@ -1434,12 +1481,14 @@ class LogPage(BasePage):
             initial_values = [sn, "等待执行", ""]
             for column, value in enumerate(initial_values, start=1):
                 item = QTableWidgetItem(value)
-                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                self._apply_item_color(item, column, value)
                 if column == 3:
                     item.setData(RICH_TEXT_ROLE, [])
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+                else:
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self._apply_item_color(item, column, value)
                 self.result_table.setItem(row, column, item)
-            self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
+            self._update_result_row_height(row)
         if sn_list:
             self.result_table.selectRow(0)
             self._update_detail_view(sn_list[0])
@@ -1472,12 +1521,14 @@ class LogPage(BasePage):
                     item = QTableWidgetItem()
                     self.result_table.setItem(row, column, item)
                 item.setText(value)
-                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 item.setToolTip(value)
                 if column == 3:
                     item.setData(RICH_TEXT_ROLE, [])
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+                else:
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 self._apply_item_color(item, column, value)
-            self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
+            self._update_result_row_height(row)
 
         if sn_list:
             first_sn = sn_list[0]
@@ -1611,6 +1662,12 @@ class LogPage(BasePage):
                     if item is None:
                         continue
                     self._apply_item_color(item, column, item.text())
+                sn_item = self.result_table.item(row, 1)
+                payload = self._device_payloads.get(sn_item.text().strip() if sn_item is not None else "")
+                overview_item = self.result_table.item(row, 3)
+                if payload and overview_item is not None:
+                    self._update_overview_item(overview_item, payload, "\n".join(payload.get("files") or []))
+                self._update_result_row_height(row)
             self.result_table.viewport().update()
         current_row = self.result_table.currentRow() if hasattr(self, "result_table") else -1
         if current_row >= 0:
@@ -1682,8 +1739,65 @@ class LogPage(BasePage):
         return StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit")
 
     @staticmethod
+    def _get_context_menu_stylesheet():
+        return f"""
+        QMenu {{
+            background-color: {t('bg_mid')};
+            color: {t('text_primary')};
+            border: 1px solid {t('border')};
+            padding: 2px;
+        }}
+        QMenu::item {{
+            padding: 6px 18px 6px 8px;
+            margin: 1px 2px;
+            border-radius: 2px;
+        }}
+        QMenu::item:selected {{
+            background-color: {t('selection_bg')};
+            color: {t('text_primary')};
+        }}
+        """
+
+    @staticmethod
     def _get_borderless_panel_stylesheet():
         return "QFrame { border: none; background: transparent; }"
+
+    @classmethod
+    def _default_command_list(cls):
+        return list(cls.DEFAULT_LOG_COMMANDS[:cls.MAX_COMMANDS])
+
+    @classmethod
+    def _normalize_command_list(cls, commands):
+        normalized_commands = []
+        for command in list(commands or [])[:cls.MAX_COMMANDS]:
+            text = str(command or "").strip()
+            if text:
+                normalized_commands.append(text)
+        return normalized_commands
+
+    @classmethod
+    def _resolve_initial_command_list(cls, app_config):
+        commands = cls._normalize_command_list(app_config.log_commands)
+        should_save = False
+
+        if not app_config.log_commands_initialized:
+            if commands:
+                app_config.log_commands = list(commands)
+            else:
+                commands = cls._default_command_list()
+                app_config.log_commands = list(commands)
+            app_config.log_commands_initialized = True
+            should_save = True
+
+        return commands, should_save
+
+    def _set_command_list(self, commands):
+        normalized_commands = self._normalize_command_list(commands)
+        self._commands_updating = True
+        try:
+            self.command_input.setPlainText("\n".join(normalized_commands))
+        finally:
+            self._commands_updating = False
 
     @staticmethod
     def _get_compact_group_box_stylesheet():
@@ -1739,7 +1853,7 @@ class LogPage(BasePage):
         self.result_table.setColumnWidth(2, status_width)
         self.result_table.setColumnWidth(3, overview_width)
         for row in range(self.result_table.rowCount()):
-            self.result_table.setRowHeight(row, self.RESULT_ROW_HEIGHT)
+            self._update_result_row_height(row)
 
     @staticmethod
     def _summarize_multiline_text(lines, empty_text=""):
@@ -1776,6 +1890,89 @@ class LogPage(BasePage):
         if downloaded_file_count > 0:
             lines.append(f"下载情况 {downloaded_file_count}")
         return "  |  ".join(lines)
+
+    def _build_overview_segments(self, payload: dict):
+        if self._should_inline_single_syscmd_overview(payload):
+            detail_text = self._extract_inline_syscmd_result_text(payload)
+            detail_segments = self._build_detail_segments(detail_text)
+            if detail_segments:
+                return detail_segments
+
+        overview_text = self._build_overview_text(payload)
+        if not overview_text.strip():
+            return []
+        return [{"text": overview_text, "color": t("text_primary")}]
+
+    def _update_overview_item(self, item: QTableWidgetItem, payload: dict, file_text: str = ""):
+        overview_segments = self._build_overview_segments(payload)
+        overview_text = self._segments_to_plain_text(overview_segments)
+        item.setText(overview_text)
+        item.setToolTip(overview_text if not file_text else f"{overview_text}\n{file_text}".strip())
+        item.setData(RICH_TEXT_ROLE, overview_segments)
+        item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._apply_item_color(item, 3, overview_text)
+
+    def _update_result_row_height(self, row: int):
+        if not hasattr(self, "result_table"):
+            return
+        if row < 0 or row >= self.result_table.rowCount():
+            return
+        self.result_table.resizeRowToContents(row)
+        self.result_table.setRowHeight(row, max(self.RESULT_ROW_HEIGHT, self.result_table.rowHeight(row)))
+
+    @staticmethod
+    def _segments_to_plain_text(segments) -> str:
+        return "\n".join(str(segment.get("text") or "").strip() for segment in segments if str(segment.get("text") or "").strip())
+
+    @classmethod
+    def _should_inline_single_syscmd_overview(cls, payload: dict) -> bool:
+        if int(payload.get("total_commands") or 0) != 1:
+            return False
+        return is_syscmd_family_command(cls._extract_single_syscmd_command(payload))
+
+    @classmethod
+    def _extract_single_syscmd_command(cls, payload: dict) -> str:
+        current_command = str(payload.get("current_command") or "").strip()
+        if current_command:
+            return current_command
+
+        for raw_line in str(payload.get("detail") or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("执行命令: "):
+                command = line[len("执行命令: "):].strip()
+                if is_syscmd_family_command(command):
+                    return command
+            command_part, separator, _ = line.partition(": ")
+            if separator and is_syscmd_family_command(command_part.strip()):
+                return command_part.strip()
+            if is_syscmd_family_command(line):
+                return line
+        return ""
+
+    @classmethod
+    def _extract_inline_syscmd_result_text(cls, payload: dict) -> str:
+        command = cls._extract_single_syscmd_command(payload)
+        if not command:
+            return ""
+
+        result_lines = []
+        for raw_line in str(payload.get("detail") or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("执行命令: "):
+                continue
+            if line == command:
+                continue
+            if line.startswith(f"{command}: "):
+                line = line[len(command) + 2:].strip()
+                if not line:
+                    continue
+            result_lines.append(line)
+
+        return "\n".join(result_lines)
 
     def _update_detail_view(self, sn: str = ""):
         if not hasattr(self, "detail_view"):

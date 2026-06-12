@@ -48,6 +48,7 @@ class AppConfig:
     last_log_sn: str = ''
     log_download_path: str = ''
     log_commands: List[str] = field(default_factory=list)
+    log_commands_initialized: bool = False
     last_page_index: int = 0
     theme: str = 'dark'  # 'dark' 或 'light'
     tray_minimize_tip_shown: bool = False
@@ -247,7 +248,8 @@ class ConfigManager:
         last_log_sn = self._get_value('last_log_sn', '')
         log_download_path = self._get_value('log_download_path', '')
         log_commands_str = self._get_value('log_commands', '')
-        log_commands = [item for item in log_commands_str.split('|') if item] if log_commands_str else []
+        log_commands = self._decode_string_list(log_commands_str)
+        log_commands_initialized = self._get_value('log_commands_initialized', '0') == '1'
         last_page_index = int(self._get_value('last_page_index', '0'))
         theme = self._get_value('theme', 'dark')
         tray_minimize_tip_shown = self._get_value('tray_minimize_tip_shown', '0') == '1'
@@ -262,6 +264,7 @@ class ConfigManager:
             last_log_sn=last_log_sn,
             log_download_path=log_download_path,
             log_commands=log_commands,
+            log_commands_initialized=log_commands_initialized,
             last_page_index=last_page_index,
             theme=theme,
             tray_minimize_tip_shown=tray_minimize_tip_shown
@@ -280,8 +283,9 @@ class ConfigManager:
             self._set_value('debug_download_path', config.debug_download_path)
             self._set_value('last_log_sn', config.last_log_sn)
             self._set_value('log_download_path', config.log_download_path)
-            log_commands_str = '|'.join(config.log_commands[:50])
+            log_commands_str = json.dumps(config.log_commands[:50], ensure_ascii=False)
             self._set_value('log_commands', log_commands_str)
+            self._set_value('log_commands_initialized', '1' if config.log_commands_initialized else '0')
             self._set_value('last_page_index', str(config.last_page_index))
             self._set_value('theme', config.theme)
             self._set_value('tray_minimize_tip_shown', '1' if config.tray_minimize_tip_shown else '0')

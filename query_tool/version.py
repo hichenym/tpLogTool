@@ -38,7 +38,7 @@ def get_build_date_formatted():
 VERSION_HISTORY = """
 
 V3.7.1(20260612)
-- 补充非SIOT设备信息查询
+- 支持非SIOT设备的查询和调试
 
 V3.6.9(20260602)
 - 设备页布局调整

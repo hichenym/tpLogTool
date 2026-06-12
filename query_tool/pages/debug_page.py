@@ -40,7 +40,7 @@ from query_tool.utils.siot_debug import (
     parse_startlogp2p_level,
 )
 from query_tool.widgets.adaptive_dialog import AdaptiveDialog
-from query_tool.widgets.custom_widgets import prompt_configure_account, set_dark_title_bar
+from query_tool.widgets.custom_widgets import set_dark_title_bar
 
 
 class FlowLayout(QLayout):
@@ -831,6 +831,15 @@ class DebugPage(BasePage):
         "正在查询设备密码...",
         "正在连接设备...",
     }
+    SUPPRESSED_CONNECT_PREFIXES = (
+        "已识别为非SIOT设备，使用P2P协议连接",
+        "检测到SIOT设备，使用TPSRTC协议连接",
+        "检测到非SIOT设备，使用P2P协议连接",
+        "检测到非SIOT设备，正在使用P2P协议连接",
+        "P2P登录请求已发送，正在等待设备响应",
+        "P2P服务器登录成功，正在建立设备通道",
+        "P2P设备连接成功，正在初始化交互",
+    )
 
     request_connect = pyqtSignal(str, str, str, str, str, str)
     request_command = pyqtSignal(str, int, str)
@@ -901,7 +910,7 @@ class DebugPage(BasePage):
         sn_label.setFixedWidth(52)
 
         self.sn_input = QLineEdit()
-        self.sn_input.setPlaceholderText("请输入设备 SN...")
+        self.sn_input.setPlaceholderText("支持SIOT和非SIOT设备")
         self.sn_input.returnPressed.connect(self.on_connect_button_clicked)
         self.sn_input.textChanged.connect(self.on_sn_input_changed)
 
@@ -1226,14 +1235,6 @@ class DebugPage(BasePage):
         seetong_username, seetong_password = get_seetong_account_config()
         seetong_username = (seetong_username or "").strip()
         seetong_password = (seetong_password or "").strip()
-        if not seetong_username or not seetong_password:
-            prompt_configure_account(
-                self,
-                "需要配置Seetong账号",
-                "检测到Seetong账号未配置，是否现在配置？",
-                initial_tab=0,
-            )
-            return
 
         self.set_connecting_state(True)
         self.request_connect.emit(
@@ -1598,6 +1599,8 @@ class DebugPage(BasePage):
             detail = detail.replace(f"设备：{sn}不在线", "设备不在线")
             detail = detail.replace(f"设备:{sn}不在线", "设备不在线")
             detail = detail.replace(f"设备 {sn} 不在线", "设备不在线")
+        if detail == "设备不在线":
+            detail = "设备离线"
         if detail:
             return f"{result}{suffix}: {detail}"
         return f"{result}{suffix}"
@@ -1781,6 +1784,8 @@ class DebugPage(BasePage):
         if not message:
             return False
         if message in self.SUPPRESSED_CONNECT_MESSAGES:
+            return True
+        if any(message.startswith(prefix) for prefix in self.SUPPRESSED_CONNECT_PREFIXES):
             return True
         if message.startswith("开始连接设备:"):
             return True

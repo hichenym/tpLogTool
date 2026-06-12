@@ -70,7 +70,14 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
         if entry and (now - entry["created_at"]) < _DEVICE_CONTEXT_CACHE_TTL_S:
             context = dict(entry["context"])
             return (
-                DeviceCredentials(sn=context["sn"], username=DEVICE_USERNAME, password=context["device_password"]),
+                DeviceCredentials(
+                    sn=context["sn"],
+                    username=DEVICE_USERNAME,
+                    password=context["device_password"],
+                    dev_id=context.get("dev_id", ""),
+                    is_siot=context.get("is_siot"),
+                    protocol=context.get("protocol", "auto"),
+                ),
                 context,
             )
 
@@ -86,6 +93,8 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
     record = records[0]
     dev_id = str(record.get("devId") or "").strip()
     real_sn = str(record.get("devSN") or sn).strip()
+    is_siot = query.is_siot_platform_device(dev_id=dev_id, sn=real_sn)
+    protocol = "siot" if is_siot is True else "p2p" if is_siot is False else "auto"
     model = str(
         record.get("devModel")
         or record.get("deviceModel")
@@ -95,7 +104,7 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
     if not dev_id:
         raise RuntimeError("设备ID为空，无法获取设备密码")
 
-    if not model:
+    if not model and is_siot is not False:
         try:
             header_info = query.get_device_header(real_sn)
             header_data = header_info.get("data") or {}
@@ -120,6 +129,8 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
         "model": model,
         "dev_id": dev_id,
         "device_password": device_password,
+        "is_siot": is_siot,
+        "protocol": protocol,
     }
     with _DEVICE_CONTEXT_CACHE_LOCK:
         _DEVICE_CONTEXT_CACHE[cache_key] = {
@@ -128,7 +139,14 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
         }
 
     return (
-        DeviceCredentials(sn=real_sn, username=DEVICE_USERNAME, password=device_password),
+        DeviceCredentials(
+            sn=real_sn,
+            username=DEVICE_USERNAME,
+            password=device_password,
+            dev_id=dev_id,
+            is_siot=is_siot,
+            protocol=protocol,
+        ),
         context,
     )
 
@@ -175,6 +193,13 @@ class SiotDebugWorker(QObject):
             credentials, context = resolve_device_credentials(sn, env, device_username, device_password)
             if self._is_connect_cancelled():
                 return
+            protocol = str(context.get("protocol") or "auto").strip().lower()
+            if context.get("is_siot") is True:
+                self.status_message.emit("查询到SIOT设备")
+            elif context.get("is_siot") is False:
+                self.status_message.emit("查询到非SIOT设备")
+            if protocol == "siot" and (not seetong_username.strip() or not seetong_password.strip()):
+                raise RuntimeError("当前设备为SIOT设备，请先在设置中配置Seetong账号")
             self.status_message.emit(f"已获取设备密码，目标设备: {context['sn']}")
 
             process = subprocess.Popen(
@@ -217,6 +242,9 @@ class SiotDebugWorker(QObject):
                         "sn": credentials.sn,
                         "username": credentials.username,
                         "password": credentials.password,
+                        "dev_id": credentials.dev_id,
+                        "protocol": credentials.protocol,
+                        "is_siot": credentials.is_siot,
                     },
                 }
             )

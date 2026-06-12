@@ -42,6 +42,7 @@ from query_tool.utils.task_center import (
     pause_all_actionable_tasks,
 )
 from query_tool.utils.theme_manager import theme_manager
+from query_tool.utils.single_instance import SingleInstanceController
 from query_tool.widgets import SettingsDialog, TaskCenterDialog
 
 # 禁用SSL警告
@@ -308,6 +309,15 @@ class MainWindow(QMainWindow):
             self.showNormal()
         else:
             self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def handle_activation_request(self):
+        """处理其他启动请求，恢复当前主窗口。"""
+        if self.isHidden() or self.isMinimized():
+            self.restore_from_tray()
+            return
+        self.show()
         self.raise_()
         self.activateWindow()
 
@@ -1305,6 +1315,13 @@ def main():
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         app = QApplication(sys.argv)
+
+        single_instance = SingleInstanceController.for_current_app(app)
+        if SingleInstanceController.notify_existing_instance(single_instance.server_name):
+            logger.info("检测到已有实例在运行，已通知其恢复主窗口")
+            raise SystemExit(0)
+        if not single_instance.start():
+            logger.warning("单实例监听启动失败，将继续以普通模式运行")
         
         # 在创建任何控件之前，先从注册表读取并应用保存的主题
         # 这样 init_ui 里所有控件直接用正确主题的颜色创建，无需事后刷新
@@ -1325,6 +1342,8 @@ def main():
         theme_manager.theme_changed.connect(_on_global_theme_changed)
         
         window = MainWindow()
+        single_instance.activation_requested.connect(window.handle_activation_request)
+        app._single_instance_controller = single_instance
         app.setQuitOnLastWindowClosed(window._tray_icon is None)
         window.show()
         

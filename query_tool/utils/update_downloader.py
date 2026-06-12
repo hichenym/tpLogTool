@@ -1,18 +1,69 @@
 """
 更新下载模块
 """
+import errno
 import os
 import sys
 import shutil
 import subprocess
 import tempfile
 import hashlib
+import time
 from pathlib import Path
-from typing import Optional, Callable, Union, List
+from typing import Optional, Callable, Union, List, Tuple
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from query_tool.utils.logger import logger
+
+
+def _read_download_lock_info(lock_path: Union[str, Path]) -> Tuple[Optional[int], Optional[str]]:
+    """读取锁文件里的进程信息，便于判断是否为陈旧锁。"""
+    try:
+        with open(lock_path, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = [line.strip() for line in f.readlines()]
+    except FileNotFoundError:
+        return None, None
+    except Exception as e:
+        logger.warning(f"读取下载锁失败 {lock_path}: {e}")
+        return None, None
+
+    pid = None
+    if lines:
+        try:
+            pid = int(lines[0])
+        except (TypeError, ValueError):
+            pid = None
+
+    save_path = lines[1] if len(lines) > 1 and lines[1] else None
+    return pid, save_path
+
+
+def _is_process_active(pid: Optional[int]) -> bool:
+    """通过 PID 判断进程是否仍然存活。"""
+    if not pid or pid <= 0:
+        return False
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError as e:
+        if e.errno == errno.EPERM:
+            return True
+        if e.errno in (errno.ESRCH, errno.EINVAL):
+            return False
+
+        winerror = getattr(e, 'winerror', None)
+        if winerror == 5:
+            return True
+        if winerror in (87, 128):
+            return False
+        logger.warning(f"判断下载锁进程状态失败(pid={pid}): {e}")
+        return False
+    return True
 
 
 class DownloadThread(QThread):
@@ -48,13 +99,29 @@ class DownloadThread(QThread):
         """获取下载锁，避免多个进程同时写入同一个临时文件。"""
         try:
             if os.path.exists(self.lock_path):
-                try:
-                    lock_age = __import__('time').time() - os.path.getmtime(self.lock_path)
-                    if lock_age > 1800:
-                        logger.warning(f"发现过期下载锁，自动清理: {self.lock_path}")
+                stale_lock_removed = False
+                pid, locked_save_path = _read_download_lock_info(self.lock_path)
+                if pid is None or not _is_process_active(pid):
+                    try:
+                        reason = (
+                            f"持有进程 {pid} 已退出"
+                            if pid is not None else
+                            "锁文件缺少有效 PID"
+                        )
+                        if locked_save_path and os.path.normcase(locked_save_path) != os.path.normcase(self.save_path):
+                            reason += f"，锁目标为 {locked_save_path}"
+                        logger.warning(f"发现陈旧下载锁（{reason}），自动清理: {self.lock_path}")
                         os.remove(self.lock_path)
-                except Exception as e:
-                    logger.warning(f"检查下载锁失败: {e}")
+                        stale_lock_removed = True
+                    except Exception as e:
+                        logger.warning(f"清理陈旧下载锁失败: {e}")
+
+                if not stale_lock_removed and os.path.exists(self.lock_path):
+                    lock_age = time.time() - os.path.getmtime(self.lock_path)
+                    logger.info(
+                        f"检测到活跃下载锁，保留现有锁文件: {self.lock_path} "
+                        f"(age={lock_age:.1f}s, pid={pid})"
+                    )
 
             self._lock_fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             lock_payload = f"{os.getpid()}\n{self.save_path}\n"
@@ -375,6 +442,7 @@ class UpdateDownloader:
     def __init__(self):
         self._ensure_download_dir()
         self._clean_temp_files()  # 清理残留的临时文件
+        self._clean_stale_lock_files()
         self.download_thread: Optional[DownloadThread] = None
         self._is_downloading = False  # 标记是否正在下载
         self._current_download_url = None  # 当前下载的 URL
@@ -406,6 +474,25 @@ class UpdateDownloader:
                         logger.info(f"保留临时文件用于断点续传: {temp_file.name} ({file_size / 1024 / 1024:.1f} MB)")
         except Exception as e:
             logger.error(f"清理临时文件失败: {e}")
+
+    def _clean_stale_lock_files(self):
+        """启动时清理异常退出留下的死锁文件，避免阻塞断点续传。"""
+        try:
+            for lock_file in self.DOWNLOAD_DIR.glob('*.lock'):
+                pid, _ = _read_download_lock_info(lock_file)
+                if pid is not None and _is_process_active(pid):
+                    logger.info(f"保留活跃下载锁: {lock_file.name} (pid={pid})")
+                    continue
+
+                try:
+                    logger.warning(f"清理陈旧下载锁: {lock_file}")
+                    lock_file.unlink()
+                except FileNotFoundError:
+                    continue
+                except Exception as e:
+                    logger.warning(f"删除下载锁失败 {lock_file.name}: {e}")
+        except Exception as e:
+            logger.error(f"清理下载锁失败: {e}")
     
     def download(
         self,
