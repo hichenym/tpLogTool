@@ -138,14 +138,52 @@ class DeviceStatusPage(BasePage):
         if line_edit is not None:
             line_edit.setPlaceholderText(text)
 
-    def _create_card_section(self, title, vertical_policy=QSizePolicy.Fixed):
+    @staticmethod
+    def _configure_single_line_label(label, extra_width=12):
+        """固定标签为单行显示，避免窄宽度时自动换行。"""
+        label.setWordWrap(False)
+        label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
+        metrics = QFontMetrics(label.font())
+        label.setFixedWidth(metrics.horizontalAdvance(label.text().replace("\n", " ")) + extra_width)
+
+    def _configure_combo_line_edit(self, combo):
+        """统一可编辑下拉框的文本区域行为。"""
+        alignment_setter = getattr(combo, "setAlignment", None)
+        if callable(alignment_setter):
+            alignment_setter(Qt.AlignLeft | Qt.AlignVCenter)
+
+        line_edit = self._combo_line_edit(combo)
+        if line_edit is None:
+            return
+        line_edit.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+    @staticmethod
+    def _show_combo_text_from_start(combo):
+        """让可编辑下拉框优先显示文本左侧。"""
+        cursor_setter = getattr(combo, "setCursorPosition", None)
+        if callable(cursor_setter):
+            QTimer.singleShot(0, lambda: cursor_setter(0))
+            return
+
+        getter = getattr(combo, "lineEdit", None)
+        if callable(getter):
+            try:
+                line_edit = getter()
+            except Exception:
+                line_edit = None
+            if line_edit is not None and hasattr(line_edit, "setCursorPosition"):
+                QTimer.singleShot(0, lambda: line_edit.setCursorPosition(0))
+
+    def _create_card_section(self, title=None, vertical_policy=QSizePolicy.Fixed):
         """创建统一样式的 Fluent 卡片区块。"""
         card = ElevatedCardWidget(self)
         card.setSizePolicy(QSizePolicy.Expanding, vertical_policy)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
-        layout.addWidget(self._title_label(title))
+        has_title = bool(title)
+        layout.setContentsMargins(16, 16 if has_title else 10, 16, 16)
+        layout.setSpacing(10 if has_title else 8)
+        if has_title:
+            layout.addWidget(self._title_label(title))
         return card, layout
 
     @staticmethod
@@ -276,7 +314,7 @@ class DeviceStatusPage(BasePage):
     
     def create_query_group(self):
         """创建设备查询分组"""
-        group, group_layout = self._create_card_section("查询")
+        group, group_layout = self._create_card_section()
         group_layout.setSpacing(12)
 
         side_width = 135
@@ -291,6 +329,7 @@ class DeviceStatusPage(BasePage):
 
         # ===== 左侧账号查询区 =====
         left_widget = QWidget()
+        self._apply_transparent_container_style(left_widget)
         left_widget.setFixedWidth(side_width)
         left_widget.setFixedHeight(side_content_height)
         left_layout = QVBoxLayout(left_widget)
@@ -311,6 +350,8 @@ class DeviceStatusPage(BasePage):
         self._set_combo_placeholder(self.phone_input, "请输入账号...")
         self.phone_input.setFixedWidth(control_width)
         self.phone_input.setFixedHeight(control_height)
+        self._configure_combo_line_edit(self.phone_input)
+        self.phone_input.currentIndexChanged.connect(lambda *_args: self._show_combo_text_from_start(self.phone_input))
 
         self.phone_query_btn = PrimaryPushButton("账号查询")
         self.phone_query_btn.setIcon(QIcon(":/icons/common/search.png"))
@@ -326,11 +367,13 @@ class DeviceStatusPage(BasePage):
 
         # ===== 中间 SN/ID 输入区 =====
         center_widget = QWidget()
+        self._apply_transparent_container_style(center_widget)
         center_layout = QHBoxLayout(center_widget)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(8)
 
         sn_widget = QWidget()
+        self._apply_transparent_container_style(sn_widget)
         sn_widget.setFixedHeight(side_content_height)
         sn_layout = QVBoxLayout(sn_widget)
         sn_layout.setContentsMargins(0, 0, 0, 0)
@@ -350,6 +393,7 @@ class DeviceStatusPage(BasePage):
         sn_layout.addWidget(self.sn_input, 1)
 
         id_widget = QWidget()
+        self._apply_transparent_container_style(id_widget)
         id_widget.setFixedHeight(side_content_height)
         id_layout = QVBoxLayout(id_widget)
         id_layout.setContentsMargins(0, 0, 0, 0)
@@ -375,6 +419,7 @@ class DeviceStatusPage(BasePage):
 
         # ===== 右侧设备查询操作区 =====
         right_widget = QWidget()
+        self._apply_transparent_container_style(right_widget)
         right_widget.setFixedWidth(side_width)
         right_widget.setFixedHeight(side_content_height)
         right_layout = QVBoxLayout(right_widget)
@@ -427,7 +472,7 @@ class DeviceStatusPage(BasePage):
     
     def create_result_group(self):
         """创建查询结果与导出分组"""
-        group, group_layout = self._create_card_section("结果", vertical_policy=QSizePolicy.Expanding)
+        group, group_layout = self._create_card_section(vertical_policy=QSizePolicy.Expanding)
         group_layout.setSpacing(8)
         control_height = self._control_height()
         toolbar_height = self._toolbar_height()
@@ -550,6 +595,9 @@ class DeviceStatusPage(BasePage):
         # 提示文本
         result_tip = BodyLabel("提示: 双击单元格可复制内容，右击设备行展开操作")
         result_tip.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px; border: none;")
+        result_tip.setWordWrap(False)
+        result_tip.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        result_tip.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         
         batch_layout.addWidget(self.select_all_checkbox)
         batch_layout.addWidget(self.batch_wake_btn)
@@ -557,8 +605,7 @@ class DeviceStatusPage(BasePage):
         batch_layout.addWidget(self.batch_upgrade_btn)
         batch_layout.addWidget(self.batch_collect_btn)
         batch_layout.addWidget(self.upgrade_stress_btn)
-        batch_layout.addStretch()
-        batch_layout.addWidget(result_tip)  # 添加提示到右侧
+        batch_layout.addWidget(result_tip, 1)  # 添加提示到右侧
         group_layout.addWidget(batch_frame)
 
         # ===== 结果表格 =====
@@ -625,13 +672,15 @@ class DeviceStatusPage(BasePage):
         export_layout.setContentsMargins(4, 4, 4, 4)
         export_layout.setSpacing(8)
         
-        export_label = self._label("保存位置:", width=60)
-        
+        export_label = self._label("保存位置:")
+        self._configure_single_line_label(export_label)
+
         self.export_path_input = ClickableLineEdit()
         self.export_path_input.setPlaceholderText("点击导出按钮选择保存位置（双击可打开目录）...")
         self.export_path_input.setReadOnly(True)
         self.export_path_input.setFocusPolicy(Qt.NoFocus)
         self.export_path_input.setFixedHeight(control_height)
+        self.export_path_input.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._apply_read_only_line_edit_style(self.export_path_input)
         
         self.export_btn = PushButton("导出CSV")
@@ -2156,6 +2205,7 @@ class DeviceStatusPage(BasePage):
         # 加载账号历史
         if app_config.phone_history:
             self.phone_input.addItems(app_config.phone_history)
+            self._show_combo_text_from_start(self.phone_input)
             from PyQt5.QtWidgets import QCompleter
             completer = self.phone_input.completer()
             if completer is not None:
@@ -2333,6 +2383,7 @@ class DeviceStatusPage(BasePage):
         
         self.phone_input.clear()
         self.phone_input.addItems(app_config.phone_history)
+        self._show_combo_text_from_start(self.phone_input)
         
         config_manager.save_app_config(app_config)
 

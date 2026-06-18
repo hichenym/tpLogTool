@@ -844,6 +844,7 @@ class FluentWidgetSmokeTests(unittest.TestCase):
                 self.assertEqual("DBG-SN-001", page.sn_input.text())
                 self.assertEqual(2, len(page.shortcut_commands))
                 self.assertEqual(2, page.shortcut_flow_layout.count())
+                self.assertFalse(page.shortcut_hint_label.isVisible())
             finally:
                 page.cleanup()
                 page.close()

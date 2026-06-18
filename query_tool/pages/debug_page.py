@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 
 from PyQt5.QtCore import QMetaObject, QMimeData, QRect, QSize, QThread, QTimer, Qt, QUrl, pyqtSignal
-from PyQt5.QtGui import QColor, QDesktopServices, QDrag, QFont, QIcon, QImage, QKeySequence, QPixmap, QTextCharFormat, QTextCursor
+from PyQt5.QtGui import QColor, QDesktopServices, QDrag, QFont, QIcon, QImage, QKeySequence, QPalette, QPixmap, QTextCharFormat, QTextCursor
 from PyQt5.QtWidgets import (
     QAction,
     QApplication,
@@ -835,9 +835,12 @@ class DebugPage(BasePage):
         'ls /mnt/nand/',
         'echo "70 27" > /tmp/battery_power',
     ]
+    SHORTCUT_VISIBLE_ROWS = 3
     SHORTCUT_EXPANDED_HEIGHT = 96
     SHORTCUT_CHIP_HEIGHT = 24
     SHORTCUT_MIN_BUTTON_WIDTH = 78
+    ICON_BUTTON_WIDTH = 40
+    CONTROL_HEIGHT = 32
     COMMAND_TYPES = [("syscmd", "syscmd")]
     SUPPRESSED_CONNECT_MESSAGES = {
         "正在查询设备密码...",
@@ -902,57 +905,67 @@ class DebugPage(BasePage):
         page_layout.setContentsMargins(5, 5, 5, 5)
         page_layout.setSpacing(8)
 
-        self.connect_card, connect_layout = self._create_card_section("连接", object_name="debugConnectCard")
+        self.connect_card, connect_layout = self._create_card_section(object_name="debugConnectCard")
 
-        login_layout = QHBoxLayout()
+        connect_row_layout = QHBoxLayout()
+        connect_row_layout.setContentsMargins(0, 0, 0, 0)
+        connect_row_layout.setSpacing(12)
+
+        login_widget = QWidget()
+        self._apply_transparent_widget_style(login_widget)
+        login_layout = QHBoxLayout(login_widget)
         login_layout.setContentsMargins(0, 0, 0, 0)
         login_layout.setSpacing(10)
 
         sn_label = self._label("设备SN:", width=64)
 
         self.sn_input = LineEdit()
+        self.sn_input.setFixedHeight(self.CONTROL_HEIGHT)
         self.sn_input.setPlaceholderText("支持SIOT和非SIOT设备")
         self.sn_input.returnPressed.connect(self.on_connect_button_clicked)
         self.sn_input.textChanged.connect(self.on_sn_input_changed)
 
         self.connect_btn = PrimaryPushButton("登录")
         self.connect_btn.clicked.connect(self.on_connect_button_clicked)
-        self.connect_btn.setFixedSize(88, 32)
+        self.connect_btn.setFixedSize(88, self.CONTROL_HEIGHT)
         self.connect_btn.setIconSize(QSize(16, 16))
 
         login_layout.addWidget(sn_label)
         login_layout.addWidget(self.sn_input, 1)
         login_layout.addWidget(self.connect_btn)
-        connect_layout.addLayout(login_layout)
+        connect_row_layout.addWidget(login_widget, 1)
 
-        download_layout = QHBoxLayout()
+        download_widget = QWidget()
+        self._apply_transparent_widget_style(download_widget)
+        download_layout = QHBoxLayout(download_widget)
         download_layout.setContentsMargins(0, 0, 0, 0)
         download_layout.setSpacing(10)
 
         download_label = self._label("下载位置:", width=72)
 
         self.download_path_label = PathDisplayLabel()
-        self.download_path_label.setMinimumHeight(32)
+        self.download_path_label.setFixedHeight(self.CONTROL_HEIGHT)
+        self.download_path_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.download_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.download_path_label.setToolTip("双击打开目录")
         self.download_path_label.double_clicked.connect(self.open_download_directory)
         self.download_path_label.setStyleSheet(self._get_download_path_label_stylesheet())
 
         self.choose_download_path_btn = PushButton("")
-        self.choose_download_path_btn.setFixedSize(36, 32)
-        self.choose_download_path_btn.setIcon(QIcon(":/icons/common/dir.png"))
-        self.choose_download_path_btn.setIconSize(QSize(16, 16))
-        self.choose_download_path_btn.setToolTip("选择下载目录")
+        self._configure_icon_only_button(
+            self.choose_download_path_btn,
+            QIcon(":/icons/common/dir.png"),
+            "选择下载目录",
+        )
         self.choose_download_path_btn.clicked.connect(self.choose_download_directory)
 
         download_layout.addWidget(download_label)
         download_layout.addWidget(self.download_path_label, 1)
         download_layout.addWidget(self.choose_download_path_btn)
-        connect_layout.addLayout(download_layout)
+        connect_row_layout.addWidget(download_widget, 1)
+        connect_layout.addLayout(connect_row_layout)
 
         self.command_card, command_layout = self._create_card_section(
-            "交互",
-            hint="（交互卡顿时右键清空一下窗口）",
             object_name="debugCommandCard",
             vertical_policy=QSizePolicy.Expanding,
         )
@@ -973,20 +986,24 @@ class DebugPage(BasePage):
         self.show_timestamp_checkbox = PushButton("")
         self.show_timestamp_checkbox.setCheckable(True)
         self.show_timestamp_checkbox.setChecked(True)
-        self.show_timestamp_checkbox.setFixedSize(36, 32)
-        self.show_timestamp_checkbox.setIconSize(QSize(18, 18))
-        self.show_timestamp_checkbox.setToolTip("显示/隐藏时间戳")
+        self._configure_icon_only_button(
+            self.show_timestamp_checkbox,
+            self._timestamp_on_icon,
+            "显示/隐藏时间戳",
+            icon_size=18,
+        )
         self.show_timestamp_checkbox.toggled.connect(self.on_show_timestamp_toggled)
         self._update_timestamp_toggle_icon(True)
 
         self.command_type_combo = NoWheelComboBox()
-        self.command_type_combo.setFixedSize(96, 32)
+        self.command_type_combo.setFixedSize(96, self.CONTROL_HEIGHT)
         self._apply_combo_style(self.command_type_combo)
         for text, prefix in self.COMMAND_TYPES:
             self.command_type_combo.addItem(text, prefix)
         self.command_type_combo.currentIndexChanged.connect(self.on_command_type_changed)
 
         self.command_input = HistoryLineEdit()
+        self.command_input.setFixedHeight(self.CONTROL_HEIGHT)
         self.command_input.setPlaceholderText("直接输入命令内容，回车发送...")
         self.command_input.setClearButtonEnabled(True)
         self.command_input.returnPressed.connect(self.on_send_button_clicked)
@@ -994,24 +1011,26 @@ class DebugPage(BasePage):
         self.command_input.history_next_requested.connect(self.on_history_next_requested_from_input)
 
         self.send_btn = PrimaryPushButton("发送")
-        self.send_btn.setFixedSize(88, 32)
+        self.send_btn.setFixedSize(88, self.CONTROL_HEIGHT)
         self.send_btn.setIcon(QIcon(":/icons/common/send.png"))
         self.send_btn.setIconSize(QSize(16, 16))
         self.send_btn.setToolTip("发送命令")
         self.send_btn.clicked.connect(self.on_send_button_clicked)
 
         self.add_shortcut_btn = PushButton("")
-        self.add_shortcut_btn.setFixedSize(36, 32)
-        self.add_shortcut_btn.setIcon(QIcon(":/icons/common/add.png"))
-        self.add_shortcut_btn.setIconSize(QSize(16, 16))
-        self.add_shortcut_btn.setToolTip("添加到快捷方式")
+        self._configure_icon_only_button(
+            self.add_shortcut_btn,
+            QIcon(":/icons/common/add.png"),
+            "添加到快捷方式",
+        )
         self.add_shortcut_btn.clicked.connect(self.on_add_shortcut_clicked)
 
         self.toggle_shortcut_btn = PushButton("")
-        self.toggle_shortcut_btn.setFixedSize(36, 32)
-        self.toggle_shortcut_btn.setIcon(QIcon(":/icons/common/expand.png"))
-        self.toggle_shortcut_btn.setIconSize(QSize(16, 16))
-        self.toggle_shortcut_btn.setToolTip("收起快捷方式")
+        self._configure_icon_only_button(
+            self.toggle_shortcut_btn,
+            QIcon(":/icons/common/expand.png"),
+            "收起快捷方式",
+        )
         self.toggle_shortcut_btn.clicked.connect(self.on_toggle_shortcuts_clicked)
 
         command_input_layout.addWidget(self.show_timestamp_checkbox)
@@ -1023,11 +1042,10 @@ class DebugPage(BasePage):
         command_layout.addLayout(command_input_layout, 0)
 
         self.shortcut_frame = CardWidget(self)
-        self.shortcut_frame.setFixedHeight(self.SHORTCUT_EXPANDED_HEIGHT)
         self._cards.append(self.shortcut_frame)
-        self._apply_card_style(self.shortcut_frame, "debugShortcutCard")
+        self._apply_shortcut_frame_style()
         shortcut_layout = QVBoxLayout(self.shortcut_frame)
-        shortcut_layout.setContentsMargins(8, 8, 8, 8)
+        shortcut_layout.setContentsMargins(0, 4, 0, 0)
         shortcut_layout.setSpacing(4)
 
         self.shortcut_scroll = ScrollArea()
@@ -1047,7 +1065,10 @@ class DebugPage(BasePage):
         )
         self.shortcut_hint_label.setObjectName("shortcutHintLabel")
         self.shortcut_hint_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.shortcut_hint_label.setStyleSheet(self._get_shortcut_hint_stylesheet())
+        self.shortcut_hint_label.setWordWrap(False)
+        self.shortcut_hint_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.shortcut_hint_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
+        self._apply_shortcut_hint_style()
 
         self.shortcut_container = QWidget()
         self.shortcut_flow_layout = FlowLayout(self.shortcut_container, margin=0, h_spacing=4, v_spacing=4)
@@ -1067,30 +1088,40 @@ class DebugPage(BasePage):
         self.update_send_button()
         self.update_connect_button()
 
-    def _create_card_section(self, title, hint="", object_name="debugCard", vertical_policy=QSizePolicy.Fixed):
+    def _create_card_section(self, title="", hint="", object_name="debugCard", vertical_policy=QSizePolicy.Fixed):
         """创建统一样式的 Fluent 卡片区块。"""
-        card = ElevatedCardWidget(self)
+        if object_name == "debugCommandCard":
+            card = QWidget(self)
+            self._apply_transparent_widget_style(card)
+        else:
+            card = ElevatedCardWidget(self)
         card.setSizePolicy(QSizePolicy.Expanding, vertical_policy)
         self._cards.append(card)
         self._apply_card_style(card, object_name)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
+        has_header = bool(title or hint)
+        if object_name == "debugCommandCard":
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(8)
+        else:
+            layout.setContentsMargins(16, 16 if has_header else 10, 16, 16)
+            layout.setSpacing(10 if has_header else 8)
 
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(8)
-        title_label = StrongBodyLabel(title)
-        title_label.setStyleSheet(f"color: {t('text_primary')}; border: none;")
-        self._card_title_labels.append(title_label)
-        header_layout.addWidget(title_label)
-        if hint:
-            hint_label = BodyLabel(hint)
-            hint_label.setStyleSheet(f"color: {t('text_hint')}; border: none;")
-            self._card_hint_labels.append(hint_label)
-            header_layout.addWidget(hint_label)
-        header_layout.addStretch(1)
-        layout.addLayout(header_layout)
+        if has_header:
+            header_layout = QHBoxLayout()
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.setSpacing(8)
+            title_label = StrongBodyLabel(title)
+            title_label.setStyleSheet(f"color: {t('text_primary')}; border: none;")
+            self._card_title_labels.append(title_label)
+            header_layout.addWidget(title_label)
+            if hint:
+                hint_label = BodyLabel(hint)
+                hint_label.setStyleSheet(f"color: {t('text_hint')}; border: none;")
+                self._card_hint_labels.append(hint_label)
+                header_layout.addWidget(hint_label)
+            header_layout.addStretch(1)
+            layout.addLayout(header_layout)
         return card, layout
 
     @staticmethod
@@ -1103,9 +1134,19 @@ class DebugPage(BasePage):
         return label
 
     def _apply_card_style(self, widget, object_name):
-        if QFLUENT_WIDGETS_AVAILABLE:
-            return
         widget.setObjectName(object_name)
+        widget.setAttribute(Qt.WA_StyledBackground, True)
+        if object_name == "debugCommandCard":
+            widget.setStyleSheet(
+                """
+                #debugCommandCard {
+                    border: none;
+                    background: transparent;
+                    background-color: transparent;
+                }
+                """
+            )
+            return
         widget.setStyleSheet(
             f"""
             #{object_name} {{
@@ -1129,12 +1170,35 @@ class DebugPage(BasePage):
             combo.setStyleSheet(StyleManager.get_COMBOBOX())
 
     def _apply_shortcut_scroll_style(self):
-        if hasattr(self, "shortcut_scroll") and not QFLUENT_WIDGETS_AVAILABLE:
-            self.shortcut_scroll.setStyleSheet(StyleManager.get_SCROLL_AREA())
+        if hasattr(self, "shortcut_scroll"):
+            self.shortcut_scroll.setStyleSheet(self._get_shortcut_scroll_stylesheet())
+            self.shortcut_scroll.viewport().setStyleSheet("background: transparent; border: none;")
+        if hasattr(self, "shortcut_container"):
+            self.shortcut_container.setStyleSheet("background: transparent; border: none;")
 
     def _apply_shortcut_button_style(self, button):
         if not QFLUENT_WIDGETS_AVAILABLE:
             button.setStyleSheet(self._get_shortcut_button_stylesheet())
+
+    def _configure_icon_only_button(self, button, icon, tooltip, icon_size=16):
+        button.setText("")
+        button.setFixedSize(self.ICON_BUTTON_WIDTH, self.CONTROL_HEIGHT)
+        button.setIcon(icon)
+        button.setIconSize(QSize(icon_size, icon_size))
+        button.setToolTip(tooltip)
+        button.setStyleSheet(self._get_icon_button_stylesheet())
+
+    @staticmethod
+    def _apply_transparent_widget_style(widget):
+        widget.setAttribute(Qt.WA_StyledBackground, True)
+        widget.setStyleSheet("background: transparent; background-color: transparent; border: none;")
+
+    def _apply_shortcut_frame_style(self):
+        if not hasattr(self, "shortcut_frame"):
+            return
+        self.shortcut_frame.setAttribute(Qt.WA_StyledBackground, True)
+        self.shortcut_frame.setObjectName("debugShortcutCard")
+        self.shortcut_frame.setStyleSheet(self._get_shortcut_frame_stylesheet())
 
     def init_worker(self):
         self.worker_thread = QThread(self)
@@ -1862,6 +1926,7 @@ class DebugPage(BasePage):
             self._apply_shortcut_button_style(btn)
             self.shortcut_flow_layout.addWidget(btn)
 
+        self._update_shortcut_hint_visibility()
         self.update_shortcut_controls()
         self.refresh_shortcut_area_geometry()
         QTimer.singleShot(0, self.refresh_shortcut_area_geometry)
@@ -1884,6 +1949,7 @@ class DebugPage(BasePage):
         scroll_bar = self.shortcut_scroll.verticalScrollBar()
         scroll_bar.setPageStep(viewport_height)
         scroll_bar.setRange(0, max(0, content_height - viewport_height))
+        self._update_shortcut_frame_height(content_height)
         self._update_shortcut_hint_position()
 
     def resizeEvent(self, event):
@@ -1974,7 +2040,7 @@ class DebugPage(BasePage):
             elif card is getattr(self, "command_card", None):
                 self._apply_card_style(card, "debugCommandCard")
             elif card is getattr(self, "shortcut_frame", None):
-                self._apply_card_style(card, "debugShortcutCard")
+                self._apply_shortcut_frame_style()
         for label in self._card_title_labels:
             label.setStyleSheet(f"color: {t('text_primary')}; border: none;")
         for label in self._card_hint_labels:
@@ -1987,8 +2053,17 @@ class DebugPage(BasePage):
             self._apply_combo_style(self.command_type_combo)
         if hasattr(self, "download_path_label"):
             self.download_path_label.setStyleSheet(self._get_download_path_label_stylesheet())
+        for button_name in (
+            "choose_download_path_btn",
+            "show_timestamp_checkbox",
+            "add_shortcut_btn",
+            "toggle_shortcut_btn",
+        ):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.setStyleSheet(self._get_icon_button_stylesheet())
         if hasattr(self, "shortcut_hint_label"):
-            self.shortcut_hint_label.setStyleSheet(self._get_shortcut_hint_stylesheet())
+            self._apply_shortcut_hint_style()
         if hasattr(self, "shortcut_scroll"):
             self._apply_shortcut_scroll_style()
         self.refresh_shortcut_buttons()
@@ -1998,19 +2073,119 @@ class DebugPage(BasePage):
             return
         label_size = self.shortcut_hint_label.sizeHint()
         self.shortcut_hint_label.setGeometry(2, 2, label_size.width(), label_size.height())
+        self._update_shortcut_hint_visibility()
+
+    def _update_shortcut_hint_visibility(self):
+        if not hasattr(self, "shortcut_hint_label"):
+            return
+        should_show = not bool(self.shortcut_commands) and not self.shortcut_collapsed
+        self.shortcut_hint_label.setVisible(should_show)
+        if should_show:
+            self.shortcut_hint_label.raise_()
+
+    def _update_shortcut_frame_height(self, content_height: int):
+        if not hasattr(self, "shortcut_frame"):
+            return
+
+        margins = self.shortcut_frame.layout().contentsMargins() if self.shortcut_frame.layout() else None
+        vertical_padding = (margins.top() + margins.bottom()) if margins is not None else 0
+        hint_height = self.shortcut_hint_label.sizeHint().height() if hasattr(self, "shortcut_hint_label") else 0
+        flow_spacing = self.shortcut_flow_layout.verticalSpacing() if hasattr(self, "shortcut_flow_layout") else 4
+        three_row_height = (
+            self.SHORTCUT_CHIP_HEIGHT * self.SHORTCUT_VISIBLE_ROWS
+            + max(0, self.SHORTCUT_VISIBLE_ROWS - 1) * flow_spacing
+        )
+        target_height = max(three_row_height + vertical_padding, hint_height + vertical_padding)
+        self.shortcut_frame.setFixedHeight(target_height)
+
+    def _apply_shortcut_hint_style(self):
+        if not hasattr(self, "shortcut_hint_label"):
+            return
+
+        color = t("text_hint")
+        if hasattr(self, "console_edit"):
+            self.shortcut_hint_label.setFont(self.console_edit.font())
+            placeholder_color = self.console_edit.palette().color(QPalette.PlaceholderText)
+            if placeholder_color.isValid():
+                color = placeholder_color.name()
+
+        self.shortcut_hint_label.setStyleSheet(
+            f"""
+            QLabel#shortcutHintLabel {{
+                color: {color};
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }}
+            QLabel#shortcutHintLabel:hover {{
+                border: none;
+            }}
+            """
+        )
 
     @staticmethod
-    def _get_shortcut_hint_stylesheet():
+    def _get_icon_button_stylesheet():
         return f"""
-        QLabel#shortcutHintLabel {{
-            color: {t('text_hint')};
-            background: transparent;
-            border: none;
+        QPushButton {{
+            min-width: 0px;
             padding: 0px;
-            margin: 0px;
+            text-align: center;
+            border: 1px solid {t('border')};
+            border-radius: 4px;
+            background-color: {t('bg_mid')};
         }}
-        QLabel#shortcutHintLabel:hover {{
+        QPushButton:hover {{
+            background-color: {t('bg_hover')};
+            border: 1px solid {t('border_hover')};
+        }}
+        QPushButton:pressed, QPushButton:checked {{
+            background-color: {t('bg_pressed')};
+            border: 1px solid {t('border_hover')};
+        }}
+        QPushButton:disabled {{
+            background-color: {t('bg_dark')};
+            border: 1px solid {t('border_dark')};
+        }}
+        """
+
+    @staticmethod
+    def _get_shortcut_frame_stylesheet():
+        return f"""
+        #debugShortcutCard {{
             border: none;
+            border-radius: 0px;
+            background: transparent;
+            background-color: transparent;
+        }}
+        """
+
+    @staticmethod
+    def _get_shortcut_scroll_stylesheet():
+        return f"""
+        QScrollArea {{
+            background-color: transparent;
+            border: none;
+        }}
+        QScrollBar:vertical {{
+            background-color: transparent;
+            width: 12px;
+            margin: 0px;
+            border: none;
+        }}
+        QScrollBar::handle:vertical {{
+            background-color: {t('border')};
+            min-height: 20px;
+            border-radius: 6px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background-color: {t('border_hover')};
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+            background: transparent;
         }}
         """
 
