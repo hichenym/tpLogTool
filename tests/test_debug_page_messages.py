@@ -1,7 +1,19 @@
 import unittest
 from types import SimpleNamespace
 
-from query_tool.pages.debug_page import DebugPage
+from tests.test_fluent_widget_smokes import PAGES_DIR, _isolated_page_env, _load_module
+
+
+def _load_debug_page_class():
+    with _isolated_page_env():
+        module = _load_module(
+            "query_tool.pages._debug_page_message_test",
+            PAGES_DIR / "debug_page.py",
+        )
+        return module.DebugPage
+
+
+DebugPage = _load_debug_page_class()
 
 
 class _DummyLineEdit:

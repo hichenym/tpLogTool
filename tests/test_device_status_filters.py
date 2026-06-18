@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from device_status_page_test_helper import load_device_status_page
+from tests.device_status_page_test_helper import load_device_status_page
 
 
 DeviceStatusPage = load_device_status_page()

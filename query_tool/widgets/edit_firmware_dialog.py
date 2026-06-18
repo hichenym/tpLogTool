@@ -2,16 +2,28 @@
 修改固件对话框
 """
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QDateTimeEdit, QGroupBox, QFormLayout, QWidget,
-    QLineEdit, QFileDialog, QMessageBox, QTableWidget, QTableWidgetItem,
+    QDialog, QVBoxLayout, QHBoxLayout, QDateTimeEdit, QFormLayout, QWidget,
+    QFileDialog, QMessageBox, QTableWidgetItem,
     QHeaderView, QCheckBox, QAbstractItemView, QComboBox
 )
 from PyQt5.QtCore import Qt, QDateTime, QEvent, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QIcon
 from .adaptive_dialog import AdaptiveDialog
-from .custom_widgets import set_dark_title_bar
-from query_tool.utils.theme_manager import t
+from .custom_widgets import set_dark_title_bar, show_message_box
+from query_tool.ui import (
+    BodyLabel,
+    CheckBox,
+    ComboBox,
+    EditableComboBox,
+    ElevatedCardWidget,
+    LineEdit,
+    PrimaryPushButton,
+    PushButton,
+    QFLUENT_WIDGETS_AVAILABLE,
+    TableWidget,
+    TextEdit,
+)
+from query_tool.utils.theme_manager import t, theme_manager
 from query_tool.utils import StyleManager
 from query_tool.utils.logger import logger
 from query_tool.utils.thread_manager import ThreadManager
@@ -34,8 +46,15 @@ class ClickableDateTimeEdit(QDateTimeEdit):
         super().mousePressEvent(event)
 
 
-class NoWheelComboBox(QComboBox):
+class NoWheelComboBox(ComboBox):
     """禁用鼠标滚轮切换的下拉框"""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelEditableComboBox(EditableComboBox):
+    """禁用鼠标滚轮切换的可编辑下拉框"""
 
     def wheelEvent(self, event):
         event.ignore()
@@ -187,9 +206,13 @@ class SnQueryDialog(AdaptiveDialog):
         self.all_devices = []
         self.selected_sns = []
         self._checkboxes = []
+        self._cards = []
         self.thread_mgr = ThreadManager()
+        self._card_title_labels = []
         self.setWindowTitle("查询设备SN")
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        theme_manager.theme_changed.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme)
         self._init_ui()
         # 打开后自动开始查询
         from PyQt5.QtCore import QTimer
@@ -199,6 +222,58 @@ class SnQueryDialog(AdaptiveDialog):
         super().showEvent(event)
         set_dark_title_bar(self)
 
+    def _disconnect_theme(self):
+        try:
+            theme_manager.theme_changed.disconnect(self.refresh_theme)
+        except Exception:
+            pass
+
+    def _apply_card_title_style(self, label):
+        label.setStyleSheet(f"color: {t('text_primary')}; font-weight: 600; border: none;")
+
+    def _apply_secondary_button_style(self, button):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            button.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+
+    def _apply_table_style(self):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            StyleManager.apply_to_widget(self.table, "TABLE")
+
+    def _apply_card_style(self, card):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            card.setStyleSheet(
+                f"""
+                #{card.objectName()} {{
+                    border: 1px solid {t('border')};
+                    border-radius: 6px;
+                    background-color: transparent;
+                }}
+                """
+            )
+
+    def _create_card_section(self, title):
+        card = ElevatedCardWidget(self)
+        card.setObjectName(f"snQueryCard{len(self._cards) + 1}")
+        self._cards.append(card)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        title_label = BodyLabel(title)
+        self._card_title_labels.append(title_label)
+        self._apply_card_title_style(title_label)
+        layout.addWidget(title_label)
+        self._apply_card_style(card)
+        return card, layout
+
+    @staticmethod
+    def _find_checkbox(widget):
+        if widget is None:
+            return None
+        checkbox = widget.findChild(CheckBox)
+        if checkbox is not None:
+            return checkbox
+        return widget.findChild(QCheckBox)
+
     def _init_ui(self):
         layout = self.init_dialog_layout(
             (500, 420),
@@ -207,20 +282,20 @@ class SnQueryDialog(AdaptiveDialog):
             spacing=10,
         )
 
-        # 状态标签
-        self.status_label = QLabel("正在查询...")
-        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
-        self.status_label.setFixedHeight(18)
-        layout.addWidget(self.status_label)
+        card, card_layout = self._create_card_section("查询结果")
 
-        # 结果表格
-        self.table = QTableWidget()
+        self.status_label = BodyLabel("正在查询...")
+        self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px; border: none;")
+        self.status_label.setFixedHeight(18)
+        card_layout.addWidget(self.status_label)
+
+        self.table = TableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["", "设备名称", "SN"])
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(True)
-        self.table.setFrameShape(QTableWidget.NoFrame)
+        self.table.setFrameShape(TableWidget.NoFrame)
         self.table.verticalHeader().setVisible(False)
 
         header = self.table.horizontalHeader()
@@ -230,44 +305,40 @@ class SnQueryDialog(AdaptiveDialog):
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setDefaultAlignment(Qt.AlignCenter)
 
-        self.table.setStyleSheet(StyleManager.get_TABLE())
-        layout.addWidget(self.table, 1)
+        self._apply_table_style()
+        card_layout.addWidget(self.table, 1)
 
-        # 全选行（放在表格下方）
         select_all_row = QHBoxLayout()
         select_all_row.setContentsMargins(0, 0, 0, 0)
-        self.select_all_cb_bottom = QCheckBox("全选")
+        self.select_all_cb_bottom = CheckBox("全选")
         self.select_all_cb_bottom.setStyleSheet(f"color: {t('text_primary')}; font-size: 11px;")
         self.select_all_cb_bottom.stateChanged.connect(self._on_select_all)
         select_all_row.addWidget(self.select_all_cb_bottom)
         select_all_row.addStretch()
-        layout.addLayout(select_all_row)
+        card_layout.addLayout(select_all_row)
 
-        # 底部按钮
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        btn_style = StyleManager.get_ACTION_BUTTON()
-
-        self.add_btn = QPushButton("添加到SN")
+        self.add_btn = PrimaryPushButton("添加到SN")
         self.add_btn.setIcon(QIcon(":/icons/common/ok.png"))
         self.add_btn.setIconSize(QSize(18, 18))
-        self.add_btn.setFixedHeight(28)
-        self.add_btn.setStyleSheet(btn_style)
+        self.add_btn.setFixedSize(102, 32)
         self.add_btn.setEnabled(False)
         self.add_btn.clicked.connect(self._on_add)
 
-        cancel_btn = QPushButton("取消")
-        cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-        cancel_btn.setIconSize(QSize(18, 18))
-        cancel_btn.setFixedHeight(28)
-        cancel_btn.setStyleSheet(btn_style)
-        cancel_btn.clicked.connect(self.reject)
+        self.cancel_btn = PushButton("取消")
+        self.cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+        self.cancel_btn.setIconSize(QSize(18, 18))
+        self.cancel_btn.setFixedSize(88, 32)
+        self._apply_secondary_button_style(self.cancel_btn)
+        self.cancel_btn.clicked.connect(self.reject)
 
         btn_layout.addWidget(self.add_btn)
         btn_layout.addSpacing(10)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
+        btn_layout.addWidget(self.cancel_btn)
+        card_layout.addLayout(btn_layout)
+        layout.addWidget(card)
 
     def _on_query(self):
         from query_tool.utils.config import get_account_config
@@ -330,7 +401,7 @@ class SnQueryDialog(AdaptiveDialog):
         self.select_all_cb_bottom.setChecked(False)
         self.select_all_cb_bottom.blockSignals(False)
         for row, dev in enumerate(devices):
-            cb = QCheckBox()
+            cb = CheckBox()
             cb.stateChanged.connect(self._update_add_btn)
             cb_widget = QWidget()
             cb_layout = QHBoxLayout(cb_widget)
@@ -374,6 +445,28 @@ class SnQueryDialog(AdaptiveDialog):
     def get_selected_sns(self):
         return self.selected_sns
 
+    def refresh_theme(self):
+        for label in self._card_title_labels:
+            self._apply_card_title_style(label)
+        for card in self._cards:
+            self._apply_card_style(card)
+        if hasattr(self, "status_label"):
+            current = self.status_label.text()
+            if "正在查询" in current or "设备型号" in current or "正在登录" in current or "用户信息" in current or "绑定设备" in current:
+                self.status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px; border: none;")
+            elif "匹配" in current:
+                self.status_label.setStyleSheet(f"color: {t('status_online')}; font-size: 11px; border: none;")
+            elif "暂无绑定设备" in current or "无匹配型号" in current:
+                self.status_label.setStyleSheet(f"color: {t('status_pending')}; font-size: 11px; border: none;")
+            else:
+                self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 11px; border: none;")
+        if hasattr(self, "select_all_cb_bottom"):
+            self.select_all_cb_bottom.setStyleSheet(f"color: {t('text_primary')}; font-size: 11px;")
+        if hasattr(self, "table"):
+            self._apply_table_style()
+        if hasattr(self, "cancel_btn"):
+            self._apply_secondary_button_style(self.cancel_btn)
+
 
 class EditFirmwareDialog(AdaptiveDialog):
     """修改固件信息对话框"""
@@ -397,9 +490,15 @@ class EditFirmwareDialog(AdaptiveDialog):
         self.selected_file_name = None  # 保存选择的文件名
         self.is_create_mode = (firmware_id is None)  # 是否为新增模式
         self.immediate_upgrade_checkbox = None
+        self._cards = []
+        self._card_title_labels = []
+        self._info_labels = []
+        self._field_labels = []
         
         # 线程管理器
         self.thread_mgr = ThreadManager()
+        theme_manager.theme_changed.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme)
         
         # 获取session（从firmware_api模块）
         try:
@@ -415,6 +514,140 @@ class EditFirmwareDialog(AdaptiveDialog):
         """对话框显示时设置深色标题栏"""
         super().showEvent(event)
         set_dark_title_bar(self)
+
+    def _disconnect_theme(self):
+        try:
+            theme_manager.theme_changed.disconnect(self.refresh_theme)
+        except Exception:
+            pass
+
+    def _apply_card_title_style(self, label):
+        label.setStyleSheet(f"color: {t('text_primary')}; font-weight: 600; border: none;")
+
+    def _apply_info_style(self, label):
+        label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px; border: none;")
+
+    def _apply_card_style(self, card):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            card.setStyleSheet(
+                f"""
+                #{card.objectName()} {{
+                    border: 1px solid {t('border')};
+                    border-radius: 6px;
+                    background-color: transparent;
+                }}
+                """
+            )
+
+    def _create_card_section(self, title):
+        card = ElevatedCardWidget(self)
+        card.setObjectName(f"editFirmwareCard{len(self._cards) + 1}")
+        self._cards.append(card)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        title_label = BodyLabel(title)
+        self._card_title_labels.append(title_label)
+        self._apply_card_title_style(title_label)
+        layout.addWidget(title_label)
+        self._apply_card_style(card)
+        return card, layout
+
+    def _info_label(self, text):
+        label = BodyLabel(text)
+        self._info_labels.append(label)
+        self._apply_info_style(label)
+        return label
+
+    def _field_label(self, text, required=False, *, tooltip="", top_aligned=False):
+        if required:
+            label = BodyLabel(f"<span style='color: {t('status_offline')};'>*</span> {text}")
+            label.setTextFormat(Qt.RichText)
+        else:
+            label = BodyLabel(text)
+        label.setProperty("fieldText", text)
+        label.setProperty("requiredField", required)
+        label.setAlignment(Qt.AlignLeft | (Qt.AlignTop if top_aligned else Qt.AlignVCenter))
+        label.setStyleSheet(f"color: {t('text_primary')}; font-size: 13px; border: none;")
+        if tooltip:
+            label.setToolTip(tooltip)
+        self._field_labels.append(label)
+        return label
+
+    def _apply_secondary_button_style(self, button):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            button.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+
+    def _apply_combo_style(self, combo):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            combo.setStyleSheet(StyleManager.get_COMBOBOX())
+
+    def _apply_read_only_line_edit_style(self, widget):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            widget.setStyleSheet(StyleManager.get_READONLY_INPUT())
+
+    def _apply_editable_line_edit_style(self, widget):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            widget.setStyleSheet(StyleManager.get_style("PLAINTEXT_EDIT_TABLE").replace("QPlainTextEdit", "QLineEdit"))
+
+    def _apply_text_edit_style(self, widget):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            widget.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit"))
+
+    def _apply_datetime_style(self, widget):
+        widget.setStyleSheet(
+            f"""
+            QDateTimeEdit {{
+                background-color: {t('bg_light')};
+                color: {t('text_primary')};
+                border: 1px solid {t('border')};
+                border-radius: 4px;
+                padding: 4px 8px;
+            }}
+            QDateTimeEdit:focus {{
+                border: 1px solid {t('status_info')};
+            }}
+            QDateTimeEdit::up-button,
+            QDateTimeEdit::down-button {{
+                width: 18px;
+                border: none;
+                background-color: transparent;
+            }}
+            """
+        )
+
+    @staticmethod
+    def _exec_dialog(dialog):
+        exec_method = getattr(dialog, "exec", None)
+        if callable(exec_method):
+            return exec_method()
+        return dialog.exec_()
+
+    @staticmethod
+    def _combo_line_edit(combo):
+        getter = getattr(combo, "lineEdit", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
+    def _set_combo_placeholder(self, combo, text):
+        setter = getattr(combo, "setPlaceholderText", None)
+        if callable(setter):
+            try:
+                setter(text)
+                return
+            except Exception:
+                pass
+        line_edit = self._combo_line_edit(combo)
+        if line_edit is not None:
+            line_edit.setPlaceholderText(text)
+
+    def _set_file_status_state(self, text, color_role):
+        self.file_status_label.setText(text)
+        self.file_status_label.setStyleSheet(f"color: {t(color_role)}; font-size: 12px; border: none;")
     
     def init_ui(self):
         """初始化UI"""
@@ -437,79 +670,85 @@ class EditFirmwareDialog(AdaptiveDialog):
         # 固件标识信息（在表单上方，无边框）- 仅编辑模式显示
         if not self.is_create_mode:
             identifier = self.firmware_data.get('device_identify', '未知')
-            info_label = QLabel(f"固件标识: {identifier}")
-            info_label.setStyleSheet(f"color: {t('status_info')}; font-size: 13px;")
-            layout.addWidget(info_label)
-        
-        # 表单区域
-        form_group = QGroupBox("编辑")
-        form_layout = QFormLayout(form_group)
-        form_layout.setSpacing(12)
-        form_layout.setContentsMargins(15, 20, 15, 15)
-        
-        # 通用样式
-        readonly_style = StyleManager.get_READONLY_INPUT()
-        
-        editable_style = StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit")
+            self.identifier_info_label = self._info_label(f"固件标识: {identifier}")
+            layout.addWidget(self.identifier_info_label)
+
+        details_card, details_card_layout = self._create_card_section("固件文件与说明")
+        details_content = QWidget()
+        details_form_layout = QFormLayout(details_content)
+        details_form_layout.setSpacing(12)
+        details_form_layout.setContentsMargins(0, 0, 0, 0)
+        details_form_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        details_form_layout.setFormAlignment(Qt.AlignTop)
+        details_form_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         
         # 1. 固件文件上传
-        file_label = QLabel("固件文件:")
-        file_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 垂直居中对齐
+        file_label = self._field_label("固件文件")
         file_widget = QWidget()
-        file_widget.setFixedHeight(28)  # 与按钮高度一致
+        file_widget.setFixedHeight(32)
         file_layout = QHBoxLayout(file_widget)
         file_layout.setContentsMargins(0, 0, 0, 0)
         file_layout.setSpacing(10)
         
-        self.file_btn = QPushButton("选择文件")
-        self.file_btn.setFixedHeight(28)
-        self.file_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+        self.file_btn = PushButton("选择文件")
+        self.file_btn.setFixedSize(100, 32)
+        self._apply_secondary_button_style(self.file_btn)
         self.file_btn.clicked.connect(self.on_select_file)
         
-        self.file_status_label = QLabel("未选择文件")
-        self.file_status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
+        self.file_status_label = BodyLabel("未选择文件")
+        self._set_file_status_state("未选择文件", 'text_hint')
         self.file_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
         file_layout.addWidget(self.file_btn)
         file_layout.addWidget(self.file_status_label, 1)  # 添加伸展因子，让标签占据剩余空间
         
-        form_layout.addRow(file_label, file_widget)
+        details_form_layout.addRow(file_label, file_widget)
         
         # 2. 固件标识（可编辑）
-        identifier_label = QLabel("<span style='color: red;'>*</span> 固件标识:")
-        self.identifier_input = QLineEdit()
+        identifier_label = self._field_label("固件标识", required=True)
+        self.identifier_input = LineEdit()
         self.identifier_input.setPlaceholderText("自动获取或手动输入固件标识...")
-        self.identifier_input.setFixedHeight(28)
-        self.identifier_input.setStyleSheet(StyleManager.get_style("PLAINTEXT_EDIT_TABLE").replace("QPlainTextEdit", "QLineEdit"))
+        self.identifier_input.setFixedHeight(32)
+        self._apply_editable_line_edit_style(self.identifier_input)
         # 连接文本变化信号，实时验证
         self.identifier_input.textChanged.connect(self.validate_form)
-        form_layout.addRow(identifier_label, self.identifier_input)
+        details_form_layout.addRow(identifier_label, self.identifier_input)
         
         # 3. 文件MD5（只读）
-        md5_label = QLabel("<span style='color: red;'>*</span> 文件MD5:")
-        self.md5_input = QLineEdit()
+        md5_label = self._field_label("文件MD5", required=True)
+        self.md5_input = LineEdit()
         self.md5_input.setReadOnly(True)
         self.md5_input.setFocusPolicy(Qt.NoFocus)  # 禁止获取焦点
-        self.md5_input.setFixedHeight(28)
-        self.md5_input.setStyleSheet(readonly_style)
-        form_layout.addRow(md5_label, self.md5_input)
+        self.md5_input.setFixedHeight(32)
+        self._apply_read_only_line_edit_style(self.md5_input)
+        details_form_layout.addRow(md5_label, self.md5_input)
         
         # 4. 发布备注
-        comment_label = QLabel("<span style='color: red;'>*</span> 发布备注:")
-        self.comment_text = QTextEdit()
+        comment_label = self._field_label("发布备注", required=True, top_aligned=True)
+        self.comment_text = TextEdit()
         self.comment_text.setPlaceholderText("输入发布备注...")
         self.comment_text.setMinimumHeight(60)
         self.comment_text.setMaximumHeight(60)
-        self.comment_text.setStyleSheet(editable_style)
+        self._apply_text_edit_style(self.comment_text)
         # 连接文本变化信号，实时验证
         self.comment_text.textChanged.connect(self.on_comment_text_changed)
         self.comment_text.textChanged.connect(self.validate_form)
-        form_layout.addRow(comment_label, self.comment_text)
+        details_form_layout.addRow(comment_label, self.comment_text)
+
+        details_card_layout.addWidget(details_content)
+        layout.addWidget(details_card)
+
+        policy_card, policy_card_layout = self._create_card_section("升级条件")
+        policy_content = QWidget()
+        policy_form_layout = QFormLayout(policy_content)
+        policy_form_layout.setSpacing(12)
+        policy_form_layout.setContentsMargins(0, 0, 0, 0)
+        policy_form_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignTop)
+        policy_form_layout.setFormAlignment(Qt.AlignTop)
+        policy_form_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         
         # 5. 支持升级的设备SN（标签、输入框、右侧账号+查询按钮）
-        sn_label = QLabel("升级SN:")
-        sn_label.setToolTip("每行一个SN，支持多个设备")
-        sn_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        sn_label = self._field_label("升级SN", tooltip="每行一个SN，支持多个设备", top_aligned=True)
 
         sn_right_widget = QWidget()
         sn_right_widget.setFixedHeight(100)  # 与SN输入框等高，避免多余空间
@@ -517,12 +756,12 @@ class EditFirmwareDialog(AdaptiveDialog):
         sn_right_layout.setContentsMargins(0, 0, 0, 0)
         sn_right_layout.setSpacing(self.SN_QUERY_CONTROL_SPACING)
 
-        self.sn_text = QTextEdit()
+        self.sn_text = TextEdit()
         self.sn_text.setPlaceholderText("为空时默认使用临时SN保存")
         self.sn_text.setFixedHeight(100)
         self.sn_text.setMinimumWidth(250)
         self.sn_text.setMaximumWidth(290)
-        self.sn_text.setStyleSheet(editable_style)
+        self._apply_text_edit_style(self.sn_text)
         self.sn_text.textChanged.connect(self.on_sn_text_changed)
         self.sn_text.textChanged.connect(self.validate_form)
 
@@ -543,16 +782,17 @@ class EditFirmwareDialog(AdaptiveDialog):
         for label, value in self.ACCOUNT_QUERY_TYPES:
             self.sn_account_type_combo.addItem(label, value)
         self.sn_account_type_combo.setCurrentIndex(0)
-        self.sn_account_type_combo.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 28)
-        self.sn_account_type_combo.setStyleSheet(StyleManager.get_COMBOBOX())
+        self.sn_account_type_combo.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 32)
+        self._apply_combo_style(self.sn_account_type_combo)
         self.sn_account_type_combo.currentIndexChanged.connect(self.on_sn_account_type_changed)
 
-        self.sn_phone_input = NoWheelComboBox()
-        self.sn_phone_input.setEditable(True)
-        self.sn_phone_input.setInsertPolicy(QComboBox.NoInsert)
-        self.sn_phone_input.lineEdit().setPlaceholderText("请输入手机号...")
-        self.sn_phone_input.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 28)
-        self.sn_phone_input.setStyleSheet(StyleManager.get_COMBOBOX())
+        self.sn_phone_input = NoWheelEditableComboBox()
+        set_insert_policy = getattr(self.sn_phone_input, "setInsertPolicy", None)
+        if callable(set_insert_policy):
+            set_insert_policy(QComboBox.NoInsert)
+        self._set_combo_placeholder(self.sn_phone_input, "请输入手机号...")
+        self.sn_phone_input.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 32)
+        self._apply_combo_style(self.sn_phone_input)
         # 加载账号历史（与设备查询页面同步）
         self._load_phone_history()
         account_row.addWidget(self.sn_account_type_combo)
@@ -562,11 +802,11 @@ class EditFirmwareDialog(AdaptiveDialog):
         action_row.setContentsMargins(0, 0, 0, 0)
         action_row.setSpacing(self.SN_QUERY_CONTROL_SPACING)
 
-        self.sn_query_btn = QPushButton("查询设备")
+        self.sn_query_btn = PushButton("查询设备")
         self.sn_query_btn.setIcon(QIcon(":/icons/common/search.png"))
         self.sn_query_btn.setIconSize(QSize(14, 14))
-        self.sn_query_btn.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 28)
-        self.sn_query_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+        self.sn_query_btn.setFixedSize(self.SN_QUERY_CONTROL_WIDTH, 32)
+        self._apply_secondary_button_style(self.sn_query_btn)
         self.sn_query_btn.clicked.connect(self.on_query_device_sn)
         action_row.addWidget(self.sn_query_btn)
         action_row.addStretch()
@@ -583,11 +823,10 @@ class EditFirmwareDialog(AdaptiveDialog):
         sn_right_layout.addWidget(sn_btn_widget, 0, Qt.AlignVCenter)
         self.on_sn_account_type_changed()
 
-        form_layout.addRow(sn_label, sn_right_widget)
+        policy_form_layout.addRow(sn_label, sn_right_widget)
         
         # 6. 可升级时间段（两个时间控件水平排列）
-        time_label = QLabel("升级时间段:")
-        time_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        time_label = self._field_label("升级时间段", top_aligned=True)
         time_widget = QWidget()
         time_widget.setFixedHeight(58)
         time_container_layout = QVBoxLayout(time_widget)
@@ -599,43 +838,41 @@ class EditFirmwareDialog(AdaptiveDialog):
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.setSpacing(10)
         
-        datetime_style = ""  # 全局 QSS 已覆盖 QDateTimeEdit
-        
         # 开始时间
         self.start_time_edit = ClickableDateTimeEdit()
         self.start_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self.start_time_edit.setCalendarPopup(True)
         self.start_time_edit.setMinimumWidth(180)
-        self.start_time_edit.setStyleSheet(datetime_style)
         self.start_time_edit.setButtonSymbols(QDateTimeEdit.UpDownArrows)
+        self._apply_datetime_style(self.start_time_edit)
         
         # 分隔符
-        separator_label = QLabel("—")
-        separator_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 14px;")
+        self.separator_label = BodyLabel("—")
+        self.separator_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 14px; border: none;")
         
         # 结束时间
         self.end_time_edit = ClickableDateTimeEdit()
         self.end_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self.end_time_edit.setCalendarPopup(True)
         self.end_time_edit.setMinimumWidth(180)
-        self.end_time_edit.setStyleSheet(datetime_style)
         self.end_time_edit.setButtonSymbols(QDateTimeEdit.UpDownArrows)
+        self._apply_datetime_style(self.end_time_edit)
         
-        today_btn = QPushButton("今天")
-        today_btn.setFixedSize(100, 28)
-        today_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
-        today_btn.clicked.connect(self._on_set_today)
+        self.today_btn = PushButton("今天")
+        self.today_btn.setFixedSize(100, 32)
+        self._apply_secondary_button_style(self.today_btn)
+        self.today_btn.clicked.connect(self._on_set_today)
 
-        self.immediate_upgrade_checkbox = QCheckBox("立即下发升级")
+        self.immediate_upgrade_checkbox = CheckBox("立即下发升级")
         self.immediate_upgrade_checkbox.setStyleSheet(
             f"QCheckBox {{ color: {t('text_primary')}; font-size: 12px; }}"
         )
 
         time_layout.addWidget(self.start_time_edit)
-        time_layout.addWidget(separator_label)
+        time_layout.addWidget(self.separator_label)
         time_layout.addWidget(self.end_time_edit)
         time_layout.addStretch()
-        time_layout.addWidget(today_btn, 0, Qt.AlignTop)
+        time_layout.addWidget(self.today_btn, 0, Qt.AlignTop)
 
         checkbox_row_widget = QWidget()
         checkbox_layout = QHBoxLayout(checkbox_row_widget)
@@ -648,30 +885,27 @@ class EditFirmwareDialog(AdaptiveDialog):
         time_container_layout.addWidget(time_row_widget)
         time_container_layout.addWidget(checkbox_row_widget)
         
-        form_layout.addRow(time_label, time_widget)
-        
-        layout.addWidget(form_group)
+        policy_form_layout.addRow(time_label, time_widget)
+        policy_card_layout.addWidget(policy_content)
+        layout.addWidget(policy_card)
         
         # 按钮区域
         layout.addSpacing(15)
         
         button_layout = QHBoxLayout()
         button_layout.addStretch()
-        
-        button_style = StyleManager.get_ACTION_BUTTON()
-        
-        self.submit_btn = QPushButton()
+
+        self.submit_btn = PrimaryPushButton("保存")
         self.submit_btn.setIcon(QIcon(":/icons/common/ok.png"))
         self.submit_btn.setIconSize(QSize(18, 18))
-        self.submit_btn.setFixedSize(60, 28)
-        self.submit_btn.setStyleSheet(button_style)
+        self.submit_btn.setFixedSize(88, 32)
         self.submit_btn.clicked.connect(self.on_submit)
         
-        self.cancel_btn = QPushButton()
+        self.cancel_btn = PushButton("取消")
         self.cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
         self.cancel_btn.setIconSize(QSize(18, 18))
-        self.cancel_btn.setFixedSize(60, 28)
-        self.cancel_btn.setStyleSheet(button_style)
+        self.cancel_btn.setFixedSize(88, 32)
+        self._apply_secondary_button_style(self.cancel_btn)
         self.cancel_btn.clicked.connect(self.reject)
         
         button_layout.addWidget(self.submit_btn)
@@ -684,11 +918,9 @@ class EditFirmwareDialog(AdaptiveDialog):
         """加载当前数据"""
         current_file_name = self._resolve_current_file_name()
         if current_file_name:
-            self.file_status_label.setText(current_file_name)
-            self.file_status_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
+            self._set_file_status_state(current_file_name, 'text_primary')
         else:
-            self.file_status_label.setText("未选择文件")
-            self.file_status_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px;")
+            self._set_file_status_state("未选择文件", 'text_hint')
 
         # 加载固件标识
         identifier = self.firmware_data.get('device_identify', '')
@@ -833,15 +1065,15 @@ class EditFirmwareDialog(AdaptiveDialog):
                     f"QTextEdit:focus {{ border: 1px solid {t('status_offline')}; }}"
                 )
             else:
-                self.sn_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit"))
+                self._apply_text_edit_style(self.sn_text)
         else:
-            self.sn_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit"))
+            self._apply_text_edit_style(self.sn_text)
     
     def on_comment_text_changed(self):
         """发布备注文本变化时，如果有内容则取消红框"""
         text = self.comment_text.toPlainText().strip()
         if text:
-            self.comment_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit"))
+            self._apply_text_edit_style(self.comment_text)
     
     def on_query_device_sn(self):
         """查询设备SN - 直接弹出结果对话框"""
@@ -862,7 +1094,7 @@ class EditFirmwareDialog(AdaptiveDialog):
             account_type=account_type,
             parent=self,
         )
-        if dialog.exec_() == QDialog.Accepted:
+        if self._exec_dialog(dialog) == QDialog.Accepted:
             sns = dialog.get_selected_sns()
             if sns:
                 # 保存手机号到历史
@@ -910,9 +1142,7 @@ class EditFirmwareDialog(AdaptiveDialog):
             "email": "请输入邮箱...",
         }
         account_type = self.get_selected_sn_account_type()
-        self.sn_phone_input.lineEdit().setPlaceholderText(
-            placeholder_map.get(account_type, "请输入账号...")
-        )
+        self._set_combo_placeholder(self.sn_phone_input, placeholder_map.get(account_type, "请输入账号..."))
 
     def _on_set_today(self):
         """将时间段设置为今天"""
@@ -967,7 +1197,7 @@ class EditFirmwareDialog(AdaptiveDialog):
             file_name = os.path.basename(file_path)
             
             # 显示文件名
-            self.file_status_label.setText(f"已选择: {file_name}")
+            self._set_file_status_state(f"已选择: {file_name}", 'text_primary')
             
             # 保存文件名，上传成功后显示
             self.selected_file_name = file_name
@@ -992,8 +1222,7 @@ class EditFirmwareDialog(AdaptiveDialog):
         # 禁用控件
         self.file_btn.setEnabled(False)
         self.submit_btn.setEnabled(False)
-        self.file_status_label.setText("上传中...")
-        self.file_status_label.setStyleSheet(f"color: {t('status_pending')};  # 橙色")  # 橙色
+        self._set_file_status_state("上传中...", 'status_pending')
         
         # 在主窗口显示上传提示
         if self.parent():
@@ -1016,10 +1245,9 @@ class EditFirmwareDialog(AdaptiveDialog):
         if success:
             # 更新显示 - 显示完整文件名
             if self.selected_file_name:
-                self.file_status_label.setText(f"上传成功: {self.selected_file_name}")
+                self._set_file_status_state(f"上传成功: {self.selected_file_name}", 'status_online')
             else:
-                self.file_status_label.setText(f"上传成功")
-            self.file_status_label.setStyleSheet(f"color: {t('status_online')};  # 绿色")  # 绿色
+                self._set_file_status_state("上传成功", 'status_online')
             
             # 更新固件标识（如果自动获取成功）
             firmware_identity = data.get('firmware_identity', '')
@@ -1065,8 +1293,7 @@ class EditFirmwareDialog(AdaptiveDialog):
             self.validate_form()
         else:
             # 显示错误
-            self.file_status_label.setText(f"上传失败")
-            self.file_status_label.setStyleSheet(f"color: {t('status_offline')};  # 红色")  # 红色
+            self._set_file_status_state("上传失败", 'status_offline')
             
             # 清空固件标识和MD5，等待用户重新上传或手动填写
             self.identifier_input.clear()
@@ -1114,9 +1341,6 @@ class EditFirmwareDialog(AdaptiveDialog):
     
     def on_submit(self):
         """提交修改"""
-        from PyQt5.QtWidgets import QMessageBox
-        from PyQt5.QtCore import QTimer
-        
         # 由于按钮已经通过validate_form控制启用/禁用
         # 这里只需要做最终的数据收集和提交
         
@@ -1148,13 +1372,7 @@ class EditFirmwareDialog(AdaptiveDialog):
         
         # 验证时间
         if self.start_time_edit.dateTime() >= self.end_time_edit.dateTime():
-            msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Warning)
-            msg_box.setWindowTitle("时间错误")
-            msg_box.setText("开始时间必须早于结束时间！")
-            msg_box.setStandardButtons(QMessageBox.Ok)
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            msg_box.exec_()
+            show_message_box(self, QMessageBox.Warning, "时间错误", "开始时间必须早于结束时间！")
             return
         
         # 构建提交数据（包含所有字段）
@@ -1181,4 +1399,54 @@ class EditFirmwareDialog(AdaptiveDialog):
     def should_send_upgrade_immediately(self):
         """是否在保存成功后立即批量下发升级"""
         return bool(self.immediate_upgrade_checkbox and self.immediate_upgrade_checkbox.isChecked())
+
+    def refresh_theme(self):
+        for label in self._card_title_labels:
+            self._apply_card_title_style(label)
+        for label in self._field_labels:
+            if label.property("requiredField"):
+                label.setText(f"<span style='color: {t('status_offline')};'>*</span> {label.property('fieldText')}")
+            label.setStyleSheet(f"color: {t('text_primary')}; font-size: 13px; border: none;")
+        for label in self._info_labels:
+            self._apply_info_style(label)
+        for card in self._cards:
+            self._apply_card_style(card)
+
+        if hasattr(self, "identifier_input"):
+            self._apply_editable_line_edit_style(self.identifier_input)
+        if hasattr(self, "md5_input"):
+            self._apply_read_only_line_edit_style(self.md5_input)
+        if hasattr(self, "comment_text"):
+            self.on_comment_text_changed()
+            if not self.comment_text.toPlainText().strip():
+                self._apply_text_edit_style(self.comment_text)
+        if hasattr(self, "sn_text"):
+            self.on_sn_text_changed()
+        for attr in ("file_btn", "sn_query_btn", "today_btn", "cancel_btn"):
+            if hasattr(self, attr):
+                self._apply_secondary_button_style(getattr(self, attr))
+        for attr in ("sn_account_type_combo", "sn_phone_input"):
+            if hasattr(self, attr):
+                self._apply_combo_style(getattr(self, attr))
+        if hasattr(self, "file_status_label"):
+            current = self.file_status_label.text()
+            if current.startswith("上传成功"):
+                self._set_file_status_state(current, "status_online")
+            elif current.startswith("上传失败"):
+                self._set_file_status_state(current, "status_offline")
+            elif current == "上传中...":
+                self._set_file_status_state(current, "status_pending")
+            elif current == "未选择文件":
+                self._set_file_status_state(current, "text_hint")
+            else:
+                self._set_file_status_state(current, "text_primary")
+        if hasattr(self, "separator_label"):
+            self.separator_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 14px; border: none;")
+        for attr in ("start_time_edit", "end_time_edit"):
+            if hasattr(self, attr):
+                self._apply_datetime_style(getattr(self, attr))
+        if hasattr(self, "immediate_upgrade_checkbox"):
+            self.immediate_upgrade_checkbox.setStyleSheet(
+                f"QCheckBox {{ color: {t('text_primary')}; font-size: 12px; }}"
+            )
 

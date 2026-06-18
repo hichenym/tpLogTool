@@ -9,7 +9,7 @@ class PageRegistry:
     _pages = []  # 存储页面配置
     
     @classmethod
-    def register(cls, page_class, name, order=0, icon=None):
+    def register(cls, page_class, name, order=0, icon=None, route_key=None):
         """
         注册页面
         
@@ -18,12 +18,15 @@ class PageRegistry:
             name: 页面名称（显示在菜单上）
             order: 排序顺序（数字越小越靠前）
             icon: 页面图标路径（可选）
+            route_key: Fluent 导航路由键（可选）
         """
+        route_key = route_key or f"{page_class.__module__}.{page_class.__name__}"
         cls._pages.append({
             'class': page_class,
             'name': name,
             'order': order,
-            'icon': icon
+            'icon': icon,
+            'route_key': route_key,
         })
         # 按order排序
         cls._pages.sort(key=lambda x: x['order'])
@@ -45,7 +48,7 @@ class PageRegistry:
 
 
 # 装饰器：简化页面注册
-def register_page(name, order=0, icon=None):
+def register_page(name, order=0, icon=None, route_key=None):
     """
     页面注册装饰器
     
@@ -58,8 +61,9 @@ def register_page(name, order=0, icon=None):
         name: 页面名称
         order: 排序顺序
         icon: 图标路径（可选）
+        route_key: Fluent 导航路由键（可选）
     """
     def decorator(page_class):
-        PageRegistry.register(page_class, name, order, icon)
+        PageRegistry.register(page_class, name, order, icon, route_key)
         return page_class
     return decorator

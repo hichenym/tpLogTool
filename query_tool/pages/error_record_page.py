@@ -7,9 +7,15 @@ import os
 from time import monotonic
 
 from PyQt5.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QGroupBox, QLineEdit, QComboBox,
-    QFrame, QCompleter, QShortcut, QDialog, QSizePolicy
+    QFileDialog,
+    QCompleter,
+    QHeaderView,
+    QMessageBox,
+    QShortcut,
+    QSizePolicy,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QHBoxLayout,
 )
 from PyQt5.QtCore import Qt, QSize, QTimer, QStringListModel, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeySequence
@@ -22,13 +28,26 @@ if project_root not in sys.path:
 from .base_page import BasePage
 from .page_registry import register_page
 from query_tool.utils import ButtonManager, ThreadManager, StyleManager
-from query_tool.utils.theme_manager import t
+from query_tool.ui import (
+    BodyLabel,
+    EditableComboBox,
+    ElevatedCardWidget,
+    LineEdit,
+    PrimaryPushButton,
+    ProgressBar,
+    PushButton,
+    QFLUENT_WIDGETS_AVAILABLE,
+    StrongBodyLabel,
+    TableWidget,
+)
+from query_tool.utils.theme_manager import t, theme_manager
 from query_tool.utils.error_record_api import MetaLoadThread, ErrorRecordQueryThread, _make_device_query
 from query_tool.utils.logger import logger
-from query_tool.widgets.custom_widgets import set_dark_title_bar
+from query_tool.widgets.adaptive_dialog import AdaptiveDialog
+from query_tool.widgets.custom_widgets import set_dark_title_bar, show_question_box
 
 
-class _NoWheelComboBox(QComboBox):
+class _NoWheelComboBox(EditableComboBox):
     """禁用鼠标滚轮切换的可编辑下拉框"""
     def wheelEvent(self, event):
         event.ignore()
@@ -78,29 +97,44 @@ class DeviceInfoQueryThread(QThread):
             self.error.emit(str(e))
 
 
-class DeviceInfoDialog(QDialog):
+class DeviceInfoDialog(AdaptiveDialog):
     """设备信息弹窗"""
 
     def __init__(self, info, parent=None):
         super().__init__(parent)
+        self.info = info
+        self._key_col_width = 120
+
         self.setWindowTitle("设备信息")
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
-        self.setSizeGripEnabled(True)
+        theme_manager.theme_changed.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout = self.init_dialog_layout(
+            (560, 360),
+            min_size=(360, 240),
+            layout_margins=(20, 20, 20, 20),
+            spacing=14,
+            max_width_ratio=0.72,
+            max_height_ratio=0.72,
+        )
 
-        tip = QLabel("双击内容可复制")
-        tip.setStyleSheet(f"color: {t('text_hint')}; border: none;")
-        layout.addWidget(tip)
+        self.info_card = ElevatedCardWidget(self)
+        self.info_card.setObjectName("deviceInfoCard")
+        card_layout = QVBoxLayout(self.info_card)
+        card_layout.setContentsMargins(16, 16, 16, 16)
+        card_layout.setSpacing(10)
 
-        self.table = QTableWidget(6, 2, self)
-        self._key_col_width = 120
+        self.tip_label = BodyLabel("双击内容可复制")
+        card_layout.addWidget(self.tip_label)
+
+        self.table = TableWidget(self.info_card)
+        self.table.setRowCount(len(info))
+        self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["字段", "内容"])
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setEditTriggers(TableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(TableWidget.SelectRows)
+        self.table.setSelectionMode(TableWidget.SingleSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.setWordWrap(False)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -109,7 +143,6 @@ class DeviceInfoDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        StyleManager.apply_to_widget(self.table, "TABLE")
 
         for row, (key, value) in enumerate(info.items()):
             key_item = QTableWidgetItem(key)
@@ -118,22 +151,56 @@ class DeviceInfoDialog(QDialog):
             self.table.setItem(row, 1, value_item)
 
         self.table.cellDoubleClicked.connect(self._copy_cell_text)
-        layout.addWidget(self.table)
+        card_layout.addWidget(self.table)
+        layout.addWidget(self.info_card)
 
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        close_btn = QPushButton()
-        close_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-        close_btn.setIconSize(QSize(18, 18))
-        close_btn.setFixedSize(32, 32)
-        close_btn.clicked.connect(self.accept)
-        btn_layout.addWidget(close_btn)
+        self.close_btn = PushButton("关闭")
+        self.close_btn.setIcon(QIcon(":/icons/common/cancel.png"))
+        self.close_btn.setIconSize(QSize(18, 18))
+        self.close_btn.setMinimumWidth(96)
+        self.close_btn.setFixedHeight(32)
+        self.close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.close_btn)
         layout.addLayout(btn_layout)
 
         self._adjust_table_size(info)
-        self.resize(self.minimumSizeHint())
+        self.refresh_theme()
+        self.apply_adaptive_geometry()
 
+    def showEvent(self, event):
+        super().showEvent(event)
         set_dark_title_bar(self)
+
+    def _disconnect_theme(self):
+        try:
+            theme_manager.theme_changed.disconnect(self.refresh_theme)
+        except Exception:
+            pass
+
+    def _apply_secondary_button_style(self, button):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            button.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+
+    def _apply_card_style(self):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            self.info_card.setStyleSheet(
+                f"""
+                #deviceInfoCard {{
+                    border: 1px solid {t('border')};
+                    border-radius: 6px;
+                    background-color: transparent;
+                }}
+                """
+            )
+
+    def refresh_theme(self):
+        self.tip_label.setStyleSheet(f"color: {t('text_hint')}; border: none;")
+        self._apply_secondary_button_style(self.close_btn)
+        self._apply_card_style()
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            StyleManager.apply_to_widget(self.table, "TABLE")
 
     def _copy_cell_text(self, row, column):
         item = self.table.item(row, column)
@@ -175,9 +242,9 @@ class DeviceInfoDialog(QDialog):
         total_w = key_width + value_width + vertical_header_w + frame_w + 2
         self.table.setMinimumWidth(total_w)
 
-        margins = self.layout().contentsMargins()
+        layout = self.layout()
+        margins = layout.contentsMargins() if layout is not None else self.contentsMargins()
         dialog_w = total_w + margins.left() + margins.right()
-        self.setMinimumWidth(dialog_w)
 
         header_h = self.table.horizontalHeader().height()
         rows_h = default_row_h * self.table.rowCount()
@@ -185,12 +252,89 @@ class DeviceInfoDialog(QDialog):
         table_h = header_h + rows_h + frame_h + 2
         self.table.setMinimumHeight(table_h)
 
-        dialog_h = table_h + margins.top() + margins.bottom() + 32 + self.layout().spacing() * 2 + 24
-        self.setMinimumHeight(dialog_h)
+        spacing = layout.spacing() if layout is not None else 0
+        dialog_h = table_h + margins.top() + margins.bottom() + 32 + spacing * 2 + 24
+        self._minimum_dialog_size = QSize(
+            max(self._minimum_dialog_size.width(), dialog_w),
+            max(self._minimum_dialog_size.height(), dialog_h),
+        )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.table.setColumnWidth(0, self._key_col_width)
+
+
+class ExportProgressDialog(AdaptiveDialog):
+    """导出过程中的进度弹窗。"""
+
+    cancel_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("正在导出")
+        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        self.setModal(True)
+
+        theme_manager.theme_changed.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme)
+
+        layout = self.init_dialog_layout(
+            (420, 180),
+            min_size=(320, 150),
+            layout_margins=(18, 18, 18, 18),
+            spacing=12,
+            max_width_ratio=0.55,
+            max_height_ratio=0.40,
+        )
+
+        self.card = ElevatedCardWidget(self)
+        self.card.setObjectName("exportProgressCard")
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setSpacing(12)
+
+        self.status_label = BodyLabel("正在拉取数据，请稍候...")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(self.status_label)
+
+        self.progress_bar = ProgressBar()
+        self.progress_bar.setRange(0, 0)
+        card_layout.addWidget(self.progress_bar)
+
+        self.cancel_btn = PushButton("取消")
+        self.cancel_btn.setMinimumWidth(96)
+        self.cancel_btn.setFixedHeight(32)
+        self.cancel_btn.clicked.connect(self.cancel_requested.emit)
+        self.cancel_btn.clicked.connect(self.reject)
+        card_layout.addWidget(self.cancel_btn, 0, Qt.AlignRight)
+
+        layout.addWidget(self.card)
+        self.refresh_theme()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        set_dark_title_bar(self)
+
+    def _disconnect_theme(self):
+        try:
+            theme_manager.theme_changed.disconnect(self.refresh_theme)
+        except Exception:
+            pass
+
+    def refresh_theme(self):
+        self.status_label.setStyleSheet(f"color: {t('text_primary')}; border: none;")
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            StyleManager.apply_to_widget(self.progress_bar, "PROGRESS_BAR")
+            self.cancel_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+            self.card.setStyleSheet(
+                f"""
+                #exportProgressCard {{
+                    border: 1px solid {t('border')};
+                    border-radius: 6px;
+                    background-color: transparent;
+                }}
+                """
+            )
 
 
 @register_page("记录", order=5, icon=":/icons/system/record.png")
@@ -242,6 +386,43 @@ class ErrorRecordPage(BasePage):
 
         self._init_ui()
 
+    def _create_card_section(self, title, vertical_policy=QSizePolicy.Fixed):
+        """创建统一的 Fluent 卡片区块。"""
+        card = ElevatedCardWidget(self)
+        card.setSizePolicy(QSizePolicy.Expanding, vertical_policy)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        layout.addWidget(StrongBodyLabel(title))
+        return card, layout
+
+    def _control_height(self, extra_padding: int = 12, minimum: int = 32) -> int:
+        metrics = QFontMetrics(self.font())
+        return max(minimum, metrics.height() + extra_padding)
+
+    @staticmethod
+    def _combo_line_edit(combo):
+        getter = getattr(combo, "lineEdit", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
+    def _set_combo_placeholder(self, combo, text):
+        setter = getattr(combo, "setPlaceholderText", None)
+        if callable(setter):
+            try:
+                setter(text)
+                return
+            except Exception:
+                pass
+
+        line_edit = self._combo_line_edit(combo)
+        if line_edit is not None:
+            line_edit.setPlaceholderText(text)
+
     # ------------------------------------------------------------------ UI --
 
     def _init_ui(self):
@@ -271,19 +452,9 @@ class ErrorRecordPage(BasePage):
         self._update_query_button_state()
 
     def _create_filter_group(self):
-        group = QGroupBox("筛选条件")
-        gl = QVBoxLayout(group)
-        gl.setContentsMargins(10, 15, 10, 10)
-        gl.setSpacing(6)
-
-        frame = QFrame()
-        frame.setFrameShape(QFrame.StyledPanel)
-        frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
-        self._filter_frame = frame
-
-        fl = QVBoxLayout(frame)
-        fl.setContentsMargins(10, 8, 10, 8)
-        fl.setSpacing(6)
+        group, gl = self._create_card_section("筛选条件")
+        gl.setSpacing(8)
+        control_height = self._control_height()
 
         # --- 第一行 ---
         row1 = QHBoxLayout()
@@ -311,43 +482,43 @@ class ErrorRecordPage(BasePage):
         self.error_code_input = self._make_lineedit("输入错误码...")
         self.error_code_input.setMinimumWidth(120)
 
-        self.start_dt = QLineEdit()
+        self.start_dt = LineEdit()
         self.start_dt.setPlaceholderText("yyyy-MM-dd HH:mm:ss")
-        self.start_dt.setFixedHeight(28)
+        self.start_dt.setFixedHeight(control_height)
 
-        self.end_dt = QLineEdit()
+        self.end_dt = LineEdit()
         self.end_dt.setPlaceholderText("yyyy-MM-dd HH:mm:ss")
-        self.end_dt.setFixedHeight(28)
+        self.end_dt.setFixedHeight(control_height)
 
-        self.query_btn = QPushButton("查询")
+        self.query_btn = PrimaryPushButton("查询")
         self.query_btn.setIcon(QIcon(":/icons/common/search.png"))
         self.query_btn.setIconSize(QSize(16, 16))
-        self.query_btn.setFixedHeight(28)
-        self.query_btn.setStyleSheet("QPushButton { padding-left: 8px; padding-right: 8px; }")
+        self.query_btn.setMinimumWidth(96)
+        self.query_btn.setFixedHeight(control_height)
         self.query_btn.clicked.connect(self.on_query)
 
-        self.refresh_meta_btn = QPushButton("刷新数据")
+        self.refresh_meta_btn = PushButton("刷新数据")
         self.refresh_meta_btn.setIcon(QIcon(":/icons/device/reflash.png"))
         self.refresh_meta_btn.setIconSize(QSize(16, 16))
-        self.refresh_meta_btn.setFixedHeight(28)
-        self.refresh_meta_btn.setStyleSheet("QPushButton { padding-left: 8px; padding-right: 8px; }")
+        self.refresh_meta_btn.setMinimumWidth(108)
+        self.refresh_meta_btn.setFixedHeight(control_height)
         self.refresh_meta_btn.clicked.connect(self.on_refresh_meta)
 
-        self.reset_btn = QPushButton("重置")
+        self.reset_btn = PushButton("重置")
         self.reset_btn.setIcon(QIcon(":/icons/common/clean.png"))
         self.reset_btn.setIconSize(QSize(16, 16))
-        self.reset_btn.setFixedHeight(28)
-        self.reset_btn.setStyleSheet("QPushButton { padding-left: 8px; padding-right: 8px; }")
+        self.reset_btn.setMinimumWidth(96)
+        self.reset_btn.setFixedHeight(control_height)
         self.reset_btn.clicked.connect(self.on_reset)
 
-        range_sep = QLabel("-")
+        range_sep = BodyLabel("-")
         range_sep.setFixedWidth(10)
         range_sep.setAlignment(Qt.AlignCenter)
         range_sep.setStyleSheet("border: none;")
 
-        today_btn = QPushButton("今")
-        today_btn.setFixedHeight(28)
-        today_btn.setStyleSheet("QPushButton { padding-left: 6px; padding-right: 6px; }")
+        today_btn = PushButton("今")
+        today_btn.setMinimumWidth(48)
+        today_btn.setFixedHeight(control_height)
         today_btn.clicked.connect(self._fill_today)
 
         row2.addWidget(self._label("所属模块:"))
@@ -368,9 +539,8 @@ class ErrorRecordPage(BasePage):
         row2.addSpacing(4)
         row2.addWidget(self.reset_btn)
 
-        fl.addLayout(row1)
-        fl.addLayout(row2)
-        gl.addWidget(frame)
+        gl.addLayout(row1)
+        gl.addLayout(row2)
 
         # 型号变化时联动版本
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
@@ -378,24 +548,24 @@ class ErrorRecordPage(BasePage):
         return group
 
     def _create_result_group(self):
-        group = QGroupBox("查询结果")
-        gl = QVBoxLayout(group)
-        gl.setContentsMargins(10, 15, 10, 10)
-        gl.setSpacing(8)
+        group, gl = self._create_card_section("查询结果", QSizePolicy.Expanding)
+        gl.setSpacing(12)
+        label_height = max(24, self._control_height(extra_padding=8, minimum=24))
 
         col_count = len(self.COLUMNS)
-        self.result_table = QTableWidget()
+        self.result_table = TableWidget()
         self.result_table.setColumnCount(col_count)
         self.result_table.setHorizontalHeaderLabels([c[0] for c in self.COLUMNS])
         self.result_table.setFocusPolicy(Qt.StrongFocus)
-        self.result_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.result_table.setSelectionMode(TableWidget.SingleSelection)
+        self.result_table.setSelectionBehavior(TableWidget.SelectRows)
+        self.result_table.setEditTriggers(TableWidget.NoEditTriggers)
         self.result_table.setShowGrid(True)
-        self.result_table.setFrameShape(QTableWidget.NoFrame)
+        self.result_table.setFrameShape(TableWidget.NoFrame)
         self.result_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.result_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        StyleManager.apply_to_widget(self.result_table, "TABLE")
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            StyleManager.apply_to_widget(self.result_table, "TABLE")
 
         header = self.result_table.horizontalHeader()
         header.setMinimumSectionSize(45)
@@ -411,47 +581,47 @@ class ErrorRecordPage(BasePage):
 
         # 分页栏
         pager = QHBoxLayout()
-        pager.setContentsMargins(0, 3, 0, 0)
-        pager.setSpacing(3)
+        pager.setContentsMargins(0, 2, 0, 0)
+        pager.setSpacing(6)
 
-        self.prev_btn = QPushButton()
+        self.prev_btn = PushButton()
         self.prev_btn.setIcon(QIcon(":/icons/common/ssy.png"))
         self.prev_btn.setIconSize(QSize(18, 18))
-        self.prev_btn.setFixedSize(30, 22)
-        self.prev_btn.setStyleSheet("QPushButton { padding: 0px; }")
+        self.prev_btn.setFixedSize(36, 32)
         self.prev_btn.setEnabled(False)
         self.prev_btn.clicked.connect(self.on_prev_page)
 
-        self.page_label = QLabel("[0/0]")
+        self.page_label = BodyLabel("[0/0]")
         self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
-        self.page_label.setFixedHeight(22)
+        self.page_label.setMinimumHeight(label_height)
         self.page_label.setMinimumWidth(70)
         self.page_label.setAlignment(Qt.AlignCenter)
 
-        self.next_btn = QPushButton()
+        self.next_btn = PushButton()
         self.next_btn.setIcon(QIcon(":/icons/common/xyy.png"))
         self.next_btn.setIconSize(QSize(18, 18))
-        self.next_btn.setFixedSize(30, 22)
-        self.next_btn.setStyleSheet("QPushButton { padding: 0px; }")
+        self.next_btn.setFixedSize(36, 32)
         self.next_btn.setEnabled(False)
         self.next_btn.clicked.connect(self.on_next_page)
 
-        self.total_label = QLabel("")
+        self.total_label = BodyLabel("")
         self.total_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
-        self.total_label.setFixedHeight(22)
+        self.total_label.setMinimumHeight(label_height)
         self.total_label.setAlignment(Qt.AlignVCenter)
 
-        self.export_csv_btn = QPushButton("导出CSV")
+        self.export_csv_btn = PushButton("导出CSV")
         self.export_csv_btn.setIcon(QIcon(":/icons/common/export.png"))
         self.export_csv_btn.setIconSize(QSize(16, 16))
-        self.export_csv_btn.setFixedHeight(28)
+        self.export_csv_btn.setMinimumWidth(108)
+        self.export_csv_btn.setFixedHeight(self._control_height())
         self.export_csv_btn.setEnabled(False)
         self.export_csv_btn.clicked.connect(self.on_export_csv)
 
-        self.export_json_btn = QPushButton("导出JSON")
+        self.export_json_btn = PushButton("导出JSON")
         self.export_json_btn.setIcon(QIcon(":/icons/common/export.png"))
         self.export_json_btn.setIconSize(QSize(16, 16))
-        self.export_json_btn.setFixedHeight(28)
+        self.export_json_btn.setMinimumWidth(108)
+        self.export_json_btn.setFixedHeight(self._control_height())
         self.export_json_btn.setEnabled(False)
         self.export_json_btn.clicked.connect(self.on_export_json)
 
@@ -473,32 +643,41 @@ class ErrorRecordPage(BasePage):
 
     @staticmethod
     def _label(text):
-        lbl = QLabel(text)
+        lbl = BodyLabel(text)
         lbl.setFixedWidth(70)
         lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         lbl.setStyleSheet("border: none;")
         return lbl
 
-    @staticmethod
-    def _make_lineedit(placeholder):
-        w = QLineEdit()
+    def _make_lineedit(self, placeholder):
+        w = LineEdit()
         w.setPlaceholderText(placeholder)
-        w.setFixedHeight(28)
+        w.setFixedHeight(self._control_height())
         return w
 
-    @staticmethod
-    def _make_combo(editable=False, placeholder=""):
+    def _make_combo(self, editable=False, placeholder=""):
         cb = _NoWheelComboBox()
-        cb.setFixedHeight(28)
+        cb.setFixedHeight(self._control_height())
         cb.setFocusPolicy(Qt.StrongFocus)
         if editable:
-            cb.setEditable(True)
-            cb.setInsertPolicy(QComboBox.NoInsert)
-            cb.lineEdit().setPlaceholderText(placeholder)
-            completer = QCompleter()
-            completer.setFilterMode(Qt.MatchContains)
-            completer.setCaseSensitivity(Qt.CaseInsensitive)
-            cb.setCompleter(completer)
+            if hasattr(cb, "setEditable"):
+                try:
+                    cb.setEditable(True)
+                except Exception:
+                    pass
+            if hasattr(cb, "setInsertPolicy"):
+                no_insert = getattr(type(cb), "NoInsert", getattr(cb, "NoInsert", None))
+                if no_insert is not None:
+                    try:
+                        cb.setInsertPolicy(no_insert)
+                    except Exception:
+                        pass
+            self._set_combo_placeholder(cb, placeholder)
+            if not QFLUENT_WIDGETS_AVAILABLE and hasattr(cb, "setCompleter"):
+                completer = QCompleter()
+                completer.setFilterMode(Qt.MatchContains)
+                completer.setCaseSensitivity(Qt.CaseInsensitive)
+                cb.setCompleter(completer)
         return cb
 
     def _set_combo_items(self, combo, items, with_empty=True):
@@ -510,9 +689,11 @@ class ErrorRecordPage(BasePage):
         for item in items:
             combo.addItem(item)
         # 刷新 completer model
-        if combo.completer():
+        completer_getter = getattr(combo, "completer", None)
+        completer = completer_getter() if callable(completer_getter) else None
+        if completer is not None:
             all_items = [combo.itemText(i) for i in range(combo.count())]
-            combo.completer().setModel(QStringListModel(all_items))
+            completer.setModel(QStringListModel(all_items))
         combo.blockSignals(False)
 
     def _has_any_filter(self):
@@ -895,27 +1076,12 @@ class ErrorRecordPage(BasePage):
     def _confirm_large_export(self):
         """超过 1000 条时弹窗确认，返回 True 表示继续"""
         if self.total_count > 10000:
-            from PyQt5.QtWidgets import QMessageBox
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("提示")
-            msg_box.setText(f"当前筛选结果共 {self.total_count} 条数据，导出可能需要较长时间，是否继续？")
-            msg_box.setIcon(QMessageBox.Question)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            msg_box.setDefaultButton(QMessageBox.No)
-            yes_btn = msg_box.button(QMessageBox.Yes)
-            no_btn = msg_box.button(QMessageBox.No)
-            if yes_btn:
-                yes_btn.setText("")
-                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                yes_btn.setIconSize(QSize(20, 20))
-                yes_btn.setFixedSize(60, 32)
-            if no_btn:
-                no_btn.setText("")
-                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                no_btn.setIconSize(QSize(20, 20))
-                no_btn.setFixedSize(60, 32)
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            return msg_box.exec_() == QMessageBox.Yes
+            result = show_question_box(
+                self,
+                "提示",
+                f"当前筛选结果共 {self.total_count} 条数据，导出可能需要较长时间，是否继续？",
+            )
+            return result == QMessageBox.Yes
         return True
 
     def on_export_csv(self):
@@ -925,7 +1091,6 @@ class ErrorRecordPage(BasePage):
         if not self._confirm_large_export():
             return
 
-        from PyQt5.QtWidgets import QFileDialog
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         file_path, _ = QFileDialog.getSaveFileName(
@@ -947,7 +1112,6 @@ class ErrorRecordPage(BasePage):
         if not self._confirm_large_export():
             return
 
-        from PyQt5.QtWidgets import QFileDialog
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         file_path, _ = QFileDialog.getSaveFileName(
@@ -964,24 +1128,8 @@ class ErrorRecordPage(BasePage):
 
     def _start_full_export(self, file_path, mode):
         """启动全量数据拉取 + 导出线程，并显示进度弹窗"""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QProgressBar
-        from PyQt5.QtCore import Qt
-
-        # 进度弹窗
-        dlg = QDialog(self)
-        dlg.setWindowTitle("正在导出")
-        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        dlg.setFixedSize(360, 120)
-        dlg.setModal(True)
-        vl = QVBoxLayout(dlg)
-        self._export_status_lbl = QLabel("正在拉取数据，请稍候...")
-        self._export_status_lbl.setAlignment(Qt.AlignCenter)
-        bar = QProgressBar()
-        bar.setRange(0, 0)   # 不确定进度，滚动条
-        cancel_btn = QPushButton("取消")
-        vl.addWidget(self._export_status_lbl)
-        vl.addWidget(bar)
-        vl.addWidget(cancel_btn)
+        dlg = ExportProgressDialog(self)
+        self._export_status_lbl = dlg.status_label
         self._export_dlg = dlg
 
         thread = _FullExportThread(
@@ -992,8 +1140,6 @@ class ErrorRecordPage(BasePage):
             mode=mode,
         )
         self._export_thread = thread
-        cancel_btn.clicked.connect(thread.cancel)
-        cancel_btn.clicked.connect(dlg.reject)
         thread.progress.connect(self._export_status_lbl.setText)
         thread.finished.connect(lambda msg: self._on_export_done(msg, dlg))
         thread.error.connect(lambda msg: self._on_export_error(msg, dlg))
@@ -1006,11 +1152,9 @@ class ErrorRecordPage(BasePage):
                 thread.error.disconnect()
             except Exception:
                 pass
-            dlg.reject()
 
-        cancel_btn.clicked.connect(on_cancel)
+        dlg.cancel_requested.connect(on_cancel)
         thread.start()
-        QTimer.singleShot(0, lambda: set_dark_title_bar(dlg))
         dlg.exec_()
 
     def _on_export_done(self, msg, dlg):
@@ -1024,9 +1168,8 @@ class ErrorRecordPage(BasePage):
     # ---------------------------------------------------- cleanup -----------
 
     def refresh_theme(self):
-        StyleManager.apply_to_widget(self.result_table, "TABLE")
-        if hasattr(self, '_filter_frame'):
-            self._filter_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            StyleManager.apply_to_widget(self.result_table, "TABLE")
         if hasattr(self, 'page_label'):
             self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         if hasattr(self, 'total_label'):

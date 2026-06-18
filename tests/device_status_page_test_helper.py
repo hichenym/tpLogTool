@@ -34,17 +34,36 @@ def _install_pyqt_stubs(originals):
         def __init__(self, *args, **kwargs):
             pass
 
+        def __call__(self, *args, **kwargs):
+            return _Dummy()
+
+    class _FontMetrics(_Dummy):
+        def height(self):
+            return 20
+
+        def horizontalAdvance(self, text):
+            return len(str(text)) * 8
+
+    class _Font(_Dummy):
+        Normal = 0
+        DemiBold = 1
+
+    class _Palette(_Dummy):
+        WindowText = 0
+
     class _ComboBox(_Dummy):
         NoInsert = 0
 
     class _Frame(_Dummy):
         VLine = 0
         Plain = 0
+        NoFrame = 0
 
     class _SizePolicy(_Dummy):
         Expanding = 0
         Preferred = 0
         Fixed = 0
+        Minimum = 0
 
     class _MessageBox(_Dummy):
         Yes = 0x01
@@ -57,25 +76,39 @@ def _install_pyqt_stubs(originals):
         AlignCenter = 0
         Vertical = 0
         StrongFocus = 0
+        AlignLeft = 0
         green = 0
         red = 0
         gray = 0
         darkYellow = 0
+        AutoText = 0
 
+    qtwidgets.QAction = _Dummy
+    qtwidgets.QAbstractItemView = _Dummy
+    qtwidgets.QApplication = _Dummy
     qtwidgets.QVBoxLayout = _Dummy
     qtwidgets.QHBoxLayout = _Dummy
     qtwidgets.QLabel = _Dummy
     qtwidgets.QPushButton = _Dummy
+    qtwidgets.QLineEdit = _Dummy
+    qtwidgets.QPlainTextEdit = _Dummy
+    qtwidgets.QProgressBar = _Dummy
+    qtwidgets.QRadioButton = _Dummy
+    qtwidgets.QScrollArea = _Dummy
+    qtwidgets.QSpinBox = _Dummy
     qtwidgets.QTableWidget = _Dummy
     qtwidgets.QTableWidgetItem = _Dummy
+    qtwidgets.QTextEdit = _Dummy
     qtwidgets.QHeaderView = _Dummy
     qtwidgets.QCheckBox = _Dummy
     qtwidgets.QSplitter = _Dummy
     qtwidgets.QFrame = _Frame
     qtwidgets.QFileDialog = _Dummy
     qtwidgets.QMessageBox = _MessageBox
+    qtwidgets.QMenu = _Dummy
     qtwidgets.QWidget = _Dummy
     qtwidgets.QComboBox = _ComboBox
+    qtwidgets.QDateEdit = _Dummy
     qtwidgets.QSizePolicy = _SizePolicy
 
     qtcore.Qt = _QtNamespace
@@ -84,6 +117,9 @@ def _install_pyqt_stubs(originals):
 
     qtgui.QIcon = _Dummy
     qtgui.QColor = _Dummy
+    qtgui.QFont = _Font
+    qtgui.QFontMetrics = _FontMetrics
+    qtgui.QPalette = _Palette
 
     _swap_module("PyQt5", pyqt5, originals)
     _swap_module("PyQt5.QtWidgets", qtwidgets, originals)
@@ -171,6 +207,9 @@ def load_device_status_page():
 
     originals = {}
     try:
+        for name in ("query_tool.ui", "query_tool.ui.fluent", "query_tool.ui.widgets"):
+            if name not in originals:
+                originals[name] = sys.modules.get(name)
         _install_pyqt_stubs(originals)
         _install_page_stubs(originals)
         _install_query_tool_stubs(originals)

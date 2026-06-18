@@ -6,6 +6,7 @@ from unittest.mock import patch
 import sys
 
 sys.modules.setdefault("ddddocr", types.SimpleNamespace())
+sys.modules.setdefault("requests", types.SimpleNamespace())
 
 from query_tool.utils.update_downloader import DownloadThread, UpdateDownloader
 

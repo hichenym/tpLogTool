@@ -1,19 +1,30 @@
 """
 更新对话框
 """
-import ctypes
 import html
 import resources.icon_res as icon_res
 from PyQt5.QtWidgets import (
-    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QProgressBar, QTextEdit, QWidget, QFrame, QScrollArea
+    QApplication, QVBoxLayout, QHBoxLayout, QLabel,
+    QWidget, QFrame
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
 from PyQt5.QtGui import QCursor, QFont, QIcon, QMovie
 
+from query_tool.ui import (
+    BodyLabel,
+    ElevatedCardWidget,
+    PrimaryPushButton,
+    ProgressBar,
+    PushButton,
+    QFLUENT_WIDGETS_AVAILABLE,
+    ScrollArea,
+    StrongBodyLabel,
+    SubtitleLabel,
+)
+from query_tool.utils import StyleManager
 from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.utils.update_checker import VersionInfo
-from query_tool.utils.theme_manager import t
+from query_tool.utils.theme_manager import t, theme_manager
 
 
 def set_dark_title_bar(window):
@@ -47,6 +58,132 @@ def _compute_fixed_dialog_size(parent, preferred_size: QSize, min_size: QSize, m
     return QSize(width, height)
 
 
+def _apply_text_label_style(label, *, color_role="text_primary", font_size=None, font_weight=None):
+    rules = [
+        f"color: {t(color_role)}",
+        "background: transparent",
+        "border: none",
+    ]
+    if font_size is not None:
+        rules.append(f"font-size: {font_size}px")
+    if font_weight is not None:
+        rules.append(f"font-weight: {font_weight}")
+    label.setStyleSheet("; ".join(rules) + ";")
+
+
+def _apply_card_style(widget, *, object_name=None, background_role="bg_mid", radius=14):
+    if QFLUENT_WIDGETS_AVAILABLE:
+        widget.setStyleSheet("")
+        return
+
+    selector = f"#{object_name or widget.objectName()}" if (object_name or widget.objectName()) else "QFrame"
+    widget.setStyleSheet(
+        f"""
+        {selector} {{
+            background-color: {t(background_role)};
+            border: 1px solid {t('border')};
+            border-radius: {radius}px;
+        }}
+        """
+    )
+
+
+def _apply_primary_button_style(button):
+    if QFLUENT_WIDGETS_AVAILABLE:
+        button.setStyleSheet("")
+        return
+
+    button.setStyleSheet(
+        f"""
+        QPushButton {{
+            border-radius: 8px;
+            padding: 0 18px;
+            font-size: 13px;
+            background-color: {t('accent')};
+            color: #ffffff;
+            border: 1px solid {t('accent')};
+        }}
+        QPushButton:hover {{
+            background-color: {t('accent_dim')};
+            border: 1px solid {t('accent_dim')};
+        }}
+        QPushButton:pressed {{
+            background-color: {t('accent_dim')};
+        }}
+        QPushButton:disabled {{
+            background-color: {t('bg_mid')};
+            color: {t('text_disabled')};
+            border: 1px solid {t('border_dark')};
+        }}
+        """
+    )
+
+
+def _apply_secondary_button_style(button):
+    if QFLUENT_WIDGETS_AVAILABLE:
+        button.setStyleSheet("")
+        return
+    button.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+
+
+def _apply_transparent_scroll_style(scroll_area):
+    scroll_area.setStyleSheet(
+        f"""
+        QScrollArea {{
+            background: transparent;
+            border: none;
+        }}
+        QScrollArea > QWidget > QWidget {{
+            background: transparent;
+        }}
+        QScrollBar:vertical {{
+            background-color: transparent;
+            width: 10px;
+            margin: 0px;
+        }}
+        QScrollBar::handle:vertical {{
+            background-color: {t('border')};
+            border-radius: 5px;
+            min-height: 20px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background-color: {t('border_hover')};
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+        """
+    )
+
+
+def _apply_fallback_icon_style(label, *, boxed):
+    if boxed:
+        label.setStyleSheet(
+            f"""
+            background-color: {t('bg_light')};
+            border: 1px solid {t('border')};
+            border-radius: 12px;
+            color: {t('status_info')};
+            font-size: 24px;
+            font-weight: 700;
+            """
+        )
+        return
+
+    label.setStyleSheet(
+        f"""
+        background: transparent;
+        border: none;
+        color: {t('status_info')};
+        font-size: 24px;
+        font-weight: 700;
+        """
+    )
+
+
 class UpdatePromptDialog(AdaptiveDialog):
     """更新提示对话框"""
     
@@ -77,6 +214,8 @@ class UpdatePromptDialog(AdaptiveDialog):
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.MSWindowsFixedSizeDialogHint)
         self.setWindowModality(Qt.ApplicationModal)
         self.winId()
+        theme_manager.theme_changed.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme)
         set_dark_title_bar(self)
         self._init_ui()
     
@@ -84,16 +223,29 @@ class UpdatePromptDialog(AdaptiveDialog):
         """对话框显示时设置深色标题栏"""
         super().showEvent(event)
         set_dark_title_bar(self)
+
+    def _disconnect_theme(self):
+        try:
+            theme_manager.theme_changed.disconnect(self.refresh_theme)
+        except Exception:
+            pass
     
     def _init_ui(self):
         """初始化UI"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
+        self.info_labels = []
 
-        panel_frame = QFrame()
-        panel_frame.setObjectName("panelFrame")
-        panel_layout = QVBoxLayout(panel_frame)
+        layout = self.init_dialog_layout(
+            self._dialog_size,
+            min_size=(460, 300),
+            layout_margins=(16, 14, 16, 14),
+            spacing=10,
+            max_width_ratio=0.78,
+            max_height_ratio=0.82,
+        )
+
+        self.panel_frame = ElevatedCardWidget(self)
+        self.panel_frame.setObjectName("updatePromptPanel")
+        panel_layout = QVBoxLayout(self.panel_frame)
         panel_layout.setContentsMargins(18, 16, 18, 14)
         panel_layout.setSpacing(12)
 
@@ -111,96 +263,96 @@ class UpdatePromptDialog(AdaptiveDialog):
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(4)
 
-        title_label = QLabel(f"发现新版本 V{self.version_info.version}")
+        self.title_label = StrongBodyLabel(f"发现新版本 V{self.version_info.version}")
         title_font = QFont()
         title_font.setPointSize(15)
         title_font.setBold(True)
-        title_label.setFont(title_font)
-        title_label.setObjectName("titleLabel")
-        text_layout.addWidget(title_label)
+        self.title_label.setFont(title_font)
+        text_layout.addWidget(self.title_label)
 
-        subtitle_label = QLabel(self._build_subtitle_text())
-        subtitle_label.setWordWrap(True)
-        subtitle_label.setObjectName("subtitleLabel")
-        text_layout.addWidget(subtitle_label)
+        self.subtitle_label = SubtitleLabel(self._build_subtitle_text())
+        self.subtitle_label.setWordWrap(True)
+        text_layout.addWidget(self.subtitle_label)
         hero_row.addLayout(text_layout, 1)
         panel_layout.addLayout(hero_row)
 
-        info_frame = QFrame()
-        info_frame.setObjectName("metaFrame")
-        info_layout = QVBoxLayout(info_frame)
+        self.meta_frame = ElevatedCardWidget(self.panel_frame)
+        self.meta_frame.setObjectName("updatePromptMeta")
+        info_layout = QVBoxLayout(self.meta_frame)
         info_layout.setContentsMargins(12, 10, 12, 10)
         info_layout.setSpacing(6)
-        info_layout.addWidget(QLabel(f"当前版本：V{self.current_version}"))
-        info_layout.addWidget(QLabel(f"最新版本：V{self.version_info.version}"))
-        info_layout.addWidget(QLabel(f"编译日期：{self._format_date(self.version_info.build_date)}"))
-        info_layout.addWidget(QLabel(f"文件大小：{self.version_info.file_size_mb} MB"))
-        panel_layout.addWidget(info_frame)
+        info_layout.addWidget(self._info_label(f"当前版本：V{self.current_version}"))
+        info_layout.addWidget(self._info_label(f"最新版本：V{self.version_info.version}"))
+        info_layout.addWidget(self._info_label(f"编译日期：{self._format_date(self.version_info.build_date)}"))
+        info_layout.addWidget(self._info_label(f"文件大小：{self.version_info.file_size_mb} MB"))
+        panel_layout.addWidget(self.meta_frame)
 
         if self._show_change_content:
-            divider = QFrame()
-            divider.setObjectName("divider")
-            divider.setFixedHeight(1)
-            panel_layout.addWidget(divider)
+            self.divider = QFrame()
+            self.divider.setFixedHeight(1)
+            panel_layout.addWidget(self.divider)
 
-            change_scroll = QScrollArea()
-            change_scroll.setObjectName("changeScroll")
-            change_scroll.setWidgetResizable(True)
-            change_scroll.setFrameShape(QFrame.NoFrame)
-            change_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            change_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            change_scroll.setMinimumHeight(78)
-            change_scroll.setMaximumHeight(78)
+            self.change_scroll = ScrollArea()
+            self.change_scroll.setWidgetResizable(True)
+            self.change_scroll.setFrameShape(QFrame.NoFrame)
+            self.change_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.change_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self.change_scroll.setMinimumHeight(78)
+            self.change_scroll.setMaximumHeight(78)
 
-            change_label = QLabel()
-            change_label.setObjectName("changeTextLabel")
-            change_label.setTextFormat(Qt.RichText)
-            change_label.setWordWrap(True)
-            change_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-            change_label.setText(self._build_change_list_html())
-            change_label.setContentsMargins(0, 0, 0, 0)
+            self.change_label = QLabel()
+            self.change_label.setTextFormat(Qt.RichText)
+            self.change_label.setWordWrap(True)
+            self.change_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            self.change_label.setContentsMargins(0, 0, 0, 0)
 
             change_container = QWidget()
             change_container_layout = QVBoxLayout(change_container)
             change_container_layout.setContentsMargins(0, 0, 0, 0)
             change_container_layout.setSpacing(0)
-            change_container_layout.addWidget(change_label)
+            change_container_layout.addWidget(self.change_label)
             change_container_layout.addStretch()
 
-            change_scroll.setWidget(change_container)
-            panel_layout.addWidget(change_scroll)
+            self.change_scroll.setWidget(change_container)
+            panel_layout.addWidget(self.change_scroll)
+        else:
+            self.divider = None
+            self.change_scroll = None
+            self.change_label = None
 
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         button_layout.addStretch()
 
-        update_btn = QPushButton("立即更新")
-        update_btn.setFixedSize(104, 34)
-        update_btn.setCursor(Qt.PointingHandCursor)
-        update_btn.setObjectName("primaryButton")
-        update_btn.clicked.connect(self._on_update_now)
-        button_layout.addWidget(update_btn)
+        self.update_btn = PrimaryPushButton("立即更新")
+        self.update_btn.setFixedSize(104, 34)
+        self.update_btn.setCursor(Qt.PointingHandCursor)
+        self.update_btn.clicked.connect(self._on_update_now)
+        button_layout.addWidget(self.update_btn)
 
-        later_btn = QPushButton("稍后提醒")
-        later_btn.setFixedSize(104, 34)
-        later_btn.setCursor(Qt.PointingHandCursor)
-        later_btn.setObjectName("secondaryButton")
-        later_btn.clicked.connect(self._on_remind_later)
-        button_layout.addWidget(later_btn)
+        self.later_btn = PushButton("稍后提醒")
+        self.later_btn.setFixedSize(104, 34)
+        self.later_btn.setCursor(Qt.PointingHandCursor)
+        self.later_btn.clicked.connect(self._on_remind_later)
+        button_layout.addWidget(self.later_btn)
 
-        skip_btn = QPushButton("跳过此版本")
-        skip_btn.setFixedSize(104, 34)
-        skip_btn.setCursor(Qt.PointingHandCursor)
-        skip_btn.setObjectName("secondaryButton")
-        skip_btn.clicked.connect(self._on_skip_version)
-        button_layout.addWidget(skip_btn)
+        self.skip_btn = PushButton("跳过此版本")
+        self.skip_btn.setFixedSize(104, 34)
+        self.skip_btn.setCursor(Qt.PointingHandCursor)
+        self.skip_btn.clicked.connect(self._on_skip_version)
+        button_layout.addWidget(self.skip_btn)
 
-        layout.addWidget(panel_frame)
+        layout.addWidget(self.panel_frame)
         layout.addLayout(button_layout)
         self._setup_movie()
-        self._apply_styles()
-        self.setFixedSize(self._dialog_size)
-        self.setSizeGripEnabled(False)
+        self.refresh_theme()
+        self.apply_adaptive_geometry()
+        self.lock_size_to_current()
+
+    def _info_label(self, text):
+        label = BodyLabel(text)
+        self.info_labels.append(label)
+        return label
     
     def _format_date(self, date_str: str) -> str:
         """格式化日期"""
@@ -254,7 +406,6 @@ class UpdatePromptDialog(AdaptiveDialog):
         if not movie.isValid():
             self.icon_label.setText("i")
             self.icon_label.setAlignment(Qt.AlignCenter)
-            self.icon_label.setObjectName("fallbackIcon")
             return
         movie.setScaledSize(QSize(56, 56))
         self._icon_movie = movie
@@ -262,74 +413,37 @@ class UpdatePromptDialog(AdaptiveDialog):
         movie.start()
 
     def _apply_styles(self):
-        self.setStyleSheet(
-            f"""
-            QDialog {{
-                background-color: {t('bg_dark')};
-            }}
-            QFrame {{
-                border: none;
-            }}
-            QFrame#panelFrame {{
-                background-color: {t('bg_mid')};
-                border: 1px solid {t('border')};
-                border-radius: 14px;
-            }}
-            QFrame#metaFrame {{
-                background-color: {t('bg_light')};
-                border: 1px solid {t('border')};
-                border-radius: 10px;
-            }}
-            QFrame#divider {{
-                background-color: {t('border')};
-            }}
-            QLabel {{
-                color: {t('text_primary')};
-                background: transparent;
-                border: none;
-            }}
-            QLabel#heroIcon {{
+        _apply_card_style(self.panel_frame, object_name="updatePromptPanel", background_role="bg_mid", radius=14)
+        _apply_card_style(self.meta_frame, object_name="updatePromptMeta", background_role="bg_light", radius=10)
+        _apply_text_label_style(self.title_label, font_weight=600)
+        _apply_text_label_style(self.subtitle_label, color_role="text_secondary", font_size=13)
+        for label in self.info_labels:
+            _apply_text_label_style(label)
+        if self.divider is not None:
+            self.divider.setStyleSheet(f"background-color: {t('border')}; border: none;")
+        if self.change_scroll is not None:
+            _apply_transparent_scroll_style(self.change_scroll)
+        if self.change_label is not None:
+            _apply_text_label_style(self.change_label, font_size=13)
+            self.change_label.setText(self._build_change_list_html())
+        _apply_primary_button_style(self.update_btn)
+        _apply_secondary_button_style(self.later_btn)
+        _apply_secondary_button_style(self.skip_btn)
+
+        if self._icon_movie is None:
+            _apply_fallback_icon_style(self.icon_label, boxed=True)
+        else:
+            self.icon_label.setStyleSheet(
+                f"""
                 background-color: {t('bg_light')};
                 border: 1px solid {t('border')};
                 border-radius: 12px;
-            }}
-            QLabel#titleLabel {{
-                color: {t('text_primary')};
-            }}
-            QLabel#subtitleLabel {{
-                color: {t('text_secondary')};
-                font-size: 13px;
-            }}
-            QLabel#fallbackIcon {{
-                color: {t('status_info')};
-                background-color: {t('bg_light')};
-                border: 1px solid {t('border')};
-                border-radius: 12px;
-                font-size: 24px;
-                font-weight: 700;
-            }}
-            QScrollArea#changeScroll {{
-                background: transparent;
-                border: none;
-            }}
-            QScrollArea#changeScroll QWidget {{
-                background: transparent;
-            }}
-            QLabel#changeTextLabel {{
-                background-color: transparent;
-                color: {t('text_primary')};
-                border: none;
-                padding: 0px;
-                font-size: 13px;
-            }}
-            QPushButton#primaryButton {{
-                min-width: 104px;
-            }}
-            QPushButton#secondaryButton {{
-                min-width: 104px;
-            }}
-            """
-        )
+                """
+            )
+
+    def refresh_theme(self):
+        self._apply_styles()
+        set_dark_title_bar(self)
     
     def _on_update_now(self):
         """立即更新"""
@@ -360,6 +474,8 @@ class UpdateDownloadDialog(AdaptiveDialog):
         
         self.setWindowTitle("下载更新")
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
+        theme_manager.theme_changed.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme)
         
         self._init_ui()
     
@@ -367,6 +483,12 @@ class UpdateDownloadDialog(AdaptiveDialog):
         """对话框显示时设置深色标题栏"""
         super().showEvent(event)
         set_dark_title_bar(self)
+
+    def _disconnect_theme(self):
+        try:
+            theme_manager.theme_changed.disconnect(self.refresh_theme)
+        except Exception:
+            pass
     
     def _init_ui(self):
         """初始化UI"""
@@ -380,7 +502,7 @@ class UpdateDownloadDialog(AdaptiveDialog):
         )
         
         # 标题
-        title_label = QLabel(f"正在下载 V{self.version_info.version}")
+        title_label = StrongBodyLabel(f"正在下载 V{self.version_info.version}")
         title_font = QFont()
         title_font.setPointSize(12)
         title_font.setBold(True)
@@ -388,7 +510,7 @@ class UpdateDownloadDialog(AdaptiveDialog):
         layout.addWidget(title_label)
         
         # 进度条
-        self.progress_bar = QProgressBar()
+        self.progress_bar = ProgressBar()
         self.progress_bar.setMinimum(0)
         self.progress_bar.setMaximum(100)
         self.progress_bar.setValue(0)
@@ -396,19 +518,22 @@ class UpdateDownloadDialog(AdaptiveDialog):
         layout.addWidget(self.progress_bar)
         
         # 状态标签
-        self.status_label = QLabel("准备下载...")
+        self.status_label = BodyLabel("准备下载...")
         layout.addWidget(self.status_label)
         
         # 取消按钮
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        cancel_btn = QPushButton("取消")
+        cancel_btn = PushButton("取消")
         cancel_btn.setMinimumWidth(100)
         cancel_btn.clicked.connect(self._on_cancel)
         button_layout.addWidget(cancel_btn)
         
         layout.addLayout(button_layout)
+
+    def refresh_theme(self):
+        set_dark_title_bar(self)
     
     def update_progress(self, downloaded: int, total: int):
         """
@@ -435,7 +560,7 @@ class UpdateDownloadDialog(AdaptiveDialog):
         self.reject()
 
 
-class UpdateCompleteDialog(QDialog):
+class UpdateCompleteDialog(AdaptiveDialog):
     """更新完成对话框"""
     
     # 信号
@@ -459,25 +584,39 @@ class UpdateCompleteDialog(QDialog):
 
         self.setWindowTitle("功能变更")
         self.setWindowIcon(QIcon(":/icons/app/logo.png"))
-        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.MSWindowsFixedSizeDialogHint)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowCloseButtonHint)
         self.setWindowModality(Qt.ApplicationModal)
         self.winId()
+        theme_manager.theme_changed.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme)
         set_dark_title_bar(self)
         
         self._init_ui()
     
     def showEvent(self, event):
         super().showEvent(event)
+        set_dark_title_bar(self)
+
+    def _disconnect_theme(self):
+        try:
+            theme_manager.theme_changed.disconnect(self.refresh_theme)
+        except Exception:
+            pass
     
     def _init_ui(self):
         """初始化UI"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
+        layout = self.init_dialog_layout(
+            self._dialog_size,
+            min_size=(420, 205),
+            layout_margins=(16, 14, 16, 14),
+            spacing=10,
+            max_width_ratio=0.72,
+            max_height_ratio=0.65,
+        )
 
-        panel_frame = QFrame()
-        panel_frame.setObjectName("panelFrame")
-        panel_layout = QVBoxLayout(panel_frame)
+        self.panel_frame = ElevatedCardWidget(self)
+        self.panel_frame.setObjectName("updateCompletePanel")
+        panel_layout = QVBoxLayout(self.panel_frame)
         panel_layout.setContentsMargins(18, 16, 18, 14)
         panel_layout.setSpacing(12)
 
@@ -495,72 +634,71 @@ class UpdateCompleteDialog(QDialog):
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(4)
 
-        title_label = QLabel("检测到功能变更")
+        self.title_label = StrongBodyLabel("检测到功能变更")
         title_font = QFont()
         title_font.setPointSize(15)
         title_font.setBold(True)
-        title_label.setFont(title_font)
-        title_label.setObjectName("titleLabel")
-        text_layout.addWidget(title_label)
+        self.title_label.setFont(title_font)
+        self.title_label.setObjectName("titleLabel")
+        text_layout.addWidget(self.title_label)
 
-        subtitle_label = QLabel(self._build_subtitle_text())
-        subtitle_label.setWordWrap(True)
-        subtitle_label.setObjectName("subtitleLabel")
-        text_layout.addWidget(subtitle_label)
+        self.subtitle_label = SubtitleLabel(self._build_subtitle_text())
+        self.subtitle_label.setWordWrap(True)
+        self.subtitle_label.setObjectName("subtitleLabel")
+        text_layout.addWidget(self.subtitle_label)
         hero_row.addLayout(text_layout, 1)
         panel_layout.addLayout(hero_row)
 
         if self._show_change_content:
-            divider = QFrame()
-            divider.setObjectName("divider")
-            divider.setFixedHeight(1)
-            panel_layout.addWidget(divider)
+            self.divider = QFrame()
+            self.divider.setFixedHeight(1)
+            panel_layout.addWidget(self.divider)
 
-            change_scroll = QScrollArea()
-            change_scroll.setObjectName("changeScroll")
-            change_scroll.setWidgetResizable(True)
-            change_scroll.setFrameShape(QFrame.NoFrame)
-            change_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            change_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            change_scroll.setMinimumHeight(68)
-            change_scroll.setMaximumHeight(68)
+            self.change_scroll = ScrollArea()
+            self.change_scroll.setWidgetResizable(True)
+            self.change_scroll.setFrameShape(QFrame.NoFrame)
+            self.change_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.change_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self.change_scroll.setMinimumHeight(68)
+            self.change_scroll.setMaximumHeight(68)
 
-            change_label = QLabel()
-            change_label.setObjectName("changeTextLabel")
-            change_label.setTextFormat(Qt.RichText)
-            change_label.setWordWrap(True)
-            change_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-            change_label.setText(self._build_change_list_html())
-            change_label.setContentsMargins(0, 0, 0, 0)
+            self.change_label = QLabel()
+            self.change_label.setTextFormat(Qt.RichText)
+            self.change_label.setWordWrap(True)
+            self.change_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            self.change_label.setText(self._build_change_list_html())
+            self.change_label.setContentsMargins(0, 0, 0, 0)
 
             change_container = QWidget()
             change_container_layout = QVBoxLayout(change_container)
             change_container_layout.setContentsMargins(0, 0, 0, 0)
             change_container_layout.setSpacing(0)
-            change_container_layout.addWidget(change_label)
+            change_container_layout.addWidget(self.change_label)
             change_container_layout.addStretch()
 
-            change_scroll.setWidget(change_container)
-            panel_layout.addWidget(change_scroll)
+            self.change_scroll.setWidget(change_container)
+            panel_layout.addWidget(self.change_scroll)
+        else:
+            self.divider = None
+            self.change_scroll = None
+            self.change_label = None
         
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         button_layout.addStretch()
 
-        restart_btn = QPushButton("立即重启")
-        restart_btn.setFixedSize(116, 34)
-        restart_btn.setCursor(Qt.PointingHandCursor)
-        restart_btn.setObjectName("primaryButton")
-        restart_btn.clicked.connect(self._on_restart_now)
-        button_layout.addWidget(restart_btn)
+        self.restart_btn = PrimaryPushButton("立即重启")
+        self.restart_btn.setFixedSize(116, 34)
+        self.restart_btn.setCursor(Qt.PointingHandCursor)
+        self.restart_btn.clicked.connect(self._on_restart_now)
+        button_layout.addWidget(self.restart_btn)
 
-        layout.addWidget(panel_frame)
+        layout.addWidget(self.panel_frame)
         layout.addLayout(button_layout)
         self._setup_movie()
-        self._apply_styles()
         self._dialog_size = QSize(self._dialog_size.width(), 270 if self._show_change_content else self._dialog_size.height())
-        self.setFixedSize(self._dialog_size)
-        self.setSizeGripEnabled(False)
+        self.refresh_theme()
+        self.apply_adaptive_geometry()
 
     def _build_subtitle_text(self) -> str:
         if self._show_change_content:
@@ -605,7 +743,6 @@ class UpdateCompleteDialog(QDialog):
         if not movie.isValid():
             self.icon_label.setText("i")
             self.icon_label.setAlignment(Qt.AlignCenter)
-            self.icon_label.setObjectName("fallbackIcon")
             return
         movie.setScaledSize(QSize(56, 56))
         self._icon_movie = movie
@@ -613,69 +750,26 @@ class UpdateCompleteDialog(QDialog):
         movie.start()
 
     def _apply_styles(self):
-        self.setStyleSheet(
-            f"""
-            QDialog {{
-                background-color: {t('bg_dark')};
-            }}
-            QFrame {{
-                border: none;
-            }}
-            QFrame#panelFrame {{
-                background-color: {t('bg_mid')};
-                border: 1px solid {t('border')};
-                border-radius: 14px;
-            }}
-            QFrame#divider {{
-                background-color: {t('border')};
-            }}
-            QLabel {{
-                color: {t('text_primary')};
-                background: transparent;
-            }}
-            QLabel#titleLabel {{
-                color: {t('text_primary')};
-            }}
-            QLabel#subtitleLabel {{
-                color: {t('text_secondary')};
-                font-size: 12px;
-            }}
-            QLabel#heroIcon, QLabel#fallbackIcon {{
-                background: transparent;
-            }}
-            QScrollArea#changeScroll {{
-                background: transparent;
-                border: none;
-            }}
-            QScrollArea#changeScroll QWidget {{
-                background: transparent;
-            }}
-            QLabel#changeTextLabel {{
-                background-color: transparent;
-                color: {t('text_primary')};
-                border: none;
-                padding: 0px;
-                font-size: 13px;
-            }}
-            QPushButton {{
-                border-radius: 8px;
-                padding: 0 18px;
-                font-size: 13px;
-            }}
-            QPushButton#primaryButton {{
-                background-color: {t('accent')};
-                color: #ffffff;
-                border: 1px solid {t('accent')};
-            }}
-            QPushButton#primaryButton:hover {{
-                background-color: {t('accent_dim')};
-                border: 1px solid {t('accent_dim')};
-            }}
-            QPushButton#primaryButton:pressed {{
-                background-color: {t('accent_dim')};
-            }}
-            """
-        )
+        _apply_card_style(self.panel_frame, object_name="updateCompletePanel", background_role="bg_mid", radius=14)
+        _apply_text_label_style(self.title_label, font_weight=600)
+        _apply_text_label_style(self.subtitle_label, color_role="text_secondary", font_size=12)
+        if self.divider is not None:
+            self.divider.setStyleSheet(f"background-color: {t('border')}; border: none;")
+        if self.change_scroll is not None:
+            _apply_transparent_scroll_style(self.change_scroll)
+        if self.change_label is not None:
+            _apply_text_label_style(self.change_label, font_size=13)
+            self.change_label.setText(self._build_change_list_html())
+        _apply_primary_button_style(self.restart_btn)
+
+        if self._icon_movie is None:
+            _apply_fallback_icon_style(self.icon_label, boxed=False)
+        else:
+            self.icon_label.setStyleSheet("background: transparent; border: none;")
+    
+    def refresh_theme(self):
+        self._apply_styles()
+        set_dark_title_bar(self)
     
     def _on_restart_now(self):
         """立即重启"""

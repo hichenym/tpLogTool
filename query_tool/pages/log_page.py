@@ -16,43 +16,52 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 from PyQt5.QtCore import QPointF, QRectF, QSize, QThread, QTimer, Qt, QUrl, pyqtSignal
-from PyQt5.QtGui import QDesktopServices, QIcon, QTextDocument
+from PyQt5.QtGui import QDesktopServices, QFontMetrics, QIcon, QTextDocument
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QCheckBox,
     QFileDialog,
-    QFrame,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
-    QLabel,
-    QPushButton,
+    QAction,
+    QMenu,
+    QSizePolicy,
     QStyledItemDelegate,
     QStyle,
-    QTableWidget,
     QTableWidgetItem,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from .base_page import BasePage
 from .page_registry import register_page
+from query_tool.ui import (
+    Action,
+    BodyLabel,
+    CheckBox,
+    ElevatedCardWidget,
+    PlainTextEdit,
+    PrimaryPushButton,
+    PushButton,
+    QFLUENT_WIDGETS_AVAILABLE,
+    RoundMenu,
+    StrongBodyLabel,
+    TableWidget,
+    TextEdit,
+)
 from query_tool.utils import StyleManager, config_manager, get_account_config, get_seetong_account_config
 from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.logger import logger
 from query_tool.utils.siot_debug import DEFAULT_COMMAND_TIMEOUT_MS, is_getsystemcfg_command, is_syscmd_family_command
 from query_tool.utils.siot_debug.service import resolve_device_credentials
 from query_tool.utils.theme_manager import t
-from query_tool.widgets import PlainTextEdit
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 RICH_TEXT_ROLE = Qt.UserRole + 1
 
 
-class PathDisplayLabel(QLabel):
+class PathDisplayLabel(BodyLabel):
     """支持双击打开目录的路径标签。"""
 
     double_clicked = pyqtSignal()
@@ -480,22 +489,20 @@ class BatchLogFetchThread(QThread):
                 "detail": "\n".join(detail_lines),
             }
         finally:
-            if process is not None and connected_ok:
+            if process is not None:
                 try:
-                    self._emit_device(
-                        sn,
-                        "正在注销",
-                        success_count,
-                        failed_count,
-                        file_entries,
-                        "\n".join(details) or "正在断开设备连接",
-                        total_commands=total_commands,
-                        downloaded_file_count=downloaded_file_count,
-                    )
-                    self._send_payload(process, {"action": "disconnect"})
-                    self._drain_until_disconnected(event_queue, timeout_s=2.5)
-                except Exception as exc:
-                    logger.warning(f"关闭日志设备子进程失败 {sn}: {exc}")
+                    if connected_ok:
+                        self._emit_device(
+                            sn,
+                            "正在注销",
+                            success_count,
+                            failed_count,
+                            file_entries,
+                            "\n".join(details) or "正在断开设备连接",
+                            total_commands=total_commands,
+                            downloaded_file_count=downloaded_file_count,
+                        )
+                        self._disconnect_process(process, event_queue)
                 finally:
                     self._close_process(process)
                     time.sleep(0.05)
@@ -725,12 +732,52 @@ class BatchLogFetchThread(QThread):
                 return
 
     @staticmethod
+    def _can_send_payload(process) -> bool:
+        if process is None:
+            return False
+        try:
+            if process.poll() is not None:
+                return False
+        except Exception:
+            return False
+        stdin = getattr(process, "stdin", None)
+        return stdin is not None and not getattr(stdin, "closed", False)
+
+    def _disconnect_process(self, process, event_queue):
+        if not self._can_send_payload(process):
+            return
+        try:
+            self._send_payload(process, {"action": "disconnect"})
+        except (BrokenPipeError, OSError, ValueError) as exc:
+            logger.debug(f"日志设备子进程已提前关闭，跳过断开指令: {exc}")
+            return
+        try:
+            self._drain_until_disconnected(event_queue, timeout_s=2.5)
+        except RuntimeError as exc:
+            logger.debug(f"等待日志设备子进程断开超时，继续关闭进程: {exc}")
+
+    @staticmethod
     def _send_payload(process, payload: dict):
-        if process is None or process.stdin is None:
+        if process is None:
             raise RuntimeError("日志子进程未启动")
+        stdin = getattr(process, "stdin", None)
+        if stdin is None:
+            raise RuntimeError("日志子进程未启动")
+        if getattr(stdin, "closed", False):
+            raise BrokenPipeError("日志子进程输入流已关闭")
+        try:
+            if process.poll() is not None:
+                raise BrokenPipeError("日志子进程已退出")
+        except BrokenPipeError:
+            raise
+        except Exception:
+            pass
         data = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
-        process.stdin.write(data)
-        process.stdin.flush()
+        try:
+            stdin.write(data)
+            stdin.flush()
+        except (BrokenPipeError, OSError, ValueError) as exc:
+            raise BrokenPipeError("日志子进程通信已断开") from exc
 
     def _close_process(self, process):
         if process is None:
@@ -937,6 +984,8 @@ class LogPage(BasePage):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.page_name = "命令"
+        self._cards = []
+        self._card_title_labels = []
         self.download_root = self._default_download_root()
         self._row_map = {}
         self._device_payloads = {}
@@ -952,61 +1001,125 @@ class LogPage(BasePage):
         self.init_ui()
         self.load_config()
 
+    def _apply_card_title_style(self, label):
+        label.setStyleSheet(f"color: {t('text_primary')}; font-weight: 600; border: none;")
+
+    def _apply_card_style(self, card):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            card.setStyleSheet(
+                f"""
+                #{card.objectName()} {{
+                    border: 1px solid {t('border')};
+                    border-radius: 6px;
+                    background-color: transparent;
+                }}
+                """
+            )
+
+    def _create_card_section(self, title, vertical_policy=QSizePolicy.Fixed):
+        card = ElevatedCardWidget(self)
+        card.setObjectName(f"logPageCard{len(self._cards) + 1}")
+        self._cards.append(card)
+        card.setSizePolicy(QSizePolicy.Expanding, vertical_policy)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        title_label = StrongBodyLabel(title)
+        self._card_title_labels.append(title_label)
+        self._apply_card_title_style(title_label)
+        layout.addWidget(title_label)
+        self._apply_card_style(card)
+        return card, layout
+
+    def _create_subsection_card(self, title, vertical_policy=QSizePolicy.Expanding):
+        card = ElevatedCardWidget(self)
+        card.setObjectName(f"logSubCard{len(self._cards) + 1}")
+        self._cards.append(card)
+        card.setSizePolicy(QSizePolicy.Expanding, vertical_policy)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+
+        title_label = BodyLabel(title)
+        self._card_title_labels.append(title_label)
+        self._apply_card_title_style(title_label)
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+
+        self._apply_card_style(card)
+        return card, layout, header_layout
+
+    def _apply_plain_text_edit_style(self, widget):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            widget.setStyleSheet(self._get_plain_text_edit_stylesheet())
+
+    def _apply_rich_text_edit_style(self, widget):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            widget.setStyleSheet(self._get_rich_text_edit_stylesheet())
+
+    def _apply_table_style(self):
+        if hasattr(self, "result_table") and not QFLUENT_WIDGETS_AVAILABLE:
+            StyleManager.apply_to_widget(self.result_table, "TABLE")
+
+    def _control_height(self, extra_padding: int = 12, minimum: int = 32) -> int:
+        metrics = QFontMetrics(self.font())
+        return max(minimum, metrics.height() + extra_padding)
+
+    def _create_menu_action(self, text, handler):
+        if QFLUENT_WIDGETS_AVAILABLE and Action is not None:
+            action = Action(text, self)
+        else:
+            action = QAction(text, self)
+        action.triggered.connect(handler)
+        return action
+
+    def _show_menu(self, menu, global_pos):
+        exec_method = getattr(menu, "exec", None)
+        if callable(exec_method):
+            exec_method(global_pos)
+            return
+        exec_method = getattr(menu, "exec_", None)
+        if callable(exec_method):
+            exec_method(global_pos)
+
     def init_ui(self):
         page_layout = QVBoxLayout(self)
         page_layout.setContentsMargins(5, 5, 5, 5)
-        page_layout.setSpacing(4)
+        page_layout.setSpacing(8)
+        control_height = self._control_height()
+        toolbar_height = max(38, control_height + 6)
 
-        self.query_group = QGroupBox("命令执行")
-        self.query_group.setStyleSheet(self._get_compact_group_box_stylesheet())
-        query_layout = QVBoxLayout(self.query_group)
-        query_layout.setContentsMargins(8, 4, 8, 4)
-        query_layout.setSpacing(2)
+        self.query_group, query_layout = self._create_card_section("命令执行")
+        query_layout.setSpacing(12)
 
-        input_row_frame = QFrame()
-        input_row_frame.setFrameShape(QFrame.NoFrame)
-        input_row_frame.setStyleSheet("QFrame { border: none; background: transparent; }")
-        input_row_layout = QHBoxLayout(input_row_frame)
+        input_row_layout = QHBoxLayout()
         input_row_layout.setContentsMargins(0, 0, 0, 0)
         input_row_layout.setSpacing(10)
 
-        self.sn_panel = QFrame()
-        self.sn_panel.setFrameShape(QFrame.NoFrame)
-        self.sn_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
-        sn_panel_layout = QVBoxLayout(self.sn_panel)
-        sn_panel_layout.setContentsMargins(0, 0, 0, 0)
-        sn_panel_layout.setSpacing(6)
-        sn_panel_layout.addWidget(QLabel("SN列表:"))
+        self.sn_panel, sn_panel_layout, _sn_header_layout = self._create_subsection_card("SN 列表")
         self.sn_input = PlainTextEdit()
         self.sn_input.setPlaceholderText("一行一个SN")
         self.sn_input.setFixedHeight(108)
-        self.sn_input.setStyleSheet(self._get_text_edit_stylesheet())
+        self._apply_plain_text_edit_style(self.sn_input)
         self.sn_input.textChanged.connect(self.save_config)
         sn_panel_layout.addWidget(self.sn_input, 1)
 
-        self.command_panel = QFrame()
-        self.command_panel.setFrameShape(QFrame.NoFrame)
-        self.command_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
-        command_panel_layout = QVBoxLayout(self.command_panel)
-        command_panel_layout.setContentsMargins(0, 0, 0, 0)
-        command_panel_layout.setSpacing(6)
-        command_header_layout = QHBoxLayout()
-        command_header_layout.setContentsMargins(0, 0, 0, 0)
-        command_header_layout.setSpacing(8)
-        command_header_layout.addWidget(QLabel("命令执行列表:"))
-        command_header_layout.addStretch()
-        self.command_edit_btn = QPushButton("")
-        self.command_edit_btn.setFixedHeight(28)
-        self.command_edit_btn.setFixedWidth(32)
+        self.command_panel, command_panel_layout, command_header_layout = self._create_subsection_card("命令执行列表")
+        self.command_edit_btn = PushButton("")
+        self.command_edit_btn.setFixedHeight(control_height)
+        self.command_edit_btn.setFixedWidth(control_height)
         self.command_edit_btn.setIconSize(QSize(16, 16))
-        self.command_edit_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.command_edit_btn.clicked.connect(self.on_command_edit_button_clicked)
         command_header_layout.addWidget(self.command_edit_btn)
-        command_panel_layout.addLayout(command_header_layout)
         self.command_input = CommandPlainTextEdit()
         self.command_input.setPlaceholderText("一行一条命令")
         self.command_input.setFixedHeight(108)
-        self.command_input.setStyleSheet(self._get_text_edit_stylesheet())
+        self._apply_plain_text_edit_style(self.command_input)
         self.command_input.textChanged.connect(self.save_config)
         self.command_input.focus_lost.connect(self.on_command_input_focus_lost)
         self.command_input.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1015,39 +1128,37 @@ class LogPage(BasePage):
 
         input_row_layout.addWidget(self.sn_panel, 1)
         input_row_layout.addWidget(self.command_panel, 1)
-        query_layout.addWidget(input_row_frame)
+        query_layout.addLayout(input_row_layout)
 
-        self.bottom_frame = QFrame()
+        self.bottom_frame = QWidget()
         self._apply_plain_toolbar_style(self.bottom_frame)
-        self.bottom_frame.setFixedHeight(32)
+        self.bottom_frame.setFixedHeight(toolbar_height)
         bottom_layout = QHBoxLayout(self.bottom_frame)
         bottom_layout.setContentsMargins(2, 2, 2, 2)
         bottom_layout.setSpacing(6)
 
-        download_label = QLabel("保存位置:")
+        download_label = BodyLabel("保存位置:")
         download_label.setFixedWidth(64)
-        download_label.setFixedHeight(28)
+        download_label.setFixedHeight(control_height)
         download_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.download_path_label = PathDisplayLabel()
-        self.download_path_label.setFixedHeight(28)
+        self.download_path_label.setFixedHeight(control_height)
         self.download_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.download_path_label.double_clicked.connect(self.open_download_directory)
         self.download_path_label.setStyleSheet(self._get_download_path_label_stylesheet())
 
-        self.choose_download_path_btn = QPushButton("")
+        self.choose_download_path_btn = PushButton("")
         self.choose_download_path_btn.setIcon(QIcon(":/icons/common/dir.png"))
         self.choose_download_path_btn.setIconSize(QSize(16, 16))
-        self.choose_download_path_btn.setFixedSize(32, 28)
+        self.choose_download_path_btn.setFixedSize(36, control_height)
         self.choose_download_path_btn.setToolTip("选择保存目录")
-        self.choose_download_path_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.choose_download_path_btn.clicked.connect(self.choose_download_directory)
 
-        self.fetch_btn = QPushButton("发送")
+        self.fetch_btn = PrimaryPushButton("发送")
         self.fetch_btn.setIcon(QIcon(":/icons/common/run.png"))
         self.fetch_btn.setIconSize(QSize(16, 16))
-        self.fetch_btn.setFixedSize(72, 28)
+        self.fetch_btn.setFixedSize(76, control_height)
         self.fetch_btn.setToolTip("执行命令")
-        self.fetch_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.fetch_btn.clicked.connect(self.on_fetch_clicked)
 
         bottom_layout.addWidget(download_label)
@@ -1057,29 +1168,30 @@ class LogPage(BasePage):
         bottom_layout.addWidget(self.fetch_btn)
         query_layout.addWidget(self.bottom_frame)
 
-        self.result_group = QGroupBox("执行结果")
-        self.result_group.setStyleSheet(self._get_compact_group_box_stylesheet())
-        result_layout = QVBoxLayout(self.result_group)
-        result_layout.setContentsMargins(8, 2, 8, 8)
-        result_layout.setSpacing(0)
+        self.result_group, result_layout = self._create_card_section("执行结果", QSizePolicy.Expanding)
+        result_layout.setSpacing(8)
 
-        self.summary_label = QLabel("等待开始")
+        self.summary_label = BodyLabel("等待开始")
         self.summary_label.setContentsMargins(0, 0, 0, 0)
         self.summary_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
         self.summary_label.setVisible(False)
+        result_layout.addWidget(self.summary_label)
 
-        self.detail_header_label = QLabel("设备执行详情")
+        self.detail_header_label = BodyLabel("设备执行详情")
         self.detail_header_label.setContentsMargins(0, 0, 0, 0)
         self.detail_header_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
         self.detail_header_label.setVisible(False)
+        result_layout.addWidget(self.detail_header_label)
 
-        self.result_table = QTableWidget(0, len(self.RESULT_HEADERS))
+        self.result_table = TableWidget()
+        self.result_table.setRowCount(0)
+        self.result_table.setColumnCount(len(self.RESULT_HEADERS))
         self.result_table.setHorizontalHeaderLabels(list(self.RESULT_HEADERS))
         self.result_table.verticalHeader().setVisible(True)
         self.result_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.result_table.verticalHeader().setDefaultSectionSize(self.RESULT_ROW_HEIGHT)
         self.result_table.verticalHeader().setFixedWidth(36)
-        self.result_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.result_table.setEditTriggers(TableWidget.NoEditTriggers)
         self.result_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.result_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.result_table.setWordWrap(False)
@@ -1093,39 +1205,33 @@ class LogPage(BasePage):
         self.result_table.itemSelectionChanged.connect(self.on_result_selection_changed)
         self._overview_delegate = RichTextItemDelegate(self.result_table)
         self.result_table.setItemDelegateForColumn(3, self._overview_delegate)
-        StyleManager.apply_to_widget(self.result_table, "TABLE")
+        self._apply_table_style()
 
         result_content = QHBoxLayout()
         result_content.setContentsMargins(0, 0, 0, 0)
         result_content.setSpacing(10)
 
-        table_panel = QFrame()
-        table_panel.setFrameShape(QFrame.NoFrame)
-        table_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
-        table_layout = QVBoxLayout(table_panel)
-        table_layout.setContentsMargins(0, 0, 0, 0)
-        table_layout.setSpacing(6)
+        self.table_panel, table_layout, _table_header_layout = self._create_subsection_card("设备列表")
 
         table_action_row = QHBoxLayout()
         table_action_row.setContentsMargins(0, 0, 0, 0)
         table_action_row.setSpacing(8)
-        self.result_select_all_checkbox = QCheckBox("全选")
+        self.result_select_all_checkbox = CheckBox("全选")
         self.result_select_all_checkbox.setTristate(False)
         self.result_select_all_checkbox.setEnabled(False)
         self.result_select_all_checkbox.stateChanged.connect(self.on_result_select_all_changed)
         table_action_row.addWidget(self.result_select_all_checkbox)
 
-        self.result_selection_label = QLabel("未选择设备")
+        self.result_selection_label = BodyLabel("未选择设备")
         self.result_selection_label.setStyleSheet(f"color: {t('text_secondary')}; border: none;")
         table_action_row.addWidget(self.result_selection_label)
         table_action_row.addStretch()
 
-        self.retry_btn = QPushButton("重试")
+        self.retry_btn = PushButton("重试")
         self.retry_btn.setIcon(QIcon(":/icons/common/run.png"))
         self.retry_btn.setIconSize(QSize(16, 16))
-        self.retry_btn.setFixedSize(72, 28)
+        self.retry_btn.setFixedSize(76, control_height)
         self.retry_btn.setToolTip("重试勾选的失败设备")
-        self.retry_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.retry_btn.setEnabled(False)
         self.retry_btn.clicked.connect(self.on_retry_clicked)
         table_action_row.addWidget(self.retry_btn)
@@ -1133,7 +1239,7 @@ class LogPage(BasePage):
         table_layout.addLayout(table_action_row)
         table_layout.addWidget(self.result_table, 1)
 
-        self.result_corner_checkbox = QCheckBox()
+        self.result_corner_checkbox = CheckBox()
         self.result_corner_checkbox.setTristate(False)
         self.result_corner_checkbox.setToolTip("全选/取消全选")
         self.result_corner_checkbox.setEnabled(False)
@@ -1144,23 +1250,18 @@ class LogPage(BasePage):
         corner_layout.addWidget(self.result_corner_checkbox, 0, Qt.AlignCenter)
         self.result_table.setCornerWidget(corner_widget)
 
-        detail_panel = QFrame()
-        detail_panel.setFrameShape(QFrame.NoFrame)
-        detail_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
-        detail_layout = QVBoxLayout(detail_panel)
-        detail_layout.setContentsMargins(0, 0, 0, 0)
-        detail_layout.setSpacing(0)
+        self.detail_panel, detail_layout, _detail_header_layout = self._create_subsection_card("设备执行详情")
 
-        self.detail_view = QTextEdit()
+        self.detail_view = TextEdit()
         self.detail_view.setReadOnly(True)
         self.detail_view.setAcceptRichText(True)
         self.detail_view.setMinimumWidth(300)
-        self.detail_view.setStyleSheet(self._get_text_edit_stylesheet())
+        self._apply_rich_text_edit_style(self.detail_view)
         self.detail_view.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         detail_layout.addWidget(self.detail_view, 1)
 
-        result_content.addWidget(table_panel, 7)
-        result_content.addWidget(detail_panel, 4)
+        result_content.addWidget(self.table_panel, 7)
+        result_content.addWidget(self.detail_panel, 4)
         result_layout.addLayout(result_content, 1)
 
         page_layout.addWidget(self.query_group, 0)
@@ -1216,12 +1317,35 @@ class LogPage(BasePage):
         self.set_command_editing(False)
 
     def on_command_input_context_menu(self, pos):
+        global_pos = self.command_input.viewport().mapToGlobal(pos)
+        if QFLUENT_WIDGETS_AVAILABLE and RoundMenu is not None:
+            menu = RoundMenu(parent=self.command_input)
+            has_selection = self.command_input.textCursor().hasSelection()
+            can_edit = not self.command_input.isReadOnly()
+            actions = [
+                ("复制", self.command_input.copy, has_selection),
+                ("剪切", self.command_input.cut, has_selection and can_edit),
+                ("粘贴", self.command_input.paste, can_edit),
+                ("全选", self.command_input.selectAll, bool(self.command_input.toPlainText())),
+            ]
+            for text, handler, enabled in actions:
+                action = self._create_menu_action(text, handler)
+                action.setEnabled(enabled)
+                menu.addAction(action)
+
+            menu.addSeparator()
+            restore_action = self._create_menu_action("恢复默认命令列表", self.on_restore_default_commands_clicked)
+            restore_action.setEnabled(not self.fetch_running)
+            menu.addAction(restore_action)
+            self._show_menu(menu, global_pos)
+            return
+
         menu = self.command_input.createStandardContextMenu()
         menu.setStyleSheet(self._get_context_menu_stylesheet())
         menu.addSeparator()
         restore_action = menu.addAction("恢复默认命令列表")
         restore_action.setEnabled(not self.fetch_running)
-        selected_action = menu.exec_(self.command_input.viewport().mapToGlobal(pos))
+        selected_action = menu.exec_(global_pos)
         if selected_action == restore_action:
             self.on_restore_default_commands_clicked()
 
@@ -1621,41 +1745,31 @@ class LogPage(BasePage):
 
     def _apply_plain_toolbar_style(self, frame):
         """工具条容器不显示外层边框。"""
-        frame.setFrameShape(QFrame.NoFrame)
-        frame.setFrameShadow(QFrame.Plain)
-        frame.setStyleSheet("QFrame { border: none; background: transparent; }")
+        frame.setStyleSheet("border: none; background: transparent;")
 
     def refresh_theme(self):
-        if hasattr(self, "query_group"):
-            self.query_group.setStyleSheet(self._get_compact_group_box_stylesheet())
-        if hasattr(self, "result_group"):
-            self.result_group.setStyleSheet(self._get_compact_group_box_stylesheet())
-        if hasattr(self, "sn_panel"):
-            self.sn_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
-        if hasattr(self, "command_panel"):
-            self.command_panel.setStyleSheet(self._get_borderless_panel_stylesheet())
+        for label in self._card_title_labels:
+            self._apply_card_title_style(label)
+        for card in self._cards:
+            self._apply_card_style(card)
         if hasattr(self, "bottom_frame"):
             self._apply_plain_toolbar_style(self.bottom_frame)
         if hasattr(self, "sn_input"):
-            self.sn_input.setStyleSheet(self._get_text_edit_stylesheet())
+            self._apply_plain_text_edit_style(self.sn_input)
         if hasattr(self, "command_input"):
-            self.command_input.setStyleSheet(self._get_text_edit_stylesheet())
-        if hasattr(self, "command_edit_btn"):
-            self.command_edit_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
-        if hasattr(self, "choose_download_path_btn"):
-            self.choose_download_path_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
-        if hasattr(self, "fetch_btn"):
-            self.fetch_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
-        if hasattr(self, "retry_btn"):
-            self.retry_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+            self._apply_plain_text_edit_style(self.command_input)
         if hasattr(self, "download_path_label"):
             self.download_path_label.setStyleSheet(self._get_download_path_label_stylesheet())
+        if hasattr(self, "summary_label"):
+            self.summary_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
         if hasattr(self, "detail_header_label"):
             self.detail_header_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
+        if hasattr(self, "result_selection_label"):
+            self.result_selection_label.setStyleSheet(f"color: {t('text_secondary')}; border: none;")
         if hasattr(self, "detail_view"):
-            self.detail_view.setStyleSheet(self._get_text_edit_stylesheet())
+            self._apply_rich_text_edit_style(self.detail_view)
         if hasattr(self, "result_table"):
-            StyleManager.apply_to_widget(self.result_table, "TABLE")
+            self._apply_table_style()
             for row in range(self.result_table.rowCount()):
                 for column in range(self.result_table.columnCount()):
                     item = self.result_table.item(row, column)
@@ -1735,7 +1849,11 @@ class LogPage(BasePage):
         """
 
     @staticmethod
-    def _get_text_edit_stylesheet():
+    def _get_plain_text_edit_stylesheet():
+        return StyleManager.get_PLAINTEXT_EDIT_TABLE()
+
+    @staticmethod
+    def _get_rich_text_edit_stylesheet():
         return StyleManager.get_PLAINTEXT_EDIT_TABLE().replace("QPlainTextEdit", "QTextEdit")
 
     @staticmethod
@@ -1757,10 +1875,6 @@ class LogPage(BasePage):
             color: {t('text_primary')};
         }}
         """
-
-    @staticmethod
-    def _get_borderless_panel_stylesheet():
-        return "QFrame { border: none; background: transparent; }"
 
     @classmethod
     def _default_command_list(cls):
@@ -1798,28 +1912,6 @@ class LogPage(BasePage):
             self.command_input.setPlainText("\n".join(normalized_commands))
         finally:
             self._commands_updating = False
-
-    @staticmethod
-    def _get_compact_group_box_stylesheet():
-        return f"""
-        QGroupBox {{
-            color: {t('text_primary')};
-            font-size: 12px;
-            font-weight: bold;
-            border: 1px solid {t('border')};
-            border-radius: 4px;
-            margin-top: 8px;
-            margin-bottom: 8px;
-            padding-top: 6px;
-            background-color: transparent;
-        }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            left: 10px;
-            padding: 0 5px;
-        }}
-        """
 
     @staticmethod
     def _format_duration(duration_seconds) -> str:
@@ -2097,7 +2189,7 @@ class LogPage(BasePage):
         item.setForeground(self._create_brush(t("text_primary")))
 
     def _create_result_checkbox_widget(self):
-        checkbox = QCheckBox()
+        checkbox = CheckBox()
         checkbox.stateChanged.connect(self.on_result_checkbox_state_changed)
         widget = QWidget()
         widget.setStyleSheet("background-color: transparent;")
@@ -2111,7 +2203,7 @@ class LogPage(BasePage):
             widget = self.result_table.cellWidget(row, 0)
             if widget is None:
                 continue
-            checkbox = widget.findChild(QCheckBox)
+            checkbox = widget.findChild(CheckBox)
             if checkbox is not None:
                 yield row, checkbox
 

@@ -242,17 +242,19 @@ class ConfigManager:
         phone_history = phone_history_str.split('|')[:5] if phone_history_str else []
         debug_shortcuts_str = self._get_value('debug_shortcuts', '')
         debug_shortcuts = self._decode_string_list(debug_shortcuts_str)
-        debug_shortcuts_initialized = self._get_value('debug_shortcuts_initialized', '0') == '1'
+        debug_shortcuts_initialized = self._parse_bool(self._get_value('debug_shortcuts_initialized', '0'))
         last_debug_sn = self._get_value('last_debug_sn', '')
         debug_download_path = self._get_value('debug_download_path', '')
         last_log_sn = self._get_value('last_log_sn', '')
         log_download_path = self._get_value('log_download_path', '')
         log_commands_str = self._get_value('log_commands', '')
         log_commands = self._decode_string_list(log_commands_str)
-        log_commands_initialized = self._get_value('log_commands_initialized', '0') == '1'
-        last_page_index = int(self._get_value('last_page_index', '0'))
-        theme = self._get_value('theme', 'dark')
-        tray_minimize_tip_shown = self._get_value('tray_minimize_tip_shown', '0') == '1'
+        log_commands_initialized = self._parse_bool(self._get_value('log_commands_initialized', '0'))
+        last_page_index = self._parse_int(self._get_value('last_page_index', '0'))
+        theme = str(self._get_value('theme', 'dark') or 'dark').strip().lower()
+        if theme not in ('dark', 'light'):
+            theme = 'dark'
+        tray_minimize_tip_shown = self._parse_bool(self._get_value('tray_minimize_tip_shown', '0'))
         
         return AppConfig(
             export_path=export_path,
@@ -354,6 +356,48 @@ class ConfigManager:
                 except Exception as e:
                     from query_tool.utils.logger import logger
                     logger.debug(f"关闭注册表键失败: {e}")
+
+    @staticmethod
+    def _parse_bool(value, default=False):
+        """容错解析布尔配置，兼容历史字符串值。"""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+
+        text = str(value).strip().lower()
+        if text in ('1', 'true', 'yes', 'on'):
+            return True
+        if text in ('0', 'false', 'no', 'off', ''):
+            return False
+
+        try:
+            return bool(int(text))
+        except (TypeError, ValueError):
+            return default
+
+    @classmethod
+    def _parse_int(cls, value, default=0):
+        """容错解析整型配置，兼容历史布尔/字符串值。"""
+        if isinstance(value, bool):
+            return 1 if value else 0
+        if value is None:
+            return default
+
+        text = str(value).strip()
+        if not text:
+            return default
+
+        lowered = text.lower()
+        if lowered in ('true', 'yes', 'on'):
+            return 1
+        if lowered in ('false', 'no', 'off'):
+            return 0
+
+        try:
+            return int(text)
+        except (TypeError, ValueError):
+            return default
         return None, None
 
     @staticmethod

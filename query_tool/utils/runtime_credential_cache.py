@@ -6,9 +6,9 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Dict, Optional
 
 from query_tool.utils.config import config_manager
-from query_tool.utils.device_query import DeviceQuery
 
 if TYPE_CHECKING:
+    from query_tool.utils.device_query import DeviceQuery
     from query_tool.utils.siot_debug.models import CloudCredentials
 
 
@@ -36,6 +36,8 @@ def get_shared_device_query(
     ttl_seconds: float = DEVICE_QUERY_TTL_S,
 ) -> DeviceQuery:
     """获取进程内共享的 DeviceQuery，避免各页面重复登录。"""
+    from query_tool.utils.device_query import DeviceQuery
+
     key = _account_key(env, username, password)
     now = time.time()
 

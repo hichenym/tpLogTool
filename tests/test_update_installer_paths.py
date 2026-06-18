@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.modules.setdefault("ddddocr", types.SimpleNamespace())
+sys.modules.setdefault("requests", types.SimpleNamespace())
 
 from query_tool.utils.update_downloader import UpdateInstaller
 

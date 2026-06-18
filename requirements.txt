@@ -1,5 +1,6 @@
 ﻿# Core GUI Framework
 PyQt5==5.15.10
+PyQt-Fluent-Widgets==1.11.1
 requests==2.31.0
 
 # OCR and Image Processing

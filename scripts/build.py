@@ -171,18 +171,26 @@ def build_nuitka(debug=False, fast=False):
         "--include-module=coloredlogs",
         "--include-module=PIL",
         "--include-package=certifi",
+        "--include-package=qfluentwidgets",
+        "--include-package=qframelesswindow",
+        "--include-package=darkdetect",
+        "--include-module=win32api",
+        "--include-module=win32con",
+        "--include-module=win32gui",
 
         # === 包含项目模块 ===
         "--include-package=query_tool",
         "--include-package=query_tool.pages",
         "--include-package=query_tool.utils",
         "--include-package=query_tool.widgets",
+        "--include-package=query_tool.ui",
         "--include-package=resources",
 
         # === 包含资源数据文件 ===
         # ddddocr 和 onnxruntime 的模型数据
         "--include-package-data=ddddocr",
         "--include-package-data=onnxruntime",
+        "--include-package-data=qfluentwidgets",
 
         # === 包含项目资源文件 ===
         f"--include-data-dir={os.path.join('resources', 'icons')}=resources/icons",

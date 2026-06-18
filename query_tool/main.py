@@ -13,11 +13,11 @@ sys.dont_write_bytecode = True
 import ctypes
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QStatusBar, QStackedWidget, QDesktopWidget,
-    QSystemTrayIcon, QMenu, QAction
+    QStatusBar, QStackedWidget, QDesktopWidget,
+    QSystemTrayIcon, QMenu, QAction, QLabel
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
-from PyQt5.QtGui import QIcon, QMovie
+from PyQt5.QtGui import QFontMetrics, QIcon, QMovie
 import requests
 
 # 导入资源文件
@@ -28,10 +28,12 @@ from query_tool.version import get_version_string
 
 # 导入页面
 from query_tool.pages import PageRegistry
-# 导入pages模块以触发页面注册
+# 导入 pages 模块并显式触发页面注册
 from query_tool import pages
+pages.register_builtin_pages()
 
 # 导入工具和控件
+from query_tool.ui import NavigationInterface, NavigationItemPosition, resolve_fluent_icon
 from query_tool.utils import config_manager
 from query_tool.utils.style_manager import StyleManager
 from query_tool.utils.task_center import (
@@ -90,7 +92,12 @@ class MainWindow(QMainWindow):
         
         # 页面实例
         self.pages = []
-        self.page_buttons = []
+        self.page_nav_items = {}
+        self._page_route_to_index = {}
+        self._current_page_index = -1
+        self.settings_nav_item = None
+        self.theme_nav_item = None
+        self.task_center_nav_item = None
         
         # 更新管理器
         self.update_manager = None
@@ -150,97 +157,83 @@ class MainWindow(QMainWindow):
     
     def init_ui(self):
         """初始化UI"""
-        # 创建自定义菜单栏
-        menu_widget = QWidget()
-        self._menu_widget = menu_widget  # 保存引用供主题刷新使用
-        menu_widget.setFixedHeight(28)
-        menu_widget.setAutoFillBackground(True)  # 确保使用自定义背景
-        from query_tool.utils import StyleManager
-        StyleManager.apply_to_widget(menu_widget, "MENU_BAR")
-        menu_layout = QHBoxLayout(menu_widget)
-        menu_layout.setContentsMargins(5, 0, 0, 0)
-        menu_layout.setSpacing(0)
-        
-        # 从注册表获取所有页面并创建按钮
+        # 创建中心部件
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        self.navigation_interface = NavigationInterface(self, showReturnButton=False)
+        self.navigation_interface.setObjectName("mainNavigation")
+        self._configure_navigation_interface()
+        main_layout.addWidget(self.navigation_interface)
+
+        self._content_widget = QWidget()
+        content_layout = QVBoxLayout(self._content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        main_layout.addWidget(self._content_widget, 1)
+
+        self.stacked_widget = QStackedWidget()
+        content_layout.addWidget(self.stacked_widget)
+
         for page_config in PageRegistry.get_all_pages():
             page_class = page_config['class']
             page_name = page_config['name']
             page_icon = page_config.get('icon')
-            
-            # 创建页面实例
-            page = page_class(self)
-            self.pages.append(page)
-            
-            # 创建菜单按钮
-            btn = QPushButton(page_name)
-            btn.setCheckable(True)
-            
-            # 如果有图标，设置图标
-            if page_icon:
-                btn.setIcon(QIcon(page_icon))
-                btn.setIconSize(QSize(16, 16))
-            
-            StyleManager.apply_to_widget(btn, "MENU_BUTTON")
-            btn.clicked.connect(lambda checked, idx=len(self.pages)-1: self.switch_page(idx))
-            self.page_buttons.append(btn)
-            menu_layout.addWidget(btn)
-        
-        # 设置按钮
-        self.settings_btn = QPushButton()
-        self.settings_btn.setIcon(QIcon(":/icons/system/setting.png"))
-        self.settings_btn.setIconSize(QSize(18, 18))
-        self.settings_btn.setFixedSize(32, 28)
-        self.settings_btn.setToolTip("设置")
-        StyleManager.apply_to_widget(self.settings_btn, "SETTINGS_BUTTON")
-        self.settings_btn.clicked.connect(self.on_settings_clicked)
-        
-        # 主题切换按钮
-        self.theme_btn = QPushButton()
-        self.theme_btn.setFixedSize(32, 28)
-        self.theme_btn.setToolTip("切换浅色/深色模式")
-        self._update_theme_btn_icon()
-        StyleManager.apply_to_widget(self.theme_btn, "SETTINGS_BUTTON")
-        self.theme_btn.clicked.connect(self._toggle_theme)
+            route_key = page_config.get('route_key') or f"{page_class.__module__}.{page_class.__name__}"
 
-        self.task_center_btn = QPushButton("任务运行中")
-        self.task_center_btn.setIconSize(QSize(16, 16))
-        self.task_center_btn.setFixedHeight(28)
-        self.task_center_btn.setVisible(False)
-        StyleManager.apply_to_widget(self.task_center_btn, "SETTINGS_BUTTON")
-        self.task_center_btn.clicked.connect(self.open_task_center)
-        self._set_task_button_static_icon(":/icons/common/run.png")
-        
-        menu_layout.addStretch()
-        menu_layout.addWidget(self.task_center_btn)
-        menu_layout.addWidget(self.theme_btn)
-        menu_layout.addWidget(self.settings_btn)
-        menu_layout.addSpacing(5)
-        
-        # 创建中心部件
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        
-        # 添加菜单栏
-        main_layout.addWidget(menu_widget)
-        
-        # 创建堆叠窗口部件
-        self.stacked_widget = QStackedWidget()
-        for page in self.pages:
+            page = page_class(self)
+            page.setObjectName(route_key)
+            self.pages.append(page)
+            self._page_route_to_index[route_key] = len(self.pages) - 1
             self.stacked_widget.addWidget(page)
-            # 连接页面的状态消息信号
             page.status_message.connect(self.on_page_status_message)
-        
-        main_layout.addWidget(self.stacked_widget)
+
+            nav_item = self.navigation_interface.addItem(
+                routeKey=route_key,
+                icon=QIcon(page_icon) if page_icon else resolve_fluent_icon("HOME"),
+                text=page_name,
+                onClick=lambda *_args, idx=len(self.pages) - 1: self.switch_page(idx),
+            )
+            self.page_nav_items[route_key] = nav_item
+
+        self.navigation_interface.addSeparator(NavigationItemPosition.BOTTOM)
+        self.task_center_nav_item = self.navigation_interface.addItem(
+            routeKey="task-center",
+            icon=resolve_fluent_icon("HISTORY", ":/icons/common/run.png"),
+            text="任务中心",
+            onClick=self.open_task_center,
+            selectable=False,
+            position=NavigationItemPosition.BOTTOM,
+            tooltip="查看后台任务",
+        )
+        self.theme_nav_item = self.navigation_interface.addItem(
+            routeKey="theme-toggle",
+            icon=resolve_fluent_icon("BRIGHTNESS"),
+            text="主题切换",
+            onClick=self._toggle_theme,
+            selectable=False,
+            position=NavigationItemPosition.BOTTOM,
+        )
+        self.settings_nav_item = self.navigation_interface.addItem(
+            routeKey="settings",
+            icon=resolve_fluent_icon("SETTING", ":/icons/system/setting.png"),
+            text="设置",
+            onClick=self.on_settings_clicked,
+            selectable=False,
+            position=NavigationItemPosition.BOTTOM,
+        )
+        self._update_theme_btn_icon()
+        self._set_task_button_static_icon(":/icons/common/run.png")
+        self._update_navigation_expand_width()
         
         # 状态栏
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         
         # 状态消息标签（支持富文本）- 左侧
-        from PyQt5.QtWidgets import QLabel
         self.status_label = QLabel("")
         self.status_label.setTextFormat(Qt.RichText)
         self.status_label.setStyleSheet(f"color: {theme_manager.token('text_primary')}; padding-left: 5px;")
@@ -394,12 +387,19 @@ class MainWindow(QMainWindow):
         page_configs = PageRegistry.get_all_pages()
         page_name = page_configs[index]['name'] if index < len(page_configs) else f"页面{index}"
         logger.debug(f"切换到页面: {page_name}")
-        
+
+        previous_index = self.stacked_widget.currentIndex()
+        if 0 <= previous_index < len(self.pages) and previous_index != index:
+            try:
+                self.pages[previous_index].on_page_hide()
+            except Exception:
+                pass
+
         self.stacked_widget.setCurrentIndex(index)
-        
-        # 更新按钮选中状态
-        for i, btn in enumerate(self.page_buttons):
-            btn.setChecked(i == index)
+        route_key = page_configs[index].get('route_key')
+        if route_key:
+            self.navigation_interface.setCurrentItem(route_key)
+        self._current_page_index = index
         
         # 调用页面的显示事件
         self.pages[index].on_page_show()
@@ -434,14 +434,72 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self)
         dialog.exec_()
 
+    def _configure_navigation_interface(self):
+        self.navigation_interface.setMinimumWidth(48)
+
+        panel = getattr(self.navigation_interface, "panel", None)
+        if panel is None:
+            return
+
+        set_duration = getattr(panel.expandAni, "setDuration", None)
+        if callable(set_duration):
+            set_duration(0)
+
+        set_indicator_animation = getattr(panel, "setIndicatorAnimationEnabled", None)
+        if callable(set_indicator_animation):
+            set_indicator_animation(False)
+
+        set_update_indicator = getattr(panel, "setUpdateIndicatorPosOnCollapseFinished", None)
+        if callable(set_update_indicator):
+            set_update_indicator(False)
+
+    def _navigation_item_texts(self):
+        texts = [page.page_name for page in self.pages if getattr(page, "page_name", "")]
+        texts.extend(
+            text for text in (
+                "任务中心",
+                "设置",
+                "深色",
+                "浅色",
+            )
+            if text
+        )
+        return texts
+
+    def _compute_navigation_expand_width(self):
+        app = QApplication.instance()
+        font = self.navigation_interface.font() if hasattr(self, "navigation_interface") else self.font()
+        metrics = QFontMetrics(font if font is not None else (app.font() if app is not None else self.font()))
+        max_text_width = max((metrics.horizontalAdvance(text) for text in self._navigation_item_texts()), default=0)
+        return max(128, min(220, max_text_width + 96))
+
+    def _update_navigation_expand_width(self):
+        if not hasattr(self, "navigation_interface"):
+            return
+
+        width = self._compute_navigation_expand_width()
+        setter = getattr(self.navigation_interface, "setExpandWidth", None)
+        if callable(setter):
+            setter(width)
+
+        panel = getattr(self.navigation_interface, "panel", None)
+        if panel is not None:
+            minimum_expand_setter = getattr(panel, "setMinimumExpandWidth", None)
+            if callable(minimum_expand_setter):
+                minimum_expand_setter(0)
+
     def _update_theme_btn_icon(self):
         """更新主题切换按钮图标/文字"""
+        if self.theme_nav_item is None:
+            return
         if theme_manager.is_dark:
-            self.theme_btn.setText("☀")  # 深色模式下显示太阳（切换到浅色）
-            self.theme_btn.setToolTip("切换到浅色模式")
+            self.theme_nav_item.setText("浅色")
+            self.theme_nav_item.setToolTip("切换到浅色")
         else:
-            self.theme_btn.setText("🌙")  # 浅色模式下显示月亮（切换到深色）
-            self.theme_btn.setToolTip("切换到深色模式")
+            self.theme_nav_item.setText("深色")
+            self.theme_nav_item.setToolTip("切换到深色")
+        self.theme_nav_item.setIcon(resolve_fluent_icon("BRIGHTNESS"))
+        self._update_navigation_expand_width()
 
     def _set_task_button_static_icon(self, icon_path: str):
         if self._task_button_movie is not None:
@@ -452,7 +510,8 @@ class MainWindow(QMainWindow):
                 pass
             self._task_button_movie = None
             self._task_button_movie_path = None
-        self.task_center_btn.setIcon(QIcon(icon_path))
+        if self.task_center_nav_item is not None:
+            self.task_center_nav_item.setIcon(QIcon(icon_path))
 
     def _start_task_button_movie(self, resource_path: str):
         if self._task_button_movie_path == resource_path and self._task_button_movie is not None:
@@ -482,7 +541,8 @@ class MainWindow(QMainWindow):
         pixmap = self._task_button_movie.currentPixmap()
         if pixmap.isNull():
             return
-        self.task_center_btn.setIcon(QIcon(pixmap))
+        if self.task_center_nav_item is not None:
+            self.task_center_nav_item.setIcon(QIcon(pixmap))
 
     def _toggle_theme(self):
         """切换主题"""
@@ -494,18 +554,10 @@ class MainWindow(QMainWindow):
 
     def _on_theme_changed(self):
         """主题切换后刷新主窗口自身的样式"""
-        from query_tool.utils import StyleManager
         from query_tool.utils.logger import logger
         try:
-            # 刷新菜单栏
-            if hasattr(self, '_menu_widget'):
-                StyleManager.apply_to_widget(self._menu_widget, "MENU_BAR")
-            for btn in self.page_buttons:
-                StyleManager.apply_to_widget(btn, "MENU_BUTTON")
-            StyleManager.apply_to_widget(self.settings_btn, "SETTINGS_BUTTON")
-            StyleManager.apply_to_widget(self.theme_btn, "SETTINGS_BUTTON")
-            StyleManager.apply_to_widget(self.task_center_btn, "SETTINGS_BUTTON")
             self._update_theme_btn_icon()
+            self.refresh_running_task_indicator()
             # 刷新状态栏标签颜色
             self.status_label.setStyleSheet(
                 f"color: {theme_manager.token('text_primary')}; padding-left: 5px;"
@@ -575,6 +627,8 @@ class MainWindow(QMainWindow):
 
     def refresh_running_task_indicator(self):
         """Refresh the running-task indicator in the title bar."""
+        if self.task_center_nav_item is None:
+            return
         try:
             running_count = count_running_tasks()
             total_count = count_all_tasks()
@@ -586,22 +640,24 @@ class MainWindow(QMainWindow):
             paused_count = 0
             finished_count = 0
 
-        self.task_center_btn.setVisible(total_count > 0)
+        self.task_center_nav_item.setVisible(total_count > 0)
         if running_count > 0:
             self._start_task_button_movie(":/icons/common/loadding.gif")
-            self.task_center_btn.setText(f"任务运行中({running_count})")
-            self.task_center_btn.setToolTip(f"当前有 {running_count} 个后台任务运行中")
+            self.task_center_nav_item.setText(f"任务中心 ({running_count})")
+            self.task_center_nav_item.setToolTip(f"当前有 {running_count} 个后台任务运行中")
             return
         if paused_count > 0:
             self._set_task_button_static_icon(":/icons/common/run.png")
-            self.task_center_btn.setText(f"任务已暂停({paused_count})")
-            self.task_center_btn.setToolTip(f"当前有 {paused_count} 个后台任务已暂停")
+            self.task_center_nav_item.setText(f"任务已暂停 ({paused_count})")
+            self.task_center_nav_item.setToolTip(f"当前有 {paused_count} 个后台任务已暂停")
             return
         if finished_count > 0:
             self._start_task_button_movie(":/icons/common/finish2.gif")
-            self.task_center_btn.setText("任务已完成")
-            self.task_center_btn.setToolTip(f"当前共有 {finished_count} 个后台任务已结束")
+            self.task_center_nav_item.setText("任务已完成")
+            self.task_center_nav_item.setToolTip(f"当前共有 {finished_count} 个后台任务已结束")
             return
+        self.task_center_nav_item.setText("任务中心")
+        self.task_center_nav_item.setToolTip("查看后台任务")
         self._set_task_button_static_icon(":/icons/common/run.png")
 
     def open_task_center(self):
@@ -1323,14 +1379,9 @@ def main():
         if not single_instance.start():
             logger.warning("单实例监听启动失败，将继续以普通模式运行")
         
-        # 在创建任何控件之前，先从注册表读取并应用保存的主题
-        # 这样 init_ui 里所有控件直接用正确主题的颜色创建，无需事后刷新
-        from query_tool.utils.theme_manager import LIGHT_THEME
+        # 在创建任何控件之前，先应用保存的主题，保持 Fluent 壳层与旧页面主题一致
         _saved_theme = _get_startup_theme()
-        if _saved_theme == 'light':
-            # 直接修改内部状态，不触发信号（此时还没有任何控件需要刷新）
-            theme_manager._is_dark = False
-            theme_manager._tokens = LIGHT_THEME.copy()
+        theme_manager.initialize(_saved_theme)
         
         # 设置全局主题样式
         app.setStyleSheet(StyleManager.build_global_stylesheet())

@@ -6,11 +6,18 @@ import time
 import hashlib
 import base64
 import json
-import ddddocr
 from .config import config_manager
 from .session_manager import session_manager
 from .logger import logger
 from threading import Lock
+
+try:
+    import ddddocr
+except Exception as exc:  # pragma: no cover - import guard
+    ddddocr = None
+    _DDDDOCR_IMPORT_ERROR = exc
+else:
+    _DDDDOCR_IMPORT_ERROR = None
 
 
 class DeviceQuery:
@@ -90,6 +97,8 @@ class DeviceQuery:
             res = r.json()
             
             img_data = base64.b64decode(res['image'].split('base64,')[-1])
+            if ddddocr is None:
+                raise RuntimeError("缺少依赖 ddddocr，无法识别验证码，请先安装相关依赖后再登录")
             ocr = ddddocr.DdddOcr(show_ad=False)
             captcha_code = ocr.classification(img_data)
             logger.debug(f"验证码识别成功: {captcha_code}")
@@ -137,6 +146,8 @@ class DeviceQuery:
         
         # 明确抛出异常而不是返回 None
         error_msg = f"登录失败（重试{retry}次）: {last_error}"
+        if ddddocr is None and _DDDDOCR_IMPORT_ERROR is not None:
+            error_msg = f"{error_msg}（ddddocr 导入失败: {_DDDDOCR_IMPORT_ERROR}）"
         logger.error(error_msg)
         raise Exception(error_msg)
 

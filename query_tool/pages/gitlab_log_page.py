@@ -6,21 +6,33 @@ import os
 from collections import OrderedDict
 from datetime import datetime
 from PyQt5.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QComboBox, QDateEdit, QGroupBox, QScrollArea, QWidget,
-    QFileDialog, QFrame, QPlainTextEdit, QShortcut, QSizePolicy, QTextEdit
+    QFileDialog, QFrame, QHBoxLayout, QLineEdit, QPlainTextEdit,
+    QShortcut, QSizePolicy, QTextEdit, QVBoxLayout, QWidget
 )
 from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal, QSize, QEvent
-from PyQt5.QtGui import QIcon, QTextCursor, QTextDocument, QKeySequence, QColor, QTextCharFormat
+from PyQt5.QtGui import QFontMetrics, QIcon, QTextCursor, QTextDocument, QKeySequence, QColor, QTextCharFormat
 
 from .base_page import BasePage
 from .page_registry import register_page
-from query_tool.utils import ButtonManager, ThreadManager, config_manager
+from query_tool.ui import (
+    BodyLabel,
+    DateEdit,
+    EditableComboBox,
+    ElevatedCardWidget,
+    LineEdit,
+    PasswordLineEdit,
+    PlainTextEdit,
+    PrimaryPushButton,
+    PushButton,
+    QFLUENT_WIDGETS_AVAILABLE,
+    ScrollArea,
+    StrongBodyLabel,
+)
+from query_tool.utils import ButtonManager, ThreadManager
 from query_tool.utils.style_manager import StyleManager
-from query_tool.utils.theme_manager import t, theme_manager
-from query_tool.utils.logger import logger
 from query_tool.utils.gitlab_api import GitLabAPI
 from query_tool.utils.excel_helper import create_gitlab_xlsx
+from query_tool.utils.theme_manager import t
 from query_tool.widgets import ClickableLineEdit
 
 
@@ -44,7 +56,7 @@ class GitLabWorkerThread(QThread):
             self.error_signal.emit(str(e))
 
 
-class SearchablePlainTextEdit(QPlainTextEdit):
+class SearchablePlainTextEdit(PlainTextEdit):
     """支持快捷搜索的纯文本框"""
     find_requested = pyqtSignal()
     find_next_requested = pyqtSignal()
@@ -73,6 +85,8 @@ class GitLabLogPage(BasePage):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.page_name = "GIT"
+        self._cards = []
+        self._card_title_labels = []
         
         # 管理器
         self.btn_manager = ButtonManager()
@@ -99,7 +113,130 @@ class GitLabLogPage(BasePage):
         
         self.init_ui()
         self.load_config()
-    
+
+    def _apply_card_title_style(self, label):
+        label.setStyleSheet(f"color: {t('text_primary')}; font-weight: 600; border: none;")
+
+    def _apply_card_style(self, card):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            card.setStyleSheet(
+                f"""
+                #{card.objectName()} {{
+                    border: 1px solid {t('border')};
+                    border-radius: 6px;
+                    background-color: transparent;
+                }}
+                """
+            )
+
+    def _create_card_section(self, title, vertical_policy=QSizePolicy.Fixed):
+        """创建统一样式的 Fluent 卡片区域。"""
+        card = ElevatedCardWidget(self)
+        card.setObjectName(f"gitlabCard{len(self._cards) + 1}")
+        self._cards.append(card)
+        card.setSizePolicy(QSizePolicy.Expanding, vertical_policy)
+        layout = QVBoxLayout(card)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        title_label = StrongBodyLabel(title)
+        self._card_title_labels.append(title_label)
+        self._apply_card_title_style(title_label)
+        layout.addWidget(title_label)
+        self._apply_card_style(card)
+        return card, layout
+
+    def _create_subsection_card(self, title, vertical_policy=QSizePolicy.Expanding):
+        card = ElevatedCardWidget(self)
+        card.setObjectName(f"gitlabSubCard{len(self._cards) + 1}")
+        self._cards.append(card)
+        card.setSizePolicy(QSizePolicy.Expanding, vertical_policy)
+        layout = QVBoxLayout(card)
+        layout.setSpacing(8)
+        layout.setContentsMargins(14, 14, 14, 14)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+        title_label = BodyLabel(title)
+        self._card_title_labels.append(title_label)
+        self._apply_card_title_style(title_label)
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+        self._apply_card_style(card)
+        return card, layout, header_layout
+
+    @staticmethod
+    def _combo_line_edit(combo):
+        """兼容获取可编辑下拉框内部输入框。"""
+        getter = getattr(combo, "lineEdit", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
+    def _set_combo_placeholder(self, combo, text):
+        """兼容设置下拉框占位文字。"""
+        setter = getattr(combo, "setPlaceholderText", None)
+        if callable(setter):
+            try:
+                setter(text)
+                return
+            except Exception:
+                pass
+
+        line_edit = self._combo_line_edit(combo)
+        if line_edit is not None:
+            line_edit.setPlaceholderText(text)
+
+    def _set_combo_visual_state(self, combo, active):
+        """在非 Fluent 回退模式下保留旧的激活态提示。"""
+        if QFLUENT_WIDGETS_AVAILABLE:
+            return
+
+        line_edit = self._combo_line_edit(combo)
+        if line_edit is None:
+            return
+
+        style = (
+            StyleManager.get_COMBO_LINE_EDIT_ACTIVE()
+            if active else
+            StyleManager.get_COMBO_LINE_EDIT_INACTIVE()
+        )
+        line_edit.setStyleSheet(style)
+
+    def _configure_combo(self, combo, placeholder=""):
+        """初始化可搜索下拉框的通用行为。"""
+        combo.setMinimumHeight(self._control_height())
+        combo.setFocusPolicy(Qt.StrongFocus)
+        combo.wheelEvent = lambda event: event.ignore()
+
+        if hasattr(combo, "setEditable"):
+            try:
+                combo.setEditable(True)
+            except Exception:
+                pass
+
+        if hasattr(combo, "setInsertPolicy"):
+            no_insert = getattr(type(combo), "NoInsert", getattr(combo, "NoInsert", None))
+            if no_insert is not None:
+                try:
+                    combo.setInsertPolicy(no_insert)
+                except Exception:
+                    pass
+
+        self._set_combo_placeholder(combo, placeholder)
+        self._set_combo_visual_state(combo, active=False)
+
+    def _control_height(self, extra_padding: int = 12, minimum: int = 32) -> int:
+        metrics = QFontMetrics(self.font())
+        return max(minimum, metrics.height() + extra_padding)
+
+    def _form_label_width(self) -> int:
+        metrics = QFontMetrics(self.font())
+        return max(70, metrics.horizontalAdvance("保存路径:") + 14)
+
     def init_ui(self):
         """初始化UI"""
         # 主布局
@@ -108,7 +245,7 @@ class GitLabLogPage(BasePage):
         main_layout.setSpacing(5)
         
         # 使用滚动区域
-        scroll = QScrollArea()
+        scroll = ScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -148,40 +285,39 @@ class GitLabLogPage(BasePage):
     
     def create_connection_area(self, parent_layout):
         """创建服务器连接区域"""
-        self.connection_group = QGroupBox("服务器连接")
-        self.connection_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        layout = QVBoxLayout(self.connection_group)
-        layout.setSpacing(8)
-        layout.setContentsMargins(10, 15, 10, 10)
-        
+        self.connection_group, layout = self._create_card_section("服务器连接")
+        label_width = self._form_label_width()
+        control_height = self._control_height()
+
         # 服务器地址
         server_layout = QHBoxLayout()
-        server_label = QLabel("服务器:")
-        server_label.setFixedWidth(70)
+        server_label = BodyLabel("服务器:")
+        server_label.setFixedWidth(label_width)
         server_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.server_input = QLineEdit()
+        self.server_input = LineEdit()
         self.server_input.setPlaceholderText("https://gitlab.example.com")
-        self.server_input.setMinimumHeight(28)
+        self.server_input.setMinimumHeight(control_height)
         server_layout.addWidget(server_label)
         server_layout.addWidget(self.server_input, 1)
         layout.addLayout(server_layout)
-        
+
         # Token
         token_layout = QHBoxLayout()
-        token_label = QLabel("Token:")
-        token_label.setFixedWidth(70)
+        token_label = BodyLabel("Token:")
+        token_label.setFixedWidth(label_width)
         token_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.token_input = QLineEdit()
+        self.token_input = PasswordLineEdit()
         self.token_input.setPlaceholderText("请输入 GitLab Token")
         self.token_input.setEchoMode(QLineEdit.Password)
-        self.token_input.setMinimumHeight(28)
-        
-        self.connect_btn = QPushButton("连接")
+        self.token_input.setMinimumHeight(control_height)
+
+        self.connect_btn = PrimaryPushButton("连接")
         self.connect_btn.setIcon(QIcon(":/icons/gitlab/connect.png"))
         self.connect_btn.setIconSize(QSize(16, 16))
-        self.connect_btn.setFixedSize(80, 28)
+        self.connect_btn.setMinimumWidth(96)
+        self.connect_btn.setFixedHeight(control_height)
         self.connect_btn.clicked.connect(self.on_connect)
-        
+
         token_layout.addWidget(token_label)
         token_layout.addWidget(self.token_input, 1)
         token_layout.addWidget(self.connect_btn)
@@ -191,87 +327,54 @@ class GitLabLogPage(BasePage):
     
     def create_query_area(self, parent_layout):
         """创建查询条件区域"""
-        self.query_group = QGroupBox("查询条件")
-        self.query_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        layout = QVBoxLayout(self.query_group)
-        layout.setSpacing(8)
-        layout.setContentsMargins(10, 15, 10, 10)
-        
+        self.query_group, layout = self._create_card_section("查询条件")
+        label_width = self._form_label_width()
+        control_height = self._control_height()
+
         # 项目
         project_layout = QHBoxLayout()
-        project_label = QLabel("项目:")
-        project_label.setFixedWidth(70)
+        project_label = BodyLabel("项目:")
+        project_label.setFixedWidth(label_width)
         project_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.project_combo = QComboBox()
-        self.project_combo.setMinimumHeight(28)
-        self.project_combo.setEditable(True)
-        self.project_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.project_combo.setFocusPolicy(Qt.StrongFocus)  # 禁用滚轮改变值
-        # 初始不显示占位文字
-        self.project_combo.lineEdit().setPlaceholderText("")
-        
-        # 设置项目下拉框 lineEdit 初始样式（透明背景）
-        project_line_edit = self.project_combo.lineEdit()
-        if project_line_edit:
-            project_line_edit.setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
-        
-        # 禁用滚轮事件
-        self.project_combo.wheelEvent = lambda event: event.ignore()
-        
-        self.project_combo.activated.connect(self.on_project_selected)
+        self.project_combo = EditableComboBox()
+        self._configure_combo(self.project_combo)
+        self.project_combo.activated.connect(
+            lambda *_args: self.on_project_selected(self.project_combo.currentIndex())
+        )
         project_layout.addWidget(project_label)
         project_layout.addWidget(self.project_combo, 1)
         layout.addLayout(project_layout)
-        
+
         # 分支
         branch_layout = QHBoxLayout()
-        branch_label = QLabel("分支:")
-        branch_label.setFixedWidth(70)
+        branch_label = BodyLabel("分支:")
+        branch_label.setFixedWidth(label_width)
         branch_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.branch_combo = QComboBox()
-        self.branch_combo.setMinimumHeight(28)
-        self.branch_combo.setFocusPolicy(Qt.StrongFocus)  # 禁用滚轮改变值
-        
-        # 禁用滚轮事件
-        self.branch_combo.wheelEvent = lambda event: event.ignore()
-        
+        self.branch_combo = EditableComboBox()
+        self._configure_combo(self.branch_combo)
         branch_layout.addWidget(branch_label)
         branch_layout.addWidget(self.branch_combo, 1)
         layout.addLayout(branch_layout)
-        
+
         # 提交者
         author_layout = QHBoxLayout()
-        author_label = QLabel("提交者:")
-        author_label.setFixedWidth(70)
+        author_label = BodyLabel("提交者:")
+        author_label.setFixedWidth(label_width)
         author_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.author_combo = QComboBox()
-        self.author_combo.setMinimumHeight(28)
-        self.author_combo.setEditable(True)
-        self.author_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.author_combo.setFocusPolicy(Qt.StrongFocus)  # 禁用滚轮改变值
-        # 初始不显示占位文字
-        self.author_combo.lineEdit().setPlaceholderText("")
-        
-        # 设置提交者下拉框 lineEdit 初始样式（透明背景）
-        author_line_edit = self.author_combo.lineEdit()
-        if author_line_edit:
-            author_line_edit.setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
-        
-        # 禁用滚轮事件
-        self.author_combo.wheelEvent = lambda event: event.ignore()
-        
+        self.author_combo = EditableComboBox()
+        self._configure_combo(self.author_combo)
         author_layout.addWidget(author_label)
         author_layout.addWidget(self.author_combo, 1)
         layout.addLayout(author_layout)
-        
+
         # 关键词
         keyword_layout = QHBoxLayout()
-        keyword_label = QLabel("关键词:")
-        keyword_label.setFixedWidth(70)
+        keyword_label = BodyLabel("关键词:")
+        keyword_label.setFixedWidth(label_width)
         keyword_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.keyword_input = QLineEdit()
+        self.keyword_input = LineEdit()
         self.keyword_input.setPlaceholderText("多个关键词用分号隔开，导出后高亮")
-        self.keyword_input.setMinimumHeight(28)
+        self.keyword_input.setMinimumHeight(control_height)
         keyword_layout.addWidget(keyword_label)
         keyword_layout.addWidget(self.keyword_input, 1)
         layout.addLayout(keyword_layout)
@@ -280,73 +383,75 @@ class GitLabLogPage(BasePage):
     
     def create_export_area(self, parent_layout):
         """创建时间范围和导出区域"""
-        self.export_group = QGroupBox("时间范围与导出")
-        self.export_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        layout = QVBoxLayout(self.export_group)
-        layout.setSpacing(8)
-        layout.setContentsMargins(10, 15, 10, 10)
-        
+        self.export_group, layout = self._create_card_section("时间范围与导出")
+        label_width = self._form_label_width()
+        control_height = self._control_height()
+
         # 时间范围（水平排列）
         time_layout = QHBoxLayout()
-        
+
         # 开始时间
-        start_label = QLabel("开始时间:")
-        start_label.setFixedWidth(70)
+        start_label = BodyLabel("开始时间:")
+        start_label.setFixedWidth(label_width)
         start_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.start_date = QDateEdit()
+        self.start_date = DateEdit()
         self.start_date.setCalendarPopup(True)
         self.start_date.setDisplayFormat("yyyy-MM-dd")
         self.start_date.setDate(QDate.currentDate().addDays(-30))
-        self.start_date.setMinimumHeight(28)
+        self.start_date.setMinimumHeight(control_height)
         time_layout.addWidget(start_label)
         time_layout.addWidget(self.start_date, 1)
         
         # 添加间距
         time_layout.addSpacing(20)
-        
+
         # 结束时间
-        end_label = QLabel("结束时间:")
-        end_label.setFixedWidth(70)
+        end_label = BodyLabel("结束时间:")
+        end_label.setFixedWidth(label_width)
         end_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.end_date = QDateEdit()
+        self.end_date = DateEdit()
         self.end_date.setCalendarPopup(True)
         self.end_date.setDisplayFormat("yyyy-MM-dd")
         self.end_date.setDate(QDate.currentDate())
-        self.end_date.setMinimumHeight(28)
+        self.end_date.setMinimumHeight(control_height)
         time_layout.addWidget(end_label)
         time_layout.addWidget(self.end_date, 1)
         
         layout.addLayout(time_layout)
-        
+
         # 保存路径
         path_layout = QHBoxLayout()
-        path_label = QLabel("保存路径:")
-        path_label.setFixedWidth(70)
+        path_label = BodyLabel("保存路径:")
+        path_label.setFixedWidth(label_width)
         path_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.path_input = ClickableLineEdit()
         self.path_input.setPlaceholderText("点击浏览选择保存目录（双击可打开目录）")
         self.path_input.setReadOnly(True)
         self.path_input.setFocusPolicy(Qt.NoFocus)
-        self.path_input.setMinimumHeight(28)
-        
-        self.browse_btn = QPushButton("浏览")
+        self.path_input.setMinimumHeight(control_height)
+
+        self.browse_btn = PushButton("浏览")
         self.browse_btn.setIcon(QIcon(":/icons/gitlab/browser.png"))
         self.browse_btn.setIconSize(QSize(16, 16))
-        self.browse_btn.setFixedSize(80, 28)
+        self.browse_btn.setMinimumWidth(96)
+        self.browse_btn.setFixedHeight(control_height)
         self.browse_btn.clicked.connect(self.on_browse)
-        
-        self.export_btn = QPushButton("导出")
+
+        self.export_btn = PushButton("导出")
         self.export_btn.setIcon(QIcon(":/icons/gitlab/export.png"))
         self.export_btn.setIconSize(QSize(16, 16))
-        self.export_btn.setFixedSize(80, 28)
+        self.export_btn.setMinimumWidth(96)
+        self.export_btn.setFixedHeight(control_height)
         self.export_btn.clicked.connect(self.on_export)
 
-        self.query_btn = QPushButton("查询")
-        self.query_btn.setFixedSize(80, 28)
+        self.query_btn = PrimaryPushButton("查询")
+        self.query_btn.setMinimumWidth(96)
+        self.query_btn.setFixedHeight(control_height)
         self.query_btn.clicked.connect(self.on_query)
 
-        self.toggle_conditions_btn = QPushButton("收起")
-        self.toggle_conditions_btn.setFixedSize(80, 28)
+        self.toggle_conditions_btn = PushButton("收起")
+        self.toggle_conditions_btn.setMinimumWidth(96)
+        self.toggle_conditions_btn.setFixedHeight(control_height)
         self.toggle_conditions_btn.clicked.connect(self.toggle_query_conditions)
         
         path_layout.addWidget(path_label)
@@ -363,34 +468,37 @@ class GitLabLogPage(BasePage):
 
     def create_result_area(self, parent_layout):
         """创建查询结果区域"""
-        self.result_group = QGroupBox("Git 记录")
+        self.result_group, layout = self._create_card_section("Git 记录", QSizePolicy.Expanding)
         self.result_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout = QVBoxLayout(self.result_group)
-        layout.setSpacing(8)
-        layout.setContentsMargins(10, 15, 10, 10)
 
+        self.search_card, search_card_layout, _search_header_layout = self._create_subsection_card("快速搜索", QSizePolicy.Fixed)
         self.search_bar = QWidget()
         self.search_bar.setVisible(False)
+        self.search_card.setVisible(False)
         search_layout = QHBoxLayout(self.search_bar)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(6)
 
-        search_label = QLabel("搜索:")
-        self.search_input = QLineEdit()
+        search_label = BodyLabel("搜索:")
+        self.search_input = LineEdit()
         self.search_input.setPlaceholderText("输入关键字后回车，支持 Ctrl+F / F3 / Shift+F3")
+        self.search_input.setMinimumHeight(self._control_height())
         self.search_input.returnPressed.connect(self.find_next_in_result)
         self.search_input.textChanged.connect(self.update_search_highlights)
 
-        self.prev_match_btn = QPushButton("上一条")
-        self.prev_match_btn.setFixedSize(80, 28)
+        self.prev_match_btn = PushButton("上一条")
+        self.prev_match_btn.setMinimumWidth(96)
+        self.prev_match_btn.setFixedHeight(self._control_height())
         self.prev_match_btn.clicked.connect(self.find_previous_in_result)
 
-        self.next_match_btn = QPushButton("下一条")
-        self.next_match_btn.setFixedSize(80, 28)
+        self.next_match_btn = PushButton("下一条")
+        self.next_match_btn.setMinimumWidth(96)
+        self.next_match_btn.setFixedHeight(self._control_height())
         self.next_match_btn.clicked.connect(self.find_next_in_result)
 
-        self.close_search_btn = QPushButton("关闭搜索")
-        self.close_search_btn.setFixedSize(90, 28)
+        self.close_search_btn = PushButton("关闭搜索")
+        self.close_search_btn.setMinimumWidth(108)
+        self.close_search_btn.setFixedHeight(self._control_height())
         self.close_search_btn.clicked.connect(self.hide_search_bar)
 
         search_layout.addWidget(search_label)
@@ -398,8 +506,10 @@ class GitLabLogPage(BasePage):
         search_layout.addWidget(self.prev_match_btn)
         search_layout.addWidget(self.next_match_btn)
         search_layout.addWidget(self.close_search_btn)
-        layout.addWidget(self.search_bar)
+        search_card_layout.addWidget(self.search_bar)
+        layout.addWidget(self.search_card)
 
+        self.result_text_card, result_text_layout, _result_text_header_layout = self._create_subsection_card("提交记录", QSizePolicy.Expanding)
         self.result_text = SearchablePlainTextEdit()
         self.result_text.setReadOnly(True)
         self.result_text.setLineWrapMode(QPlainTextEdit.NoWrap)
@@ -407,11 +517,13 @@ class GitLabLogPage(BasePage):
         self.result_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.result_text.setPlaceholderText("点击“查询”后，这里会展示 Git 提交记录。")
         self.result_text.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
-        self.result_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            self.result_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
         self.result_text.find_requested.connect(self.show_search_bar)
         self.result_text.find_next_requested.connect(self.find_next_in_result)
         self.result_text.find_previous_requested.connect(self.find_previous_in_result)
-        layout.addWidget(self.result_text)
+        result_text_layout.addWidget(self.result_text)
+        layout.addWidget(self.result_text_card, 1)
 
         self.find_shortcut = QShortcut(QKeySequence.Find, self.result_group)
         self.find_shortcut.activated.connect(self.show_search_bar)
@@ -423,7 +535,9 @@ class GitLabLogPage(BasePage):
     def _lock_static_group_heights(self):
         """锁定顶部筛选区域高度，避免随窗口拉伸"""
         for group in (self.connection_group, self.query_group, self.export_group):
-            group.setFixedHeight(group.sizeHint().height())
+            height = max(group.minimumSizeHint().height(), group.sizeHint().height())
+            group.setMinimumHeight(height)
+            group.setMaximumHeight(height)
 
     def eventFilter(self, watched, event):
         if hasattr(self, 'scroll_area') and watched is self.scroll_area.viewport():
@@ -556,21 +670,15 @@ class GitLabLogPage(BasePage):
         self.project_combo.clear()
         self.branch_combo.clear()
         self.author_combo.clear()
-        
+
         # 清空占位文字
-        self.project_combo.lineEdit().setPlaceholderText("")
-        self.author_combo.lineEdit().setPlaceholderText("")
-        
-        # 移除背景色（设置为透明/禁用样式）
-        self.project_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
-        
-        # 分支下拉框也需要设置透明背景
-        # 如果分支下拉框是可编辑的，需要设置 lineEdit 样式
-        if self.branch_combo.lineEdit():
-            self.branch_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
-        
-        self.author_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_INACTIVE())
-        
+        self._set_combo_placeholder(self.project_combo, "")
+        self._set_combo_placeholder(self.branch_combo, "")
+        self._set_combo_placeholder(self.author_combo, "")
+        self._set_combo_visual_state(self.project_combo, active=False)
+        self._set_combo_visual_state(self.branch_combo, active=False)
+        self._set_combo_visual_state(self.author_combo, active=False)
+
         self.set_controls_enabled(False)
         self.result_text.clear()
         self.result_text.setExtraSelections([])
@@ -598,25 +706,20 @@ class GitLabLogPage(BasePage):
         self.main_buttons.set_text(self.connect_btn, "断开")
         self.connect_btn.setIcon(QIcon(":/icons/gitlab/disconnect.png"))
         self.connect_btn.setEnabled(True)
-        
-        # 恢复项目下拉框的样式和占位文字
-        self.project_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_ACTIVE())
-        self.project_combo.lineEdit().setPlaceholderText("请选择或输入项目名...")
-        
+
+        self._set_combo_visual_state(self.project_combo, active=True)
+        self._set_combo_placeholder(self.project_combo, "请选择或输入项目名...")
+
         # 填充项目列表
         self.project_combo.clear()
-        
+
         # 添加最近使用的项目
-        added_recent = []
+        added_recent = set()
         for rp in self.recent_projects:
             if any(p['path_with_namespace'] == rp for p in projects):
                 self.project_combo.addItem(f"★ {rp}", rp)
-                added_recent.append(rp)
-        
-        # 添加分隔符
-        if added_recent:
-            self.project_combo.insertSeparator(len(added_recent))
-        
+                added_recent.add(rp)
+
         # 添加所有项目
         for p in projects:
             path = p['path_with_namespace']
@@ -675,16 +778,10 @@ class GitLabLogPage(BasePage):
         """分支列表加载完成"""
         self.branches = branches
         self.show_success(f"获取到 {len(branches)} 个分支")
-        
-        # 设置分支下拉框可搜索
-        self.branch_combo.setEditable(True)
-        self.branch_combo.setInsertPolicy(QComboBox.NoInsert)
-        
-        # 设置 lineEdit 的样式（恢复正常背景色）
-        line_edit = self.branch_combo.lineEdit()
-        if line_edit:
-            line_edit.setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_ACTIVE())
-        
+
+        self._set_combo_visual_state(self.branch_combo, active=True)
+        self._set_combo_placeholder(self.branch_combo, "请选择或输入分支名...")
+
         self.branch_combo.clear()
         
         # 默认分支放前面
@@ -695,16 +792,13 @@ class GitLabLogPage(BasePage):
         
         # 获取最近使用的分支
         recent_branches = self.recent_branches.get(self.current_project, [])
-        added_recent = []
-        
+        added_recent = set()
+
         for rb in recent_branches:
             if any(b['name'] == rb for b in branches):
                 self.branch_combo.addItem(f"★ {rb}", rb)
-                added_recent.append(rb)
-        
-        if added_recent:
-            self.branch_combo.insertSeparator(len(added_recent))
-        
+                added_recent.add(rb)
+
         for b in branches:
             name = b['name']
             if name not in added_recent:
@@ -771,10 +865,9 @@ class GitLabLogPage(BasePage):
             self.author_combo.addItem(author, author)
         
         self.author_combo.setCurrentIndex(-1)
-        
-        # 恢复提交者下拉框的样式和占位文字
-        self.author_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_ACTIVE())
-        self.author_combo.lineEdit().setPlaceholderText("全部提交者")
+
+        self._set_combo_visual_state(self.author_combo, active=True)
+        self._set_combo_placeholder(self.author_combo, "全部提交者")
         
         # 提交者查询完成后，启用所有控件
         self.author_combo.setEnabled(True)
@@ -791,10 +884,9 @@ class GitLabLogPage(BasePage):
         self.show_warning(f"获取提交者失败: {error}")
         self.author_combo.clear()
         self.author_combo.setCurrentIndex(-1)
-        
-        # 即使失败也恢复样式和占位文字
-        self.author_combo.lineEdit().setStyleSheet(StyleManager.get_COMBO_LINE_EDIT_ACTIVE())
-        self.author_combo.lineEdit().setPlaceholderText("全部提交者")
+
+        self._set_combo_visual_state(self.author_combo, active=True)
+        self._set_combo_placeholder(self.author_combo, "全部提交者")
         
         # 即使失败也启用所有控件
         self.author_combo.setEnabled(True)
@@ -1102,6 +1194,7 @@ class GitLabLogPage(BasePage):
 
     def show_search_bar(self):
         """显示结果搜索栏"""
+        self.search_card.setVisible(True)
         self.search_bar.setVisible(True)
         self._update_result_area_height()
         self.search_input.setFocus(Qt.ShortcutFocusReason)
@@ -1110,6 +1203,7 @@ class GitLabLogPage(BasePage):
     def hide_search_bar(self):
         """隐藏结果搜索栏"""
         self.search_bar.setVisible(False)
+        self.search_card.setVisible(False)
         self.search_input.clear()
         self.last_search_keyword = ""
         self.result_text.setExtraSelections([])
@@ -1359,18 +1453,19 @@ class GitLabLogPage(BasePage):
         self.thread_mgr.stop_all(wait_ms=300, force=True)
 
     def refresh_theme(self):
-        """主题切换时刷新 ComboBox lineEdit 样式"""
-        inactive = StyleManager.get_COMBO_LINE_EDIT_INACTIVE()
-        active = StyleManager.get_COMBO_LINE_EDIT_ACTIVE()
-        if hasattr(self, 'project_combo') and self.project_combo.lineEdit():
-            style = active if self.is_connected else inactive
-            self.project_combo.lineEdit().setStyleSheet(style)
-        if hasattr(self, 'author_combo') and self.author_combo.lineEdit():
-            style = active if self.is_connected else inactive
-            self.author_combo.lineEdit().setStyleSheet(style)
-        if hasattr(self, 'branch_combo') and self.branch_combo.lineEdit():
-            style = active if self.is_connected else inactive
-            self.branch_combo.lineEdit().setStyleSheet(style)
-        if hasattr(self, 'result_text'):
+        """主题切换时刷新回退模式的输入样式。"""
+        for label in self._card_title_labels:
+            self._apply_card_title_style(label)
+        for card in self._cards:
+            self._apply_card_style(card)
+        self._lock_static_group_heights()
+        if hasattr(self, 'project_combo'):
+            self._set_combo_visual_state(self.project_combo, active=self.is_connected)
+        if hasattr(self, 'author_combo'):
+            self._set_combo_visual_state(self.author_combo, active=self.is_connected)
+        if hasattr(self, 'branch_combo'):
+            self._set_combo_visual_state(self.branch_combo, active=self.is_connected)
+        if hasattr(self, 'result_text') and not QFLUENT_WIDGETS_AVAILABLE:
             self.result_text.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+        self._update_result_area_height()
 

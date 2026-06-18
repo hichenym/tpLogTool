@@ -5,12 +5,25 @@
 import os
 import ctypes
 from PyQt5.QtWidgets import (
-    QLabel, QTextEdit, QLineEdit, QDialog, QVBoxLayout, QHBoxLayout,
-    QPushButton, QCheckBox, QFrame, QMessageBox, QTabWidget, QWidget,
-    QScrollArea, QGroupBox
+    QLabel, QDialog, QVBoxLayout, QHBoxLayout,
+    QFrame, QMessageBox, QWidget, QStackedWidget
 )
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
 from PyQt5.QtGui import QCursor, QIcon
+from query_tool.ui import (
+    BodyLabel,
+    CheckBox,
+    ElevatedCardWidget,
+    LineEdit as FluentLineEdit,
+    PasswordLineEdit,
+    Pivot,
+    PlainTextEdit as FluentPlainTextEdit,
+    PrimaryPushButton,
+    PushButton,
+    QFLUENT_WIDGETS_AVAILABLE,
+    ScrollArea,
+    StrongBodyLabel,
+)
 from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.utils.config import (
     get_account_config, save_account_config,
@@ -19,7 +32,7 @@ from query_tool.utils.config import (
 )
 from query_tool.utils.device_query import DeviceQuery
 from query_tool.utils.style_manager import StyleManager
-from query_tool.utils.theme_manager import t
+from query_tool.utils.theme_manager import t, theme_manager
 
 
 def set_title_bar_theme(window, dark: bool = True):
@@ -45,6 +58,13 @@ def set_dark_title_bar(window):
     set_title_bar_theme(window, dark=theme_manager.is_dark)
 
 
+def _exec_dialog(dialog):
+    exec_method = getattr(dialog, "exec", None)
+    if callable(exec_method):
+        return exec_method()
+    return dialog.exec_()
+
+
 def show_message_box(parent, icon, title, text):
     """
     显示带深色标题栏的消息框
@@ -55,16 +75,21 @@ def show_message_box(parent, icon, title, text):
         title: 标题
         text: 消息内容
     """
-    msg_box = QMessageBox(parent)
-    msg_box.setIcon(icon)
-    msg_box.setWindowTitle(title)
-    msg_box.setText(text)
-    msg_box.setStandardButtons(QMessageBox.Ok)
-    
-    # 延迟设置深色标题栏
-    QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-    
-    msg_box.exec_()
+    try:
+        from qfluentwidgets import MessageBox
+
+        msg_box = MessageBox(title, text, parent)
+        msg_box.cancelButton.hide()
+        msg_box.yesButton.setText("确定")
+        return _exec_dialog(msg_box)
+    except Exception:
+        msg_box = QMessageBox(parent)
+        msg_box.setIcon(icon)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(text)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
+        return msg_box.exec_()
 
 
 def show_question_box(parent, title, text):
@@ -79,17 +104,22 @@ def show_question_box(parent, title, text):
     Returns:
         QMessageBox.Yes 或 QMessageBox.No
     """
-    msg_box = QMessageBox(parent)
-    msg_box.setIcon(QMessageBox.Question)
-    msg_box.setWindowTitle(title)
-    msg_box.setText(text)
-    msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-    msg_box.setDefaultButton(QMessageBox.Yes)
-    
-    # 延迟设置深色标题栏
-    QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-    
-    return msg_box.exec_()
+    try:
+        from qfluentwidgets import MessageBox
+
+        msg_box = MessageBox(title, text, parent)
+        msg_box.yesButton.setText("确定")
+        msg_box.cancelButton.setText("取消")
+        return QMessageBox.Yes if _exec_dialog(msg_box) == QDialog.Accepted else QMessageBox.No
+    except Exception:
+        msg_box = QMessageBox(parent)
+        msg_box.setIcon(QMessageBox.Question)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(text)
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.Yes)
+        QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
+        return msg_box.exec_()
 
 
 def prompt_configure_account(parent, title, text, initial_tab=0):
@@ -105,35 +135,11 @@ def prompt_configure_account(parent, title, text, initial_tab=0):
     Returns:
         bool: 是否已打开设置对话框
     """
-    msg_box = QMessageBox(parent)
-    msg_box.setWindowTitle(title)
-    msg_box.setText(text)
-    msg_box.setIcon(QMessageBox.Question)
-    msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-    msg_box.setDefaultButton(QMessageBox.No)
-
-    yes_btn = msg_box.button(QMessageBox.Yes)
-    no_btn = msg_box.button(QMessageBox.No)
-
-    if yes_btn:
-        yes_btn.setText("")
-        yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-        yes_btn.setIconSize(QSize(20, 20))
-        yes_btn.setFixedSize(60, 32)
-
-    if no_btn:
-        no_btn.setText("")
-        no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-        no_btn.setIconSize(QSize(20, 20))
-        no_btn.setFixedSize(60, 32)
-
-    QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-
-    if msg_box.exec_() != QMessageBox.Yes:
+    if show_question_box(parent, title, text) != QMessageBox.Yes:
         return False
 
     dialog = SettingsDialog(parent, initial_tab=initial_tab)
-    dialog.exec_()
+    _exec_dialog(dialog)
     return True
 
 
@@ -242,7 +248,7 @@ class UpdateCheckSignals(QWidget):
     update_check_result = pyqtSignal(bool, object, str)  # (has_update, version_info, message)
 
 
-class PlainTextEdit(QTextEdit):
+class PlainTextEdit(FluentPlainTextEdit):
     """纯文本输入框，粘贴时自动清除格式"""
     def insertFromMimeData(self, source):
         """重写粘贴方法，只插入纯文本"""
@@ -252,7 +258,7 @@ class PlainTextEdit(QTextEdit):
             super().insertFromMimeData(source)
 
 
-class ClickableLineEdit(QLineEdit):
+class ClickableLineEdit(FluentLineEdit):
     """可双击打开目录的输入框"""
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -273,17 +279,22 @@ class ClickableLineEdit(QLineEdit):
 
 class SettingsDialog(AdaptiveDialog):
     """设置对话框"""
+    TAB_KEYS = ("account", "log", "about")
+
     def __init__(self, parent=None, initial_tab=0):
         super().__init__(parent)
         self.setWindowTitle("设置")
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        theme_manager.theme_changed.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme)
         
         # 保存父窗口引用，用于显示消息
         self.main_window = parent
         
         # 保存初始标签页索引
         self.initial_tab = initial_tab
-        
+        self._tab_index_by_key = {}
+
         # 创建信号发射器
         self.update_signals = UpdateCheckSignals()
         self.update_signals.update_check_result.connect(self._on_update_check_result)
@@ -303,17 +314,70 @@ class SettingsDialog(AdaptiveDialog):
         self.enable_file_log = get_log_config()
         
         self.init_ui()
+
+    def _disconnect_theme(self):
+        try:
+            theme_manager.theme_changed.disconnect(self.refresh_theme)
+        except Exception:
+            pass
+
+    def _apply_secondary_button_style(self, button):
+        if button is not None and hasattr(button, "setStyleSheet") and not QFLUENT_WIDGETS_AVAILABLE:
+            button.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+
+    @staticmethod
+    def _apply_card_title_style(label):
+        label.setStyleSheet(f"color: {t('text_primary')}; border: none;")
+
+    def _apply_card_style(self, card):
+        if QFLUENT_WIDGETS_AVAILABLE:
+            card.setStyleSheet("")
+            return
+
+        selector = f"#{card.objectName()}" if card.objectName() else "QFrame"
+        card.setStyleSheet(
+            f"""
+            {selector} {{
+                border: 1px solid {t('border')};
+                border-radius: 6px;
+                background-color: transparent;
+            }}
+            """
+        )
+
+    @staticmethod
+    def _apply_scroll_area_style(scroll_area):
+        scroll_area.setStyleSheet(StyleManager.get_SCROLL_AREA())
+
+    def refresh_theme(self):
+        if hasattr(self, "_card_title_labels"):
+            for label in self._card_title_labels:
+                self._apply_card_title_style(label)
+        if hasattr(self, "_cards"):
+            for card in self._cards:
+                self._apply_card_style(card)
+        if hasattr(self, "_secondary_buttons"):
+            for button in self._secondary_buttons:
+                self._apply_secondary_button_style(button)
+        if hasattr(self, "_scroll_areas"):
+            for scroll_area in self._scroll_areas:
+                self._apply_scroll_area_style(scroll_area)
+        if hasattr(self, "current_version_label"):
+            self.current_version_label.setStyleSheet(f"color: {t('text_primary')};")
+        set_dark_title_bar(self)
     
     def showEvent(self, event):
         """对话框显示时设置深色标题栏"""
         super().showEvent(event)
         set_dark_title_bar(self)
-        
-        # 设置初始标签页
-        if hasattr(self, 'tab_widget') and hasattr(self, 'initial_tab'):
-            self.tab_widget.setCurrentIndex(self.initial_tab)
+        self.set_current_tab_by_index(self.initial_tab)
         
     def init_ui(self):
+        self._cards = []
+        self._card_title_labels = []
+        self._secondary_buttons = []
+        self._scroll_areas = []
+
         layout = self.init_dialog_layout(
             (500, 480),
             min_size=(420, 340),
@@ -321,23 +385,14 @@ class SettingsDialog(AdaptiveDialog):
             spacing=10,
         )
         
-        # 创建标签页
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet(StyleManager.get_TAB_WIDGET())
-        
-        # 账号配置标签页
-        account_tab = self.create_account_tab()
-        self.tab_widget.addTab(account_tab, "账号配置")
-        
-        # 日志配置标签页
-        log_tab = self.create_log_tab()
-        self.tab_widget.addTab(log_tab, "日志配置")
-        
-        # 关于/更新标签页
-        about_tab = self.create_about_tab()
-        self.tab_widget.addTab(about_tab, "关于")
-        
-        layout.addWidget(self.tab_widget)
+        self.tab_pivot = Pivot()
+        self.tab_stack = QStackedWidget()
+        self._register_tab("account", "账号配置", self.create_account_tab())
+        self._register_tab("log", "日志配置", self.create_log_tab())
+        self._register_tab("about", "关于", self.create_about_tab())
+        layout.addWidget(self.tab_pivot)
+        layout.addWidget(self.tab_stack, 1)
+        self.set_current_tab_by_index(self.initial_tab)
         
         # 分隔线
         line = QFrame()
@@ -349,21 +404,40 @@ class SettingsDialog(AdaptiveDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        self.save_btn = QPushButton()
+        self.save_btn = PrimaryPushButton("保存")
         self.save_btn.setIcon(QIcon(":/icons/common/ok.png"))
         self.save_btn.setIconSize(QSize(18, 18))
-        self.save_btn.setFixedSize(60, 32)
+        self.save_btn.setMinimumWidth(96)
         self.save_btn.clicked.connect(self.on_save)
         
-        self.cancel_btn = QPushButton()
+        self.cancel_btn = PushButton("取消")
         self.cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
         self.cancel_btn.setIconSize(QSize(18, 18))
-        self.cancel_btn.setFixedSize(60, 32)
+        self.cancel_btn.setMinimumWidth(96)
         self.cancel_btn.clicked.connect(self.reject)
+        self._secondary_buttons.append(self.cancel_btn)
         
         button_layout.addWidget(self.save_btn)
         button_layout.addWidget(self.cancel_btn)
         layout.addLayout(button_layout)
+        self.refresh_theme()
+
+    def _register_tab(self, key: str, title: str, widget: QWidget):
+        self._tab_index_by_key[key] = self.tab_stack.count()
+        self.tab_stack.addWidget(widget)
+        self.tab_pivot.addItem(key, title, onClick=lambda *_args, route=key: self.set_current_tab(route))
+
+    def set_current_tab(self, key: str):
+        if key not in self._tab_index_by_key:
+            return
+        self.tab_pivot.setCurrentItem(key)
+        self.tab_stack.setCurrentIndex(self._tab_index_by_key[key])
+
+    def set_current_tab_by_index(self, index: int):
+        if not self.TAB_KEYS:
+            return
+        safe_index = max(0, min(int(index), len(self.TAB_KEYS) - 1))
+        self.set_current_tab(self.TAB_KEYS[safe_index])
     
     def create_account_tab(self):
         """创建账号配置标签页（包含运维、Seetong 和固件账号）"""
@@ -373,10 +447,11 @@ class SettingsDialog(AdaptiveDialog):
         tab_layout.setContentsMargins(0, 0, 0, 0)
         
         # 创建滚动区域
-        scroll_area = QScrollArea()
+        scroll_area = ScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
-        scroll_area.setStyleSheet(StyleManager.get_SCROLL_AREA())
+        self._scroll_areas.append(scroll_area)
+        self._apply_scroll_area_style(scroll_area)
         
         # 滚动内容容器
         scroll_content = QWidget()
@@ -419,18 +494,15 @@ class SettingsDialog(AdaptiveDialog):
     
     def create_account_group(self, title, username, password, account_type="device"):
         """创建账号配置组"""
-        group = QGroupBox(title)
-        group.setStyleSheet(StyleManager.get_GROUP_BOX())
-        
-        group_layout = QVBoxLayout(group)
+        group, group_layout = self._create_card_section(title)
         group_layout.setSpacing(12)
         group_layout.setContentsMargins(15, 15, 15, 15)
         
         # 账号输入
         username_layout = QHBoxLayout()
-        username_label = QLabel("账号：")
+        username_label = BodyLabel("账号：")
         username_label.setFixedWidth(60)
-        username_input = QLineEdit()
+        username_input = FluentLineEdit()
         username_input.setText(username)
         username_input.setPlaceholderText("请输入账号...")
         username_layout.addWidget(username_label)
@@ -439,12 +511,11 @@ class SettingsDialog(AdaptiveDialog):
         
         # 密码输入
         password_layout = QHBoxLayout()
-        password_label = QLabel("密码：")
+        password_label = BodyLabel("密码：")
         password_label.setFixedWidth(60)
-        password_input = QLineEdit()
+        password_input = PasswordLineEdit()
         password_input.setText(password)
         password_input.setPlaceholderText("请输入密码...")
-        password_input.setEchoMode(QLineEdit.Password)
         password_layout.addWidget(password_label)
         password_layout.addWidget(password_input)
         group_layout.addLayout(password_layout)
@@ -453,7 +524,7 @@ class SettingsDialog(AdaptiveDialog):
         action_layout = QHBoxLayout()
         
         # 显示密码复选框
-        show_password_checkbox = QCheckBox("显示密码")
+        show_password_checkbox = CheckBox("显示密码")
         show_password_checkbox.stateChanged.connect(
             lambda state: self.on_show_password_changed(state, password_input)
         )
@@ -462,11 +533,13 @@ class SettingsDialog(AdaptiveDialog):
         action_layout.addStretch()
         
         # 验证按钮
-        test_btn = QPushButton("验证")
-        test_btn.setFixedSize(90, 28)
+        test_btn = PushButton("验证")
+        test_btn.setMinimumWidth(96)
         test_btn.clicked.connect(
             lambda: self.on_test_account_connection(username_input, password_input, account_type, test_btn)
         )
+        self._secondary_buttons.append(test_btn)
+        self._apply_secondary_button_style(test_btn)
         action_layout.addWidget(test_btn)
         
         group_layout.addLayout(action_layout)
@@ -492,10 +565,12 @@ class SettingsDialog(AdaptiveDialog):
         tab_layout.setContentsMargins(15, 15, 15, 10)
         
         # 文件日志复选框
-        self.file_log_checkbox = QCheckBox("记录调试信息")
+        card, card_layout = self._create_card_section("日志配置")
+        self.file_log_checkbox = CheckBox("记录调试信息")
         self.file_log_checkbox.setChecked(self.enable_file_log)
         self.file_log_checkbox.stateChanged.connect(self.on_file_log_changed)
-        tab_layout.addWidget(self.file_log_checkbox)
+        card_layout.addWidget(self.file_log_checkbox)
+        tab_layout.addWidget(card)
         
         tab_layout.addStretch()
         
@@ -512,10 +587,7 @@ class SettingsDialog(AdaptiveDialog):
         tab_layout.setContentsMargins(15, 15, 15, 10)
 
         # 版本信息组
-        version_group = QGroupBox("版本信息")
-        version_group.setStyleSheet(StyleManager.get_GROUP_BOX())
-
-        version_layout = QVBoxLayout(version_group)
+        version_group, version_layout = self._create_card_section("版本信息")
         version_layout.setSpacing(8)
         version_layout.setContentsMargins(15, 15, 15, 15)
 
@@ -552,16 +624,13 @@ class SettingsDialog(AdaptiveDialog):
         # 只有当更新策略不是静默自动下载类时才显示更新检测组
         if force_show_check_update_btn or update_strategy_str not in ('silent', 'auto'):
             # 更新检测组
-            update_group = QGroupBox("更新检测")
-            update_group.setStyleSheet(StyleManager.get_GROUP_BOX())
-
-            update_layout = QVBoxLayout(update_group)
+            update_group, update_layout = self._create_card_section("更新检测")
             update_layout.setSpacing(12)
             update_layout.setContentsMargins(15, 15, 15, 15)
 
             # 检查更新按钮
-            self.check_update_btn_widget = QPushButton("检查更新")
-            self.check_update_btn_widget.setFixedSize(120, 32)
+            self.check_update_btn_widget = PrimaryPushButton("检查更新")
+            self.check_update_btn_widget.setMinimumWidth(120)
             self.check_update_btn_widget.clicked.connect(self.on_check_update)
             update_layout.addWidget(self.check_update_btn_widget)
 
@@ -725,9 +794,23 @@ class SettingsDialog(AdaptiveDialog):
     def on_show_password_changed(self, state, password_input):
         """显示/隐藏密码"""
         if state == Qt.Checked:
-            password_input.setEchoMode(QLineEdit.Normal)
+            password_input.setEchoMode(FluentLineEdit.Normal)
         else:
-            password_input.setEchoMode(QLineEdit.Password)
+            password_input.setEchoMode(FluentLineEdit.Password)
+
+    def _create_card_section(self, title: str):
+        card = ElevatedCardWidget(self)
+        card.setObjectName(f"settingsCard{len(self._cards)}")
+        self._cards.append(card)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 16, 16, 16)
+        card_layout.setSpacing(10)
+        title_label = StrongBodyLabel(title)
+        self._card_title_labels.append(title_label)
+        self._apply_card_title_style(title_label)
+        card_layout.addWidget(title_label)
+        self._apply_card_style(card)
+        return card, card_layout
     
     def on_test_account_connection(self, username_input, password_input, account_type, test_btn):
         """测试账号连接"""

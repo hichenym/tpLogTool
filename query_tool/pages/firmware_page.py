@@ -6,12 +6,18 @@ import sys
 import os
 from datetime import datetime
 from PyQt5.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QGroupBox, QLineEdit, QComboBox,
-    QFrame, QWidget, QMessageBox
+    QAction,
+    QApplication,
+    QHeaderView,
+    QMenu,
+    QMessageBox,
+    QSizePolicy,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QHBoxLayout,
 )
 from PyQt5.QtCore import Qt, QSize, QThread, pyqtSignal, QTimer
-from PyQt5.QtGui import QIcon, QColor
+from PyQt5.QtGui import QFontMetrics, QIcon, QColor
 
 # 添加项目根目录到路径
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,19 +26,31 @@ if project_root not in sys.path:
 
 from .base_page import BasePage
 from .page_registry import register_page
-from query_tool.utils import ButtonManager, ThreadManager, StyleManager, config_manager, get_account_config
+from query_tool.ui import (
+    Action,
+    BodyLabel,
+    ComboBox,
+    ElevatedCardWidget,
+    LineEdit,
+    PrimaryPushButton,
+    PushButton,
+    QFLUENT_WIDGETS_AVAILABLE,
+    RoundMenu,
+    StrongBodyLabel,
+    TableWidget,
+)
+from query_tool.utils import ButtonManager, ThreadManager, StyleManager, get_account_config
 from query_tool.utils.theme_manager import t
-from query_tool.widgets.custom_widgets import set_dark_title_bar
-from query_tool.widgets import EditFirmwareDialog
+from query_tool.widgets import EditFirmwareDialog, prompt_configure_account, show_question_box
 from query_tool.utils.logger import logger
 from query_tool.utils.runtime_credential_cache import get_shared_device_query
 from query_tool.widgets.batch_upgrade_dialog import BatchUpgradeThread
 
 # 导入固件列表获取函数
-from query_tool.utils.firmware_api import login, fetch_firmware_data, parse_firmware_data, delete_firmware, get_firmware_detail, update_firmware
+from query_tool.utils.firmware_api import login, fetch_firmware_data, delete_firmware, get_firmware_detail, update_firmware
 
 
-class NoWheelComboBox(QComboBox):
+class NoWheelComboBox(ComboBox):
     """禁用鼠标滚轮切换的下拉框"""
     def wheelEvent(self, event):
         """禁用鼠标滚轮事件"""
@@ -118,6 +136,72 @@ class FirmwarePage(BasePage):
         self.resize_timer = None
         
         self.init_ui()
+
+    def _create_card_section(self, title, vertical_policy=QSizePolicy.Fixed):
+        """创建统一样式的 Fluent 卡片区块。"""
+        card = ElevatedCardWidget(self)
+        card.setSizePolicy(QSizePolicy.Expanding, vertical_policy)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        layout.addWidget(StrongBodyLabel(title))
+        return card, layout
+
+    @staticmethod
+    def _label(text):
+        label = BodyLabel(text)
+        label.setFixedWidth(70)
+        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        label.setStyleSheet("border: none;")
+        return label
+
+    def _control_height(self, extra_padding: int = 12, minimum: int = 32) -> int:
+        metrics = QFontMetrics(self.font())
+        return max(minimum, metrics.height() + extra_padding)
+
+    @staticmethod
+    def _table_item(text, alignment, color=""):
+        item = QTableWidgetItem(str(text or ""))
+        item.setTextAlignment(alignment)
+        if color:
+            item.setData(Qt.ForegroundRole, QColor(color))
+        return item
+
+    def _ensure_firmware_account_configured(self):
+        """确保固件账号已配置，否则提示打开设置。"""
+        from query_tool.utils.config import get_firmware_account_config
+
+        firmware_username, firmware_password = get_firmware_account_config()
+        if firmware_username and firmware_password:
+            return True
+
+        prompt_configure_account(
+            self.window() or self,
+            "需要配置固件账号",
+            "检测到固件账号未配置，是否现在配置？",
+            initial_tab=0,
+        )
+        return False
+
+    def _create_menu_action(self, text, icon_path, handler):
+        """创建兼容 Fluent/Qt 的菜单动作。"""
+        if QFLUENT_WIDGETS_AVAILABLE and Action is not None:
+            action = Action(QIcon(icon_path), text, self)
+        else:
+            action = QAction(QIcon(icon_path), text, self)
+        action.triggered.connect(handler)
+        return action
+
+    def _show_menu(self, menu, global_pos):
+        """显示兼容菜单。"""
+        exec_method = getattr(menu, "exec", None)
+        if callable(exec_method):
+            exec_method(global_pos)
+            return
+
+        exec_method = getattr(menu, "exec_", None)
+        if callable(exec_method):
+            exec_method(global_pos)
     
     def init_ui(self):
         """初始化UI"""
@@ -131,7 +215,7 @@ class FirmwarePage(BasePage):
         
         # 结果区
         result_group = self.create_result_group()
-        page_layout.addWidget(result_group)
+        page_layout.addWidget(result_group, 1)
         
         # 创建按钮组（包含新增、查询和重置按钮，翻页按钮单独管理）
         self.main_buttons = self.btn_manager.create_group("main")
@@ -141,10 +225,9 @@ class FirmwarePage(BasePage):
     
     def create_query_group(self):
         """创建管理分组"""
-        group = QGroupBox("管理")
-        group_layout = QVBoxLayout(group)
-        group_layout.setContentsMargins(10, 15, 10, 10)
-        group_layout.setSpacing(8)
+        group, group_layout = self._create_card_section("管理")
+        group_layout.setSpacing(12)
+        control_height = self._control_height()
         
         # 创建水平布局，包含新增按钮和查询框
         top_layout = QHBoxLayout()
@@ -152,48 +235,34 @@ class FirmwarePage(BasePage):
         top_layout.setSpacing(10)
         
         # 新增固件按钮（放在方框外面左边）
-        self.add_firmware_btn = QPushButton("新增固件")
+        self.add_firmware_btn = PushButton("新增固件")
         self.add_firmware_btn.setIcon(QIcon(":/icons/common/add.png"))
         self.add_firmware_btn.setIconSize(QSize(16, 16))
-        self.add_firmware_btn.setFixedHeight(44)  # 与查询框同高
-        self.add_firmware_btn.setStyleSheet("QPushButton { padding-left: 8px; padding-right: 8px; }")
+        self.add_firmware_btn.setMinimumWidth(108)
+        self.add_firmware_btn.setFixedHeight(control_height)
         self.add_firmware_btn.clicked.connect(self.on_add_firmware)
         
         top_layout.addWidget(self.add_firmware_btn)
-        
-        # 查询条件区（带边框）
-        query_frame = QFrame()
-        query_frame.setFrameShape(QFrame.StyledPanel)
-        query_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
-        self._query_frame = query_frame
-        query_frame.setFixedHeight(44)
-        query_layout = QHBoxLayout(query_frame)
-        query_layout.setContentsMargins(8, 8, 8, 8)
+
+        query_layout = QHBoxLayout()
+        query_layout.setContentsMargins(0, 0, 0, 0)
         query_layout.setSpacing(10)
         
         # 发布人员
-        publisher_label = QLabel("发布人员:")
-        publisher_label.setFixedWidth(70)
-        publisher_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        publisher_label.setStyleSheet("border: none;")
+        publisher_label = self._label("发布人员:")
         
         self.publisher_combo = NoWheelComboBox()
-        self.publisher_combo.setEditable(False)  # 禁止编辑，只能选择
         self.publisher_combo.setFocusPolicy(Qt.StrongFocus)
-        self.publisher_combo.setFixedHeight(28)
+        self.publisher_combo.setFixedHeight(control_height)
         self.publisher_combo.addItem("当前登录用户")
         self.publisher_combo.addItem("全部")
         
         # 审核状态
-        audit_label = QLabel("审核状态:")
-        audit_label.setFixedWidth(70)
-        audit_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        audit_label.setStyleSheet("border: none;")
+        audit_label = self._label("审核状态:")
         
         self.audit_combo = NoWheelComboBox()
-        self.audit_combo.setEditable(False)  # 禁止编辑，只能选择
         self.audit_combo.setFocusPolicy(Qt.StrongFocus)
-        self.audit_combo.setFixedHeight(28)
+        self.audit_combo.setFixedHeight(control_height)
         self.audit_combo.addItem("全部", "")  # 值为空字符串
         self.audit_combo.addItem("无需审核", "1")
         self.audit_combo.addItem("待审核", "2")
@@ -201,29 +270,26 @@ class FirmwarePage(BasePage):
         self.audit_combo.addItem("审核不通过", "4")
         
         # 固件标识
-        identifier_label = QLabel("固件标识:")
-        identifier_label.setFixedWidth(70)
-        identifier_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        identifier_label.setStyleSheet("border: none;")
+        identifier_label = self._label("固件标识:")
         
-        self.identifier_input = QLineEdit()
+        self.identifier_input = LineEdit()
         self.identifier_input.setPlaceholderText("输入固件标识（可为空）...")
-        self.identifier_input.setFixedHeight(28)
+        self.identifier_input.setFixedHeight(control_height)
         
         # 查询按钮
-        self.query_btn = QPushButton("查询")
+        self.query_btn = PrimaryPushButton("查询")
         self.query_btn.setIcon(QIcon(":/icons/common/search.png"))
         self.query_btn.setIconSize(QSize(16, 16))
-        self.query_btn.setFixedHeight(28)
-        self.query_btn.setStyleSheet("QPushButton { padding-left: 8px; padding-right: 8px; }")
+        self.query_btn.setMinimumWidth(96)
+        self.query_btn.setFixedHeight(control_height)
         self.query_btn.clicked.connect(self.on_query)
         
         # 重置按钮
-        self.reset_btn = QPushButton("重置")
+        self.reset_btn = PushButton("重置")
         self.reset_btn.setIcon(QIcon(":/icons/common/clean.png"))
         self.reset_btn.setIconSize(QSize(16, 16))
-        self.reset_btn.setFixedHeight(28)
-        self.reset_btn.setStyleSheet("QPushButton { padding-left: 8px; padding-right: 8px; }")
+        self.reset_btn.setMinimumWidth(96)
+        self.reset_btn.setFixedHeight(control_height)
         self.reset_btn.clicked.connect(self.on_reset)
         
         query_layout.addWidget(publisher_label)
@@ -239,7 +305,7 @@ class FirmwarePage(BasePage):
         query_layout.addSpacing(5)
         query_layout.addWidget(self.reset_btn)
         
-        top_layout.addWidget(query_frame, 1)  # 添加伸展因子，让查询框占据剩余空间
+        top_layout.addLayout(query_layout, 1)
         
         group_layout.addLayout(top_layout)
         
@@ -247,24 +313,24 @@ class FirmwarePage(BasePage):
     
     def create_result_group(self):
         """创建结果分组"""
-        group = QGroupBox("结果")
-        group_layout = QVBoxLayout(group)
-        group_layout.setContentsMargins(10, 15, 10, 10)
-        group_layout.setSpacing(8)
+        group, group_layout = self._create_card_section("结果", QSizePolicy.Expanding)
+        group_layout.setSpacing(12)
+        label_height = max(24, self._control_height(extra_padding=8, minimum=24))
         
         # 结果表格
-        self.result_table = QTableWidget()
+        self.result_table = TableWidget()
         self.result_table.setColumnCount(6)
         self.result_table.setHorizontalHeaderLabels(
             ["固件标识", "审核结果", "开始时间", "结束时间", "发布人员", "发布备注"]
         )
         self.result_table.setFocusPolicy(Qt.StrongFocus)
-        self.result_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)  # 整行高亮
-        self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.result_table.setSelectionMode(TableWidget.SingleSelection)
+        self.result_table.setSelectionBehavior(TableWidget.SelectRows)  # 整行高亮
+        self.result_table.setEditTriggers(TableWidget.NoEditTriggers)
         self.result_table.setShowGrid(True)
-        self.result_table.setFrameShape(QTableWidget.NoFrame)
-        StyleManager.apply_to_widget(self.result_table, "TABLE")
+        self.result_table.setFrameShape(TableWidget.NoFrame)
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            StyleManager.apply_to_widget(self.result_table, "TABLE")
         
         # 启用右键菜单
         self.result_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -314,31 +380,29 @@ class FirmwarePage(BasePage):
         
         # 翻页控件布局
         pagination_layout = QHBoxLayout()
-        pagination_layout.setContentsMargins(0, 3, 0, 0)
-        pagination_layout.setSpacing(3)
+        pagination_layout.setContentsMargins(0, 2, 0, 0)
+        pagination_layout.setSpacing(6)
         
         # 上一页按钮
-        self.prev_btn = QPushButton()
+        self.prev_btn = PushButton()
         self.prev_btn.setIcon(QIcon(":/icons/common/ssy.png"))
         self.prev_btn.setIconSize(QSize(18, 18))
-        self.prev_btn.setFixedSize(30, 22)
-        self.prev_btn.setStyleSheet("QPushButton { padding: 0px; }")
+        self.prev_btn.setFixedSize(36, 32)
         self.prev_btn.setEnabled(False)
         self.prev_btn.clicked.connect(self.on_prev_page)
         
         # 页码标签
-        self.page_label = QLabel("[0/0]")
+        self.page_label = BodyLabel("[0/0]")
         self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
-        self.page_label.setFixedHeight(22)
+        self.page_label.setMinimumHeight(label_height)
         self.page_label.setMinimumWidth(60)
         self.page_label.setAlignment(Qt.AlignCenter)
         
         # 下一页按钮
-        self.next_btn = QPushButton()
+        self.next_btn = PushButton()
         self.next_btn.setIcon(QIcon(":/icons/common/xyy.png"))
         self.next_btn.setIconSize(QSize(18, 18))
-        self.next_btn.setFixedSize(30, 22)
-        self.next_btn.setStyleSheet("QPushButton { padding: 0px; }")
+        self.next_btn.setFixedSize(36, 32)
         self.next_btn.setEnabled(False)
         self.next_btn.clicked.connect(self.on_next_page)
         
@@ -348,12 +412,12 @@ class FirmwarePage(BasePage):
         pagination_layout.addStretch()
         
         # 提示文本
-        tip_label = QLabel("提示: 双击单元格修改固件信息，右键表格展开更多操作")
-        tip_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
-        tip_label.setFixedHeight(22)
-        tip_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.tip_label = BodyLabel("提示: 双击单元格修改固件信息，右键表格展开更多操作")
+        self.tip_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
+        self.tip_label.setMinimumHeight(label_height)
+        self.tip_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
-        pagination_layout.addWidget(tip_label)
+        pagination_layout.addWidget(self.tip_label)
         
         group_layout.addWidget(self.result_table)
         group_layout.addLayout(pagination_layout)
@@ -457,43 +521,7 @@ class FirmwarePage(BasePage):
     
     def on_add_firmware(self):
         """新增固件按钮点击"""
-        # 检查固件账号是否配置
-        from query_tool.utils.config import get_firmware_account_config
-        firmware_username, firmware_password = get_firmware_account_config()
-        
-        if not firmware_username or not firmware_password:
-            # 显示提示对话框
-            from PyQt5.QtWidgets import QMessageBox
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('需要配置固件账号')
-            msg_box.setText('检测到固件账号未配置，是否现在配置？')
-            msg_box.setIcon(QMessageBox.Question)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            
-            # 自定义按钮图标
-            yes_btn = msg_box.button(QMessageBox.Yes)
-            no_btn = msg_box.button(QMessageBox.No)
-            
-            if yes_btn:
-                yes_btn.setText("")
-                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                yes_btn.setIconSize(QSize(20, 20))
-                yes_btn.setFixedSize(60, 32)
-            
-            if no_btn:
-                no_btn.setText("")
-                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                no_btn.setIconSize(QSize(20, 20))
-                no_btn.setFixedSize(60, 32)
-            # 延迟设置深色标题栏
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            
-            reply = msg_box.exec_()
-            
-            if reply == QMessageBox.Yes:
-                # 打开设置对话框
-                self.open_settings_dialog()
-            
+        if not self._ensure_firmware_account_configured():
             return
         
         self.show_progress("正在加载新增页面...")
@@ -697,43 +725,7 @@ class FirmwarePage(BasePage):
     
     def query_with_page(self, page):
         """带分页参数的查询"""
-        # 检查固件账号是否配置
-        from query_tool.utils.config import get_firmware_account_config
-        firmware_username, firmware_password = get_firmware_account_config()
-        
-        if not firmware_username or not firmware_password:
-            # 显示提示对话框
-            from PyQt5.QtWidgets import QMessageBox
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('需要配置固件账号')
-            msg_box.setText('检测到固件账号未配置，是否现在配置？')
-            msg_box.setIcon(QMessageBox.Question)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            
-            # 自定义按钮图标
-            yes_btn = msg_box.button(QMessageBox.Yes)
-            no_btn = msg_box.button(QMessageBox.No)
-            
-            if yes_btn:
-                yes_btn.setText("")
-                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                yes_btn.setIconSize(QSize(20, 20))
-                yes_btn.setFixedSize(60, 32)
-            
-            if no_btn:
-                no_btn.setText("")
-                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                no_btn.setIconSize(QSize(20, 20))
-                no_btn.setFixedSize(60, 32)
-            # 延迟设置深色标题栏
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            
-            reply = msg_box.exec_()
-            
-            if reply == QMessageBox.Yes:
-                # 打开设置对话框
-                self.open_settings_dialog()
-            
+        if not self._ensure_firmware_account_configured():
             return
         
         # 更新当前页码
@@ -831,9 +823,8 @@ class FirmwarePage(BasePage):
         """打开设置对话框"""
         from query_tool.widgets import SettingsDialog
         dialog = SettingsDialog(self.window())
-        # 切换到固件账号标签页
-        if hasattr(dialog, 'tab_widget'):
-            dialog.tab_widget.setCurrentIndex(1)  # 索引1是固件账号
+        if hasattr(dialog, 'set_current_tab_by_index'):
+            dialog.set_current_tab_by_index(0)
         dialog.exec_()
     
     def on_query_success(self, firmware_list, total_count, total_pages):
@@ -924,8 +915,7 @@ class FirmwarePage(BasePage):
             
             # 固件标识
             identifier = firmware.get('identifier', '')
-            item = QTableWidgetItem(identifier)
-            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            item = self._table_item(identifier, Qt.AlignLeft | Qt.AlignVCenter)
             # 将下载链接保存到item的data中，用于右键菜单
             download_url = firmware.get('download_url', '')
             item.setData(Qt.UserRole, download_url)
@@ -933,36 +923,25 @@ class FirmwarePage(BasePage):
             
             # 审核结果
             audit_result = firmware.get('audit_result', '未知')
-            item = QTableWidgetItem(audit_result)
-            item.setTextAlignment(Qt.AlignCenter)
-            # 根据审核结果设置颜色（使用 setData 保持颜色不受选中状态影响）
             audit_color = audit_result_color_map.get(audit_result, t('text_hint'))
-            item.setData(Qt.ForegroundRole, QColor(audit_color))
+            item = self._table_item(audit_result, Qt.AlignCenter, audit_color)
             self.result_table.setItem(row, 1, item)
             
             # 开始时间
             start_time = firmware.get('start_time', '')
-            item = QTableWidgetItem(start_time)
-            item.setTextAlignment(Qt.AlignCenter)
-            self.result_table.setItem(row, 2, item)
+            self.result_table.setItem(row, 2, self._table_item(start_time, Qt.AlignCenter))
             
             # 结束时间
             end_time = firmware.get('end_time', '')
-            item = QTableWidgetItem(end_time)
-            item.setTextAlignment(Qt.AlignCenter)
-            self.result_table.setItem(row, 3, item)
+            self.result_table.setItem(row, 3, self._table_item(end_time, Qt.AlignCenter))
             
             # 发布人员
             publisher = firmware.get('publisher', '')
-            item = QTableWidgetItem(publisher)
-            item.setTextAlignment(Qt.AlignCenter)
-            self.result_table.setItem(row, 4, item)
+            self.result_table.setItem(row, 4, self._table_item(publisher, Qt.AlignCenter))
             
             # 发布备注
             remark = firmware.get('remark', '')
-            item = QTableWidgetItem(remark)
-            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            self.result_table.setItem(row, 5, item)
+            self.result_table.setItem(row, 5, self._table_item(remark, Qt.AlignLeft | Qt.AlignVCenter))
         
         # 调整行高以适应内容
         self.result_table.resizeRowsToContents()
@@ -1003,8 +982,6 @@ class FirmwarePage(BasePage):
     
     def on_context_menu(self, pos):
         """显示右键菜单"""
-        from PyQt5.QtWidgets import QMenu, QAction, QApplication, QMessageBox
-        
         # 获取点击位置的单元格
         index = self.result_table.indexAt(pos)
         if not index.isValid():
@@ -1021,38 +998,18 @@ class FirmwarePage(BasePage):
         # 高亮当前行
         self.result_table.selectRow(row)
         
-        # 创建右键菜单
-        menu = QMenu(self.result_table)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                min-width: 120px;
-                background-color: {t('bg_mid')};
-                color: {t('text_primary')};
-                border: 1px solid {t('border')};
-                padding: 2px;
-            }}
-            QMenu::item {{
-                padding: 6px 30px 6px 6px;
-                margin: 1px 2px;
-                border-radius: 2px;
-            }}
-            QMenu::item:selected {{
-                background-color: {t('selection_bg')};
-                color: {t('text_primary')};
-            }}
-            QMenu::separator {{
-                height: 1px;
-                background-color: {t('border')};
-                margin: 3px 5px;
-            }}
-        """)
+        menu = RoundMenu(parent=self.result_table) if (QFLUENT_WIDGETS_AVAILABLE and RoundMenu is not None) else QMenu(self.result_table)
         
         # 基础操作：复制下载链接
         download_url = firmware.get('download_url', '')
         if download_url:
-            copy_url_action = QAction(QIcon(":/icons/common/link.png"), "复制下载链接", self)
-            copy_url_action.triggered.connect(lambda: self.copy_download_url_from_data(row))
-            menu.addAction(copy_url_action)
+            menu.addAction(
+                self._create_menu_action(
+                    "复制下载链接",
+                    ":/icons/common/link.png",
+                    lambda: self.copy_download_url_from_data(row),
+                )
+            )
         
         # 获取发布人员和当前登录用户
         publisher = firmware.get('publisher', '')
@@ -1076,18 +1033,26 @@ class FirmwarePage(BasePage):
         
         # 修改操作（仅当前用户的数据）
         if has_edit_permission:
-            edit_action = QAction(QIcon(":/icons/common/edit.png"), "修改固件信息", self)
-            edit_action.triggered.connect(lambda: self.edit_firmware(row))
-            menu.addAction(edit_action)
+            menu.addAction(
+                self._create_menu_action(
+                    "修改固件信息",
+                    ":/icons/common/edit.png",
+                    lambda: self.edit_firmware(row),
+                )
+            )
         
         # 删除操作
         if has_delete_permission:
-            delete_action = QAction(QIcon(":/icons/common/delete.png"), "删除固件", self)
-            delete_action.triggered.connect(lambda: self.delete_firmware(row))
-            menu.addAction(delete_action)
+            menu.addAction(
+                self._create_menu_action(
+                    "删除固件",
+                    ":/icons/common/delete.png",
+                    lambda: self.delete_firmware(row),
+                )
+            )
         
         # 显示菜单
-        menu.exec_(self.result_table.viewport().mapToGlobal(pos))
+        self._show_menu(menu, self.result_table.viewport().mapToGlobal(pos))
     
     def copy_download_url_from_data(self, row):
         """从数据中复制下载链接"""
@@ -1324,8 +1289,7 @@ class FirmwarePage(BasePage):
                 # 列0: 固件标识
                 identifier = updated_data.get('device_identify', '')
                 if identifier:
-                    item = QTableWidgetItem(identifier)
-                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                    item = self._table_item(identifier, Qt.AlignLeft | Qt.AlignVCenter)
                     # 保留下载链接
                     download_url = firmware.get('download_url', '')
                     item.setData(Qt.UserRole, download_url)
@@ -1335,33 +1299,25 @@ class FirmwarePage(BasePage):
                 # 列2: 开始时间
                 start_time = updated_data.get('start_time', '')
                 if start_time:
-                    item = QTableWidgetItem(start_time)
-                    item.setTextAlignment(Qt.AlignCenter)
-                    self.result_table.setItem(idx, 2, item)
+                    self.result_table.setItem(idx, 2, self._table_item(start_time, Qt.AlignCenter))
                     firmware['start_time'] = start_time
                 
                 # 列3: 结束时间
                 end_time = updated_data.get('end_time', '')
                 if end_time:
-                    item = QTableWidgetItem(end_time)
-                    item.setTextAlignment(Qt.AlignCenter)
-                    self.result_table.setItem(idx, 3, item)
+                    self.result_table.setItem(idx, 3, self._table_item(end_time, Qt.AlignCenter))
                     firmware['end_time'] = end_time
                 
                 # 列5: 发布备注
                 remark = updated_data.get('create_comment', '')
                 if remark is not None:  # 允许空字符串
-                    item = QTableWidgetItem(remark)
-                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                    self.result_table.setItem(idx, 5, item)
+                    self.result_table.setItem(idx, 5, self._table_item(remark, Qt.AlignLeft | Qt.AlignVCenter))
                     firmware['remark'] = remark
                 
                 break
     
     def delete_firmware(self, row):
         """删除固件"""
-        from PyQt5.QtWidgets import QMessageBox
-        
         if row >= len(self.filtered_list):
             return
         
@@ -1386,35 +1342,12 @@ class FirmwarePage(BasePage):
                 self.show_error(f"无权限删除：只能删除自己发布的固件（发布人员: {publisher}）")
                 return
         
-        # 创建自定义确认对话框
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle('确认删除')
-        msg_box.setText(f'确定要删除固件 "{identifier}" 吗？')
-        msg_box.setInformativeText('此操作不可恢复！')
-        msg_box.setIcon(QMessageBox.Warning)
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.No)
-        
-        # 自定义按钮图标和大小
-        yes_btn = msg_box.button(QMessageBox.Yes)
-        no_btn = msg_box.button(QMessageBox.No)
-        
-        if yes_btn:
-            yes_btn.setText("")
-            yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-            yes_btn.setIconSize(QSize(20, 20))
-            yes_btn.setFixedSize(60, 32)
-        
-        if no_btn:
-            no_btn.setText("")
-            no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-            no_btn.setIconSize(QSize(20, 20))
-            no_btn.setFixedSize(60, 32)
-        # 延迟设置深色标题栏
-        QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-        
-        reply = msg_box.exec_()
-        
+        reply = show_question_box(
+            self,
+            "确认删除",
+            f'确定要删除固件 "{identifier}" 吗？\n此操作不可恢复！',
+        )
+
         if reply == QMessageBox.Yes:
             # 执行删除
             self.show_progress(f"正在删除固件: {identifier}...")
@@ -1474,10 +1407,11 @@ class FirmwarePage(BasePage):
 
     def refresh_theme(self):
         """主题切换时刷新样式"""
-        from query_tool.utils import StyleManager
-        StyleManager.apply_to_widget(self.result_table, "TABLE")
-        if hasattr(self, '_query_frame'):
-            self._query_frame.setStyleSheet(StyleManager.get_QUERY_FRAME())
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            from query_tool.utils import StyleManager
+            StyleManager.apply_to_widget(self.result_table, "TABLE")
         if hasattr(self, 'page_label'):
             self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
+        if hasattr(self, 'tip_label'):
+            self.tip_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
 

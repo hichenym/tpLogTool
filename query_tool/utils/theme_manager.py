@@ -103,25 +103,37 @@ class ThemeManager(QObject):
         """获取当前主题的颜色 token"""
         return self._tokens.get(key, "")
 
+    def initialize(self, theme: str, lazy: bool = True):
+        """启动时应用已保存主题，不触发页面级刷新。"""
+        self._apply_theme(theme != "light", emit_signal=False, lazy=lazy)
+
     def set_dark(self):
-        if self._is_dark:
-            return
-        self._is_dark = True
-        self._tokens = DARK_THEME.copy()
-        self.theme_changed.emit()
+        self._apply_theme(True)
 
     def set_light(self):
-        if not self._is_dark:
-            return
-        self._is_dark = False
-        self._tokens = LIGHT_THEME.copy()
-        self.theme_changed.emit()
+        self._apply_theme(False)
 
     def toggle(self):
         if self._is_dark:
             self.set_light()
         else:
             self.set_dark()
+
+    def _apply_theme(self, is_dark: bool, emit_signal: bool = True, lazy: bool = False):
+        changed = self._is_dark != is_dark
+        self._is_dark = is_dark
+        self._tokens = DARK_THEME.copy() if is_dark else LIGHT_THEME.copy()
+        self._sync_fluent_theme(lazy=lazy)
+        if changed and emit_signal:
+            self.theme_changed.emit()
+
+    def _sync_fluent_theme(self, lazy: bool = False):
+        try:
+            from query_tool.ui import apply_fluent_theme
+
+            apply_fluent_theme(self._is_dark, lazy=lazy)
+        except Exception:
+            pass
 
 
 # ── 全局单例和快捷函数 ────────────────────────

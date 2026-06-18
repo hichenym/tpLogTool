@@ -2,8 +2,20 @@ import json
 import unittest
 from unittest import mock
 
-from query_tool.pages.log_page import LogPage
 from query_tool.utils.config import AppConfig, ConfigManager
+from tests.test_fluent_widget_smokes import PAGES_DIR, _isolated_page_env, _load_module
+
+
+def _load_log_page_class():
+    with _isolated_page_env():
+        module = _load_module(
+            "query_tool.pages._log_page_command_config_test",
+            PAGES_DIR / "log_page.py",
+        )
+        return module.LogPage
+
+
+LogPage = _load_log_page_class()
 
 
 class LogPageCommandConfigTests(unittest.TestCase):

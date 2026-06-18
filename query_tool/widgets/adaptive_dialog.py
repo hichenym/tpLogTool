@@ -1,7 +1,8 @@
 from PyQt5.QtCore import QSize, Qt, QTimer
 from PyQt5.QtGui import QCursor
-from PyQt5.QtWidgets import QApplication, QDialog, QFrame, QScrollArea, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QApplication, QDialog, QFrame, QVBoxLayout, QWidget
 
+from query_tool.ui import ScrollArea
 from query_tool.utils import StyleManager
 
 
@@ -50,7 +51,7 @@ class AdaptiveDialog(QDialog):
             root_layout.setContentsMargins(0, 0, 0, 0)
             root_layout.setSpacing(0)
 
-            scroll_area = QScrollArea(self)
+            scroll_area = ScrollArea(self)
             scroll_area.setWidgetResizable(True)
             scroll_area.setFrameShape(QFrame.NoFrame)
             scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)

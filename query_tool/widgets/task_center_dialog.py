@@ -5,13 +5,7 @@ import os
 from PyQt5.QtCore import Qt, QTimer, QSize
 from PyQt5.QtGui import QColor, QIcon
 from PyQt5.QtWidgets import (
-    QCheckBox,
-    QDialog,
-    QGroupBox,
     QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -20,7 +14,15 @@ from PyQt5.QtWidgets import (
 
 from .adaptive_dialog import AdaptiveDialog
 from .custom_widgets import set_dark_title_bar
-from query_tool.utils import StyleManager
+from query_tool.ui import (
+    BodyLabel,
+    CheckBox,
+    ElevatedCardWidget,
+    PushButton,
+    QFLUENT_WIDGETS_AVAILABLE,
+    SubtitleLabel,
+    TableWidget,
+)
 from query_tool.utils.task_center import (
     TASK_STATUS_CANCELED,
     TASK_STATUS_COMPLETED,
@@ -36,7 +38,8 @@ from query_tool.utils.task_center import (
     reset_task_for_execute,
     start_task_process,
 )
-from query_tool.utils.theme_manager import t
+from query_tool.utils import StyleManager
+from query_tool.utils.theme_manager import t, theme_manager
 
 
 class TaskCenterDialog(AdaptiveDialog):
@@ -60,6 +63,8 @@ class TaskCenterDialog(AdaptiveDialog):
         }
         self.setWindowTitle("后台任务")
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        theme_manager.theme_changed.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme)
         self.init_ui()
         self.refresh_tasks()
         self._refresh_timer.start(1000)
@@ -73,6 +78,76 @@ class TaskCenterDialog(AdaptiveDialog):
         self._refresh_timer.stop()
         super().closeEvent(event)
 
+    def _disconnect_theme(self):
+        try:
+            theme_manager.theme_changed.disconnect(self.refresh_theme)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _apply_dialog_title_style(label):
+        label.setStyleSheet(f"color: {t('status_info')}; border: none;")
+
+    @staticmethod
+    def _apply_summary_style(label):
+        label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px; border: none;")
+
+    @staticmethod
+    def _apply_card_title_style(label):
+        label.setStyleSheet(f"color: {t('text_primary')}; font-weight: 600; border: none;")
+
+    def _apply_secondary_button_style(self, button):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            button.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+
+    def _apply_card_style(self, card):
+        if QFLUENT_WIDGETS_AVAILABLE:
+            card.setStyleSheet("")
+            return
+        card.setStyleSheet(
+            f"""
+            #taskCenterCard {{
+                border: 1px solid {t('border')};
+                border-radius: 6px;
+                background-color: transparent;
+            }}
+            """
+        )
+
+    def _apply_table_style(self):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            StyleManager.apply_to_widget(self.task_table, "TABLE")
+
+    @staticmethod
+    def _apply_transparent_container_style(widget):
+        widget.setAttribute(Qt.WA_StyledBackground, True)
+        widget.setStyleSheet("background-color: transparent; border: none;")
+
+    def _create_checkbox_cell_widget(self, checkbox):
+        checkbox_widget = QWidget()
+        self._apply_transparent_container_style(checkbox_widget)
+        checkbox_layout = QHBoxLayout(checkbox_widget)
+        checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        checkbox_layout.setAlignment(Qt.AlignCenter)
+        checkbox_layout.addWidget(checkbox)
+        return checkbox_widget
+
+    def refresh_theme(self):
+        self._apply_dialog_title_style(self.title_label)
+        self._apply_summary_style(self.summary_label)
+        self._apply_card_title_style(self.task_group_title)
+        self._apply_card_style(self.task_group)
+        self._apply_table_style()
+        for button in (
+            self.pause_btn,
+            self.continue_btn,
+            self.execute_btn,
+            self.cancel_btn,
+            self.delete_btn,
+        ):
+            self._apply_secondary_button_style(button)
+        set_dark_title_bar(self)
+
     def init_ui(self):
         layout = self.init_dialog_layout(
             (1040, 460),
@@ -82,18 +157,16 @@ class TaskCenterDialog(AdaptiveDialog):
         )
 
         header_layout = QHBoxLayout()
-        title = QLabel("后台任务列表")
-        title.setStyleSheet(f"color: {t('status_info')}; font-size: 14px; font-weight: bold;")
-        self.summary_label = QLabel("加载中...")
-        self.summary_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 12px; border: none;")
-        header_layout.addWidget(title)
+        self.title_label = SubtitleLabel("后台任务列表")
+        self.summary_label = BodyLabel("加载中...")
+        header_layout.addWidget(self.title_label)
         header_layout.addStretch()
         header_layout.addWidget(self.summary_label)
         layout.addLayout(header_layout)
 
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setSpacing(8)
-        self.select_all_checkbox = QCheckBox("全选")
+        self.select_all_checkbox = CheckBox("全选")
         self.select_all_checkbox.setTristate(False)
         self.select_all_checkbox.stateChanged.connect(self.on_select_all_changed)
 
@@ -112,24 +185,26 @@ class TaskCenterDialog(AdaptiveDialog):
         toolbar_layout.addStretch()
         layout.addLayout(toolbar_layout)
 
-        group = QGroupBox("任务信息")
-        group_layout = QVBoxLayout(group)
-        group_layout.setContentsMargins(12, 16, 12, 12)
-        group_layout.setSpacing(8)
+        self.task_group = ElevatedCardWidget(self)
+        self.task_group.setObjectName("taskCenterCard")
+        group_layout = QVBoxLayout(self.task_group)
+        group_layout.setContentsMargins(16, 16, 16, 16)
+        group_layout.setSpacing(10)
+        self.task_group_title = BodyLabel("任务信息")
+        group_layout.addWidget(self.task_group_title)
 
-        self.task_table = QTableWidget()
+        self.task_table = TableWidget()
         self.task_table.setColumnCount(7)
         self.task_table.setHorizontalHeaderLabels(
             ["选择", "任务名称", "开始时间", "状态", "进度", "结果目录", "执行详情"]
         )
-        self.task_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.task_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.task_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.task_table.setEditTriggers(TableWidget.NoEditTriggers)
+        self.task_table.setSelectionMode(TableWidget.SingleSelection)
+        self.task_table.setSelectionBehavior(TableWidget.SelectRows)
         self.task_table.setFocusPolicy(Qt.StrongFocus)
         self.task_table.setWordWrap(False)
         self.task_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.task_table.cellDoubleClicked.connect(self.on_cell_double_clicked)
-        StyleManager.apply_to_widget(self.task_table, "TABLE")
 
         header = self.task_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Fixed)
@@ -140,15 +215,17 @@ class TaskCenterDialog(AdaptiveDialog):
         self.task_table.setColumnWidth(0, 50)
         self.apply_column_widths()
         group_layout.addWidget(self.task_table)
-        layout.addWidget(group)
+        layout.addWidget(self.task_group)
         self.update_action_buttons()
+        self.refresh_theme()
 
     def _create_toolbar_button(self, text: str, icon_path: str, handler):
-        button = QPushButton(text)
+        button = PushButton(text)
         button.setIcon(QIcon(icon_path))
         button.setIconSize(QSize(16, 16))
-        button.setFixedSize(90, 28)
+        button.setMinimumWidth(96)
         button.clicked.connect(handler)
+        self._apply_secondary_button_style(button)
         return button
 
     def refresh_tasks(self):
@@ -167,16 +244,12 @@ class TaskCenterDialog(AdaptiveDialog):
 
             self.task_table.setVerticalHeaderItem(row, QTableWidgetItem(str(total - row)))
 
-            checkbox = QCheckBox()
+            checkbox = CheckBox()
             task_id = str(task.get("task_id", "")).strip()
             checkbox.setProperty("task_id", task_id)
             checkbox.setChecked(task_id in self._selected_task_ids)
             checkbox.stateChanged.connect(lambda state, current_task_id=task_id: self.on_task_checkbox_changed(current_task_id, state))
-            checkbox_widget = QWidget()
-            checkbox_layout = QHBoxLayout(checkbox_widget)
-            checkbox_layout.setContentsMargins(0, 0, 0, 0)
-            checkbox_layout.setAlignment(Qt.AlignCenter)
-            checkbox_layout.addWidget(checkbox)
+            checkbox_widget = self._create_checkbox_cell_widget(checkbox)
             self.task_table.setCellWidget(row, 0, checkbox_widget)
 
             progress_current = int(task.get("progress_current", 0) or 0)
@@ -295,7 +368,7 @@ class TaskCenterDialog(AdaptiveDialog):
         task_ids: list[str] = []
         for row in range(self.task_table.rowCount()):
             widget = self.task_table.cellWidget(row, 0)
-            checkbox = widget.findChild(QCheckBox) if widget is not None else None
+            checkbox = widget.findChild(CheckBox) if widget is not None else None
             if checkbox is None:
                 continue
             task_id = str(checkbox.property("task_id") or "").strip()
@@ -325,7 +398,7 @@ class TaskCenterDialog(AdaptiveDialog):
         visible_task_ids: list[str] = []
         for row in range(total):
             widget = self.task_table.cellWidget(row, 0)
-            checkbox = widget.findChild(QCheckBox) if widget is not None else None
+            checkbox = widget.findChild(CheckBox) if widget is not None else None
             if checkbox is None:
                 continue
             task_id = str(checkbox.property("task_id") or "").strip()
@@ -350,7 +423,7 @@ class TaskCenterDialog(AdaptiveDialog):
         visible_task_ids: list[str] = []
         for row in range(self.task_table.rowCount()):
             widget = self.task_table.cellWidget(row, 0)
-            checkbox = widget.findChild(QCheckBox) if widget is not None else None
+            checkbox = widget.findChild(CheckBox) if widget is not None else None
             if checkbox is None:
                 continue
             task_id = str(checkbox.property("task_id") or "").strip()

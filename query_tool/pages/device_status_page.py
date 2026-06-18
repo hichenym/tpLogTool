@@ -5,29 +5,50 @@
 import os
 from datetime import datetime
 from PyQt5.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QCheckBox, QSplitter, QFrame,
-    QFileDialog, QMessageBox, QWidget, QComboBox, QSizePolicy
+    QAction, QApplication, QAbstractItemView, QCheckBox, QFileDialog,
+    QFrame, QHeaderView, QHBoxLayout, QMenu, QSizePolicy,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
-from PyQt5.QtGui import QIcon, QColor
+from PyQt5.QtGui import QFontMetrics, QIcon, QColor
 
 from .base_page import BasePage
 from .page_registry import register_page
-from query_tool.utils import (
-    ButtonManager, MessageManager, ThreadManager, StyleManager, TableHelper,
-    get_account_config, DeviceQuery, check_device_online
+from query_tool.ui import (
+    Action,
+    BodyLabel,
+    CheckBox,
+    ComboBox,
+    EditableComboBox,
+    ElevatedCardWidget,
+    LineEdit,
+    PrimaryPushButton,
+    PushButton,
+    QFLUENT_WIDGETS_AVAILABLE,
+    RoundMenu,
+    TableWidget,
 )
-from query_tool.utils.theme_manager import t, theme_manager
+from query_tool.utils import (
+    ButtonManager, ThreadManager, StyleManager, TableHelper,
+    get_account_config, check_device_online
+)
+from query_tool.utils.theme_manager import t
 from query_tool.utils.runtime_credential_cache import get_shared_device_query
 from query_tool.utils.workers import QueryThread, WakeThread, PhoneQueryThread
-from query_tool.widgets import PlainTextEdit, ClickableLineEdit, show_question_box, prompt_configure_account
+from query_tool.widgets import PlainTextEdit, ClickableLineEdit, prompt_configure_account
 
 
-class NoWheelComboBox(QComboBox):
+class NoWheelComboBox(ComboBox):
     """禁用鼠标滚轮切换的下拉框"""
     def wheelEvent(self, event):
         """禁用鼠标滚轮事件"""
+        event.ignore()
+
+
+class NoWheelEditableComboBox(EditableComboBox):
+    """禁用鼠标滚轮切换的可编辑下拉框。"""
+
+    def wheelEvent(self, event):
         event.ignore()
 
 
@@ -85,11 +106,6 @@ class DeviceStatusPage(BasePage):
         # 列宽管理
         self.column_width_ratios = {}
         self.resize_timer = None
-        self._splitter_ratio_initialized = False
-        self._splitter_ratio_pending = False
-        self._splitter_user_resized = False
-        self._applying_splitter_ratio = False
-        
         # 缓存的 DeviceQuery 对象
         self._device_query = None
         self._device_query_env = None
@@ -98,6 +114,138 @@ class DeviceStatusPage(BasePage):
         self._device_query_timestamp = None  # 记录创建时间
         
         self.init_ui()
+
+    @staticmethod
+    def _combo_line_edit(combo):
+        getter = getattr(combo, "lineEdit", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
+    def _set_combo_placeholder(self, combo, text):
+        setter = getattr(combo, "setPlaceholderText", None)
+        if callable(setter):
+            try:
+                setter(text)
+                return
+            except Exception:
+                pass
+
+        line_edit = self._combo_line_edit(combo)
+        if line_edit is not None:
+            line_edit.setPlaceholderText(text)
+
+    def _create_card_section(self, title, vertical_policy=QSizePolicy.Fixed):
+        """创建统一样式的 Fluent 卡片区块。"""
+        card = ElevatedCardWidget(self)
+        card.setSizePolicy(QSizePolicy.Expanding, vertical_policy)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        layout.addWidget(self._title_label(title))
+        return card, layout
+
+    @staticmethod
+    def _title_label(text):
+        label = BodyLabel(text)
+        label.setStyleSheet(f"color: {t('text_primary')}; font-weight: 600; border: none;")
+        return label
+
+    @staticmethod
+    def _label(text, width=None, alignment=Qt.AlignLeft | Qt.AlignVCenter):
+        label = BodyLabel(text)
+        if width is not None:
+            label.setFixedWidth(width)
+        label.setAlignment(alignment)
+        label.setStyleSheet("border: none;")
+        return label
+
+    @staticmethod
+    def _create_separator():
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Plain)
+        separator.setFixedWidth(1)
+        DeviceStatusPage._apply_separator_style(separator)
+        return separator
+
+    def _apply_plain_text_edit_style(self, widget):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            widget.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+
+    def _apply_read_only_line_edit_style(self, widget):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            widget.setStyleSheet(StyleManager.get_READONLY_INPUT())
+
+    def _apply_combo_style(self, combo):
+        if not QFLUENT_WIDGETS_AVAILABLE:
+            combo.setStyleSheet(StyleManager.get_COMBOBOX())
+
+    def _apply_table_style(self):
+        if hasattr(self, "result_table") and not QFLUENT_WIDGETS_AVAILABLE:
+            StyleManager.apply_to_widget(self.result_table, "TABLE")
+
+    @staticmethod
+    def _apply_separator_style(separator):
+        separator.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+
+    def _control_height(self, extra_padding: int = 12, minimum: int = 32) -> int:
+        metrics = QFontMetrics(self.font())
+        return max(minimum, metrics.height() + extra_padding)
+
+    def _toolbar_height(self, minimum: int = 38) -> int:
+        return max(minimum, self._control_height(extra_padding=12) + 6)
+
+    @staticmethod
+    def _apply_transparent_container_style(widget):
+        widget.setAttribute(Qt.WA_StyledBackground, True)
+        widget.setStyleSheet("background-color: transparent; border: none;")
+
+    def _create_checkbox_cell_widget(self, checkbox):
+        checkbox_widget = QWidget()
+        self._apply_transparent_container_style(checkbox_widget)
+        checkbox_layout = QHBoxLayout(checkbox_widget)
+        checkbox_layout.addWidget(checkbox)
+        checkbox_layout.setAlignment(Qt.AlignCenter)
+        checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        return checkbox_widget
+
+    @staticmethod
+    def _create_menu_action(parent, text, icon_path, handler):
+        if QFLUENT_WIDGETS_AVAILABLE and Action is not None:
+            action = Action(QIcon(icon_path), text, parent)
+        else:
+            action = QAction(QIcon(icon_path), text, parent)
+        action.triggered.connect(lambda checked=False: handler())
+        return action
+
+    def _show_menu(self, menu, global_pos):
+        exec_method = getattr(menu, "exec", None)
+        if callable(exec_method):
+            exec_method(global_pos)
+            return
+
+        exec_method = getattr(menu, "exec_", None)
+        if callable(exec_method):
+            exec_method(global_pos)
+
+    @staticmethod
+    def _find_checkbox(widget):
+        if widget is None:
+            return None
+        checkbox = widget.findChild(CheckBox)
+        if checkbox is not None:
+            return checkbox
+        return widget.findChild(QCheckBox)
+
+    def _prompt_configure_ops_account(self, title="需要配置运维账号", text="检测到运维账号未配置，是否现在配置？"):
+        return prompt_configure_account(self.window() or self, title, text, initial_tab=0)
+
+    def _prompt_configure_firmware_account(self, title="需要配置固件账号", text="检测到固件账号未配置，是否现在配置？"):
+        return prompt_configure_account(self.window() or self, title, text, initial_tab=0)
     
     def ensure_device_query(self, env, username, password):
         """
@@ -117,60 +265,23 @@ class DeviceStatusPage(BasePage):
         page_layout.setContentsMargins(5, 5, 5, 5)
         page_layout.setSpacing(8)
 
-        # 使用QSplitter实现可拖拽调整高度
-        splitter = QSplitter(Qt.Vertical)
-        self._splitter = splitter  # 保存引用供主题刷新使用
-        StyleManager.apply_to_widget(splitter, "SPLITTER")
-        splitter.setChildrenCollapsible(True)
-        splitter.splitterMoved.connect(self.on_splitter_moved)
-        
-        # 设置分割线样式：增加上下边距，使用柔和的颜色提示可拖动
-        splitter.setHandleWidth(1)
-        splitter.setStyleSheet(f"""
-            QSplitter::handle {{
-                background-color: {t('border_hover')};
-                margin: 6px 0px;
-            }}
-            QSplitter::handle:hover {{
-                background-color: {t('text_hint')};
-            }}
-            QSplitter::handle:pressed {{
-                background-color: {t('text_secondary')};
-            }}
-        """)
-        
-        # 顶部查询区
         top_widget = self.create_query_group()
         self._query_widget = top_widget
-        
-        # 底部结果与导出区
         bottom_widget = self.create_result_group()
-        top_widget.setMinimumHeight(0)
-        bottom_widget.setMinimumHeight(0)
-        top_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        top_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         bottom_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-        splitter.addWidget(top_widget)
-        splitter.addWidget(bottom_widget)
-        splitter.setCollapsible(0, True)
-        splitter.setCollapsible(1, True)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 6)
-        
-        page_layout.addWidget(splitter)
+
+        page_layout.addWidget(top_widget, 0)
+        page_layout.addWidget(bottom_widget, 1)
     
     def create_query_group(self):
         """创建设备查询分组"""
-        from PyQt5.QtWidgets import QGroupBox
-
-        group = QGroupBox("查询")
-        group_layout = QVBoxLayout(group)
-        group_layout.setContentsMargins(8, 8, 8, 6)
-        group_layout.setSpacing(6)
+        group, group_layout = self._create_card_section("查询")
+        group_layout.setSpacing(12)
 
         side_width = 135
         control_width = side_width
-        control_height = 28
+        control_height = self._control_height()
         side_spacing = 6
         side_content_height = control_height * 3 + side_spacing * 2
 
@@ -192,17 +303,16 @@ class DeviceStatusPage(BasePage):
         self.account_type_combo.setCurrentIndex(0)
         self.account_type_combo.setFixedWidth(control_width)
         self.account_type_combo.setFixedHeight(control_height)
+        self._apply_combo_style(self.account_type_combo)
         self.account_type_combo.currentIndexChanged.connect(self.on_account_query_type_changed)
 
-        self.phone_input = NoWheelComboBox()
-        self.phone_input.setEditable(True)
-        self.phone_input.setInsertPolicy(QComboBox.NoInsert)
+        self.phone_input = NoWheelEditableComboBox()
         self.phone_input.setFocusPolicy(Qt.StrongFocus)
-        self.phone_input.lineEdit().setPlaceholderText("请输入账号...")
+        self._set_combo_placeholder(self.phone_input, "请输入账号...")
         self.phone_input.setFixedWidth(control_width)
         self.phone_input.setFixedHeight(control_height)
 
-        self.phone_query_btn = QPushButton("账号查询")
+        self.phone_query_btn = PrimaryPushButton("账号查询")
         self.phone_query_btn.setIcon(QIcon(":/icons/common/search.png"))
         self.phone_query_btn.setIconSize(QSize(16, 16))
         self.phone_query_btn.setFixedSize(control_width, control_height)
@@ -225,17 +335,16 @@ class DeviceStatusPage(BasePage):
         sn_layout = QVBoxLayout(sn_widget)
         sn_layout.setContentsMargins(0, 0, 0, 0)
         sn_layout.setSpacing(4)
-        sn_label = QLabel("输入SN（每行一个）")
-        sn_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        sn_label = self._label("输入SN（每行一个）")
         label_height = sn_label.sizeHint().height()
         text_edit_height = max(24, side_content_height - label_height - sn_layout.spacing())
 
         self.sn_input = PlainTextEdit()
-        self.sn_input.setFixedHeight(text_edit_height)
+        self.sn_input.setMinimumHeight(text_edit_height)
         self.sn_input.setPlaceholderText("")
         self.sn_input.selectionChanged.connect(self.on_text_selection_changed)
-        self.sn_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
-        self.sn_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._apply_plain_text_edit_style(self.sn_input)
+        self.sn_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         sn_layout.addWidget(sn_label)
         sn_layout.addWidget(self.sn_input, 1)
@@ -245,24 +354,19 @@ class DeviceStatusPage(BasePage):
         id_layout = QVBoxLayout(id_widget)
         id_layout.setContentsMargins(0, 0, 0, 0)
         id_layout.setSpacing(4)
-        id_label = QLabel("输入ID（每行一个）")
-        id_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        id_label = self._label("输入ID（每行一个）")
 
         self.id_input = PlainTextEdit()
-        self.id_input.setFixedHeight(text_edit_height)
+        self.id_input.setMinimumHeight(text_edit_height)
         self.id_input.setPlaceholderText("")
         self.id_input.selectionChanged.connect(self.on_text_selection_changed)
-        self.id_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
-        self.id_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._apply_plain_text_edit_style(self.id_input)
+        self.id_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         id_layout.addWidget(id_label)
         id_layout.addWidget(self.id_input, 1)
 
-        separator1 = QFrame()
-        separator1.setFrameShape(QFrame.VLine)
-        separator1.setFrameShadow(QFrame.Plain)
-        separator1.setFixedWidth(1)
-        separator1.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+        separator1 = self._create_separator()
         self._separator1 = separator1
 
         center_layout.addWidget(sn_widget, 1)
@@ -285,15 +389,16 @@ class DeviceStatusPage(BasePage):
         self.thread_count_combo.setCurrentText("40")
         self.thread_count_combo.setFixedHeight(control_height)
         self.thread_count_combo.setFixedWidth(control_width)
+        self._apply_combo_style(self.thread_count_combo)
         self.thread_count_combo.currentTextChanged.connect(self.on_thread_count_changed)
 
-        self.query_btn = QPushButton("设备查询")
+        self.query_btn = PrimaryPushButton("设备查询")
         self.query_btn.setIcon(QIcon(":/icons/common/search.png"))
         self.query_btn.setIconSize(QSize(16, 16))
         self.query_btn.setFixedSize(control_width, control_height)
         self.query_btn.clicked.connect(self.on_query)
 
-        self.clear_btn = QPushButton("清空结果")
+        self.clear_btn = PushButton("清空结果")
         self.clear_btn.setIcon(QIcon(":/icons/common/clean.png"))
         self.clear_btn.setIconSize(QSize(16, 16))
         self.clear_btn.setFixedSize(control_width, control_height)
@@ -305,18 +410,10 @@ class DeviceStatusPage(BasePage):
         right_layout.addWidget(self.query_btn, 0, Qt.AlignHCenter)
         right_layout.addStretch()
 
-        separator2 = QFrame()
-        separator2.setFrameShape(QFrame.VLine)
-        separator2.setFrameShadow(QFrame.Plain)
-        separator2.setFixedWidth(1)
-        separator2.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+        separator2 = self._create_separator()
         self._separator2 = separator2
 
-        separator3 = QFrame()
-        separator3.setFrameShape(QFrame.VLine)
-        separator3.setFrameShadow(QFrame.Plain)
-        separator3.setFixedWidth(1)
-        separator3.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+        separator3 = self._create_separator()
         self._separator3 = separator3
 
         content_layout.addWidget(left_widget)
@@ -325,75 +422,63 @@ class DeviceStatusPage(BasePage):
         content_layout.addWidget(separator3)
         content_layout.addWidget(right_widget)
         group_layout.addLayout(content_layout)
-        group.setFixedHeight(group.sizeHint().height())
 
         return group
     
     def create_result_group(self):
         """创建查询结果与导出分组"""
-        from PyQt5.QtWidgets import QGroupBox, QLineEdit
-        
-        group = QGroupBox("结果")
-        group_layout = QVBoxLayout(group)
-        group_layout.setContentsMargins(8, 10, 8, 8)
-        group_layout.setSpacing(4)
+        group, group_layout = self._create_card_section("结果", vertical_policy=QSizePolicy.Expanding)
+        group_layout.setSpacing(8)
+        control_height = self._control_height()
+        toolbar_height = self._toolbar_height()
         
         # ===== 筛选条件区 =====
-        filter_frame = QFrame()
+        filter_frame = QWidget()
         self._apply_plain_result_toolbar_style(filter_frame)
         self._filter_frame = filter_frame
-        filter_frame.setFixedHeight(34)
+        filter_frame.setFixedHeight(toolbar_height)
         filter_layout = QHBoxLayout(filter_frame)  # 改为水平布局，单行显示
         filter_layout.setContentsMargins(2, 2, 2, 2)
         filter_layout.setSpacing(8)
         
         # SN筛选
-        sn_filter_label = QLabel("SN:")
-        sn_filter_label.setFixedWidth(30)
-        sn_filter_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        sn_filter_label.setStyleSheet("border: none;")  # 去掉边框
-        self.sn_filter_input = QLineEdit()
-        self.sn_filter_input.setFixedHeight(28)
+        sn_filter_label = self._label("SN:", width=30, alignment=Qt.AlignRight | Qt.AlignVCenter)
+        self.sn_filter_input = LineEdit()
+        self.sn_filter_input.setFixedHeight(control_height)
         self.sn_filter_input.setPlaceholderText("输入SN筛选...")
         self.sn_filter_input.textChanged.connect(self.on_filter_changed)
-        self.sn_filter_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
+        self._apply_read_only_line_edit_style(self.sn_filter_input)
         
         # 型号筛选
-        model_filter_label = QLabel("型号:")
-        model_filter_label.setFixedWidth(40)
-        model_filter_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        model_filter_label.setStyleSheet("border: none;")  # 去掉边框
+        model_filter_label = self._label("型号:", width=40, alignment=Qt.AlignRight | Qt.AlignVCenter)
         self.model_combo = NoWheelComboBox()
-        self.model_combo.setFixedHeight(28)
+        self.model_combo.setFixedHeight(control_height)
         self.model_combo.addItem("全部")
         self.model_combo.setEnabled(False)
+        self._apply_combo_style(self.model_combo)
         self.model_combo.currentTextChanged.connect(self.on_filter_changed)
 
         # 状态筛选
-        status_filter_label = QLabel("状态:")
-        status_filter_label.setFixedWidth(40)
-        status_filter_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        status_filter_label.setStyleSheet("border: none;")  # 去掉边框
+        status_filter_label = self._label("状态:", width=40, alignment=Qt.AlignRight | Qt.AlignVCenter)
         self.status_combo = NoWheelComboBox()
-        self.status_combo.setFixedHeight(28)
+        self.status_combo.setFixedHeight(control_height)
         for status in self.STATUS_FILTER_OPTIONS:
             self.status_combo.addItem(status)
         self.status_combo.setEnabled(False)
+        self._apply_combo_style(self.status_combo)
         self.status_combo.currentTextChanged.connect(self.on_filter_changed)
 
         # 版本筛选
-        version_filter_label = QLabel("版本:")
-        version_filter_label.setFixedWidth(40)
-        version_filter_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        version_filter_label.setStyleSheet("border: none;")  # 去掉边框
+        version_filter_label = self._label("版本:", width=40, alignment=Qt.AlignRight | Qt.AlignVCenter)
         self.version_combo = NoWheelComboBox()
-        self.version_combo.setFixedHeight(28)
+        self.version_combo.setFixedHeight(control_height)
         self.version_combo.addItem("全部")
         self.version_combo.setEnabled(False)
+        self._apply_combo_style(self.version_combo)
         self.version_combo.currentTextChanged.connect(self.on_filter_changed)
         
         # 数量显示
-        self.match_count_label = QLabel("数量: 0 / 0")
+        self.match_count_label = BodyLabel("数量: 0 / 0")
         self.match_count_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px; border: none;")
         
         # 按比例分配筛选控件宽度
@@ -414,56 +499,56 @@ class DeviceStatusPage(BasePage):
         group_layout.addWidget(filter_frame)
         
         # ===== 批量操作区 =====
-        batch_frame = QFrame()
+        batch_frame = QWidget()
         self._apply_plain_result_toolbar_style(batch_frame)
         self._batch_frame = batch_frame
-        batch_frame.setFixedHeight(34)
+        batch_frame.setFixedHeight(toolbar_height)
         batch_layout = QHBoxLayout(batch_frame)
         batch_layout.setContentsMargins(2, 2, 2, 2)
         batch_layout.setSpacing(8)
         
-        self.select_all_checkbox = QCheckBox("全选")
+        self.select_all_checkbox = CheckBox("全选")
         self.select_all_checkbox.stateChanged.connect(self.on_select_all)
         self.select_all_checkbox.setEnabled(False)  # 初始禁用
         
-        self.batch_wake_btn = QPushButton("批量唤醒")
+        self.batch_wake_btn = PushButton("批量唤醒")
         self.batch_wake_btn.setIcon(QIcon(":/icons/device/werk_up_all.png"))
         self.batch_wake_btn.setIconSize(QSize(16, 16))
-        self.batch_wake_btn.setFixedSize(100, 28)
+        self.batch_wake_btn.setFixedSize(108, control_height)
         self.batch_wake_btn.clicked.connect(self.on_batch_wake)
         self.batch_wake_btn.setEnabled(False)  # 初始禁用
         
         # 预留的批量操作按钮
-        self.batch_reboot_btn = QPushButton("批量重启")
+        self.batch_reboot_btn = PushButton("批量重启")
         self.batch_reboot_btn.setIcon(QIcon(":/icons/device/reboot.png"))
         self.batch_reboot_btn.setIconSize(QSize(16, 16))
-        self.batch_reboot_btn.setFixedSize(100, 28)
+        self.batch_reboot_btn.setFixedSize(108, control_height)
         self.batch_reboot_btn.setEnabled(False)
         self.batch_reboot_btn.clicked.connect(self.on_batch_reboot)
         
-        self.batch_upgrade_btn = QPushButton("批量升级")
+        self.batch_upgrade_btn = PushButton("批量升级")
         self.batch_upgrade_btn.setIcon(QIcon(":/icons/device/upgrade.png"))
         self.batch_upgrade_btn.setIconSize(QSize(16, 16))
-        self.batch_upgrade_btn.setFixedSize(100, 28)
+        self.batch_upgrade_btn.setFixedSize(108, control_height)
         self.batch_upgrade_btn.setEnabled(False)
         self.batch_upgrade_btn.clicked.connect(self.on_batch_upgrade)
 
-        self.upgrade_stress_btn = QPushButton("升级压测")
+        self.upgrade_stress_btn = PushButton("升级压测")
         self.upgrade_stress_btn.setIcon(QIcon(":/icons/device/updata_test.png"))
         self.upgrade_stress_btn.setIconSize(QSize(16, 16))
-        self.upgrade_stress_btn.setFixedSize(100, 28)
+        self.upgrade_stress_btn.setFixedSize(108, control_height)
         self.upgrade_stress_btn.setEnabled(False)
         self.upgrade_stress_btn.clicked.connect(self.on_upgrade_stress)
         
-        self.batch_collect_btn = QPushButton("批量采集")
+        self.batch_collect_btn = PushButton("批量采集")
         self.batch_collect_btn.setIcon(QIcon(":/icons/device/collect.png"))
         self.batch_collect_btn.setIconSize(QSize(16, 16))
-        self.batch_collect_btn.setFixedSize(100, 28)
+        self.batch_collect_btn.setFixedSize(108, control_height)
         self.batch_collect_btn.setEnabled(False)
         self.batch_collect_btn.clicked.connect(self.on_batch_collect)
         
         # 提示文本
-        result_tip = QLabel("提示: 双击单元格可复制内容，右击设备行展开操作")
+        result_tip = BodyLabel("提示: 双击单元格可复制内容，右击设备行展开操作")
         result_tip.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px; border: none;")
         
         batch_layout.addWidget(self.select_all_checkbox)
@@ -477,18 +562,18 @@ class DeviceStatusPage(BasePage):
         group_layout.addWidget(batch_frame)
 
         # ===== 结果表格 =====
-        self.result_table = QTableWidget()
+        self.result_table = TableWidget()
         self.result_table.setColumnCount(9)
         self.result_table.setHorizontalHeaderLabels(
             ["选择", "设备名称", "型号", "SN", "ID", "密码", "版本号", "在线状态", "最后心跳"]
         )
         self.result_table.setFocusPolicy(Qt.StrongFocus)
-        self.result_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)  # 改为选择整行
-        self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.result_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.result_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.result_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.result_table.setShowGrid(True)
-        self.result_table.setFrameShape(QTableWidget.NoFrame)
-        StyleManager.apply_to_widget(self.result_table, "TABLE")
+        self.result_table.setFrameShape(QFrame.NoFrame)
+        self._apply_table_style()
         
         # 启用右键菜单
         self.result_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -532,36 +617,33 @@ class DeviceStatusPage(BasePage):
         group_layout.addWidget(self.result_table)
         
         # ===== 导出区域（带边框） =====
-        export_frame = QFrame()
+        export_frame = QWidget()
         self._apply_plain_result_toolbar_style(export_frame)
         self._export_frame = export_frame
-        export_frame.setFixedHeight(38)
+        export_frame.setFixedHeight(max(toolbar_height, control_height + 10))
         export_layout = QHBoxLayout(export_frame)
         export_layout.setContentsMargins(4, 4, 4, 4)
         export_layout.setSpacing(8)
         
-        export_label = QLabel("保存位置:")
-        export_label.setFixedWidth(60)
-        export_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        export_label.setStyleSheet("border: none;")  # 去掉边框
+        export_label = self._label("保存位置:", width=60)
         
         self.export_path_input = ClickableLineEdit()
         self.export_path_input.setPlaceholderText("点击导出按钮选择保存位置（双击可打开目录）...")
         self.export_path_input.setReadOnly(True)
         self.export_path_input.setFocusPolicy(Qt.NoFocus)
-        self.export_path_input.setFixedHeight(28)
-        self.export_path_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
+        self.export_path_input.setFixedHeight(control_height)
+        self._apply_read_only_line_edit_style(self.export_path_input)
         
-        self.export_btn = QPushButton("导出CSV")
+        self.export_btn = PushButton("导出CSV")
         self.export_btn.setIcon(QIcon(":/icons/common/export.png"))
         self.export_btn.setIconSize(QSize(16, 16))
-        self.export_btn.setFixedSize(100, 28)
+        self.export_btn.setFixedSize(108, control_height)
         self.export_btn.clicked.connect(self.on_export_csv)
         
-        self.export_json_btn = QPushButton("导出JSON")
+        self.export_json_btn = PushButton("导出JSON")
         self.export_json_btn.setIcon(QIcon(":/icons/common/export.png"))
         self.export_json_btn.setIconSize(QSize(16, 16))
-        self.export_json_btn.setFixedSize(100, 28)
+        self.export_json_btn.setFixedSize(108, control_height)
         self.export_json_btn.clicked.connect(self.on_export_json)
         
         export_layout.addWidget(export_label)
@@ -590,61 +672,30 @@ class DeviceStatusPage(BasePage):
 
     def _apply_plain_result_toolbar_style(self, frame):
         """结果区顶部工具行不显示外层边框，尽量给表格留更多空间。"""
-        frame.setFrameShape(QFrame.NoFrame)
-        frame.setFrameShadow(QFrame.Plain)
-        frame.setStyleSheet("QFrame { border: none; background: transparent; }")
+        if isinstance(frame, QFrame):
+            frame.setFrameShape(QFrame.NoFrame)
+            frame.setFrameShadow(QFrame.Plain)
+        self._apply_transparent_container_style(frame)
     
     def on_page_show(self):
         """页面显示时"""
-        self.schedule_initial_splitter_ratio()
         self.show_info("设备页面")
         # 调整表格列宽以适应当前窗口
         self.adjust_table_columns()
 
     def schedule_initial_splitter_ratio(self):
-        """在页面真实完成布局后应用首屏上下分区比例。"""
-        if self._splitter_user_resized or self._splitter_ratio_pending:
-            return
-        self._splitter_ratio_pending = True
-        QTimer.singleShot(0, self.apply_initial_splitter_ratio)
+        """兼容旧逻辑：设备页已取消分割拖拽，无需处理。"""
+        return
 
     def apply_initial_splitter_ratio(self):
-        """首屏显示时设置上下区域初始比例，后续保留用户拖拽结果。"""
-        self._splitter_ratio_pending = False
-        if self._splitter_user_resized or not hasattr(self, '_splitter'):
-            return
-
-        splitter_height = self._splitter.height()
-        if splitter_height <= 0 or not self.isVisible():
-            self.schedule_initial_splitter_ratio()
-            return
-
-        query_hint_height = 0
-        if hasattr(self, '_query_widget'):
-            query_hint_height = self._query_widget.sizeHint().height()
-            if query_hint_height <= 0:
-                query_hint_height = self._query_widget.minimumSizeHint().height()
-
-        top_height = max(1, min(query_hint_height, splitter_height - 1))
-        bottom_height = max(1, splitter_height - top_height)
-        self._applying_splitter_ratio = True
-        try:
-            self._splitter.setSizes([top_height, bottom_height])
-        finally:
-            self._applying_splitter_ratio = False
-        self._splitter_ratio_initialized = True
+        return
 
     def on_splitter_moved(self, pos, index):
-        """记录用户已经手动调整过分割比例，避免后续被自动重置。"""
-        if self._applying_splitter_ratio:
-            return
-        self._splitter_user_resized = True
+        return
     
     def resizeEvent(self, event):
         """窗口大小改变事件"""
         super().resizeEvent(event)
-        if not self._splitter_ratio_initialized and not self._splitter_user_resized:
-            self.schedule_initial_splitter_ratio()
         self.adjust_table_columns()
     
     def on_column_resized(self, logicalIndex):
@@ -746,7 +797,6 @@ class DeviceStatusPage(BasePage):
         if item:
             text = item.text()
             if text and text not in ["查询中...", ""]:
-                from PyQt5.QtWidgets import QApplication
                 clipboard = QApplication.clipboard()
                 clipboard.setText(text)
                 
@@ -781,7 +831,7 @@ class DeviceStatusPage(BasePage):
         checked_rows = []
         for row in range(self.result_table.rowCount()):
             checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox) if checkbox_widget else None
+            checkbox = self._find_checkbox(checkbox_widget)
             if checkbox and checkbox.isChecked():
                 checked_rows.append(row)
         return checked_rows
@@ -821,8 +871,6 @@ class DeviceStatusPage(BasePage):
     
     def on_context_menu(self, pos):
         """显示右键菜单"""
-        from PyQt5.QtWidgets import QMenu, QAction
-        
         # 获取点击位置的行
         index = self.result_table.indexAt(pos)
         if not index.isValid():
@@ -855,81 +903,52 @@ class DeviceStatusPage(BasePage):
         self.result_table.selectRow(row)
         
         # 创建右键菜单
-        menu = QMenu(self.result_table)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                min-width: 120px;
-                background-color: {t('bg_mid')};
-                color: {t('text_primary')};
-                border: 1px solid {t('border')};
-                padding: 2px;
-            }}
-            QMenu::item {{
-                padding: 6px 30px 6px 6px;
-                margin: 1px 2px;
-                border-radius: 2px;
-            }}
-            QMenu::item:selected {{
-                background-color: {t('selection_bg')};
-                color: {t('text_primary')};
-            }}
-            QMenu::separator {{
-                height: 1px;
-                background-color: {t('border')};
-                margin: 3px 5px;
-            }}
-        """)
+        if QFLUENT_WIDGETS_AVAILABLE and RoundMenu is not None:
+            menu = RoundMenu(parent=self.result_table)
+            collect_menu = RoundMenu("数据采集", self)
+        else:
+            menu = QMenu(self.result_table)
+            menu.setStyleSheet(StyleManager.get_CONTEXT_MENU())
+            collect_menu = QMenu("数据采集", self)
+            collect_menu.setStyleSheet(menu.styleSheet())
         
         # 唤醒操作
-        wake_action = QAction(QIcon(":/icons/device/werk_up_all.png"), "唤醒设备", self)
-        wake_action.triggered.connect(lambda: self.on_wake_single(row))
-        menu.addAction(wake_action)
+        menu.addAction(self._create_menu_action(self, "唤醒设备", ":/icons/device/werk_up_all.png", lambda: self.on_wake_single(row)))
         
         # 重启操作
-        reboot_action = QAction(QIcon(":/icons/device/reboot.png"), "重启设备", self)
-        reboot_action.triggered.connect(lambda: self.on_reboot_single(row))
-        menu.addAction(reboot_action)
+        menu.addAction(self._create_menu_action(self, "重启设备", ":/icons/device/reboot.png", lambda: self.on_reboot_single(row)))
         
         # 升级操作
-        upgrade_action = QAction(QIcon(":/icons/device/upgrade.png"), "升级设备", self)
-        upgrade_action.triggered.connect(lambda: self.on_upgrade_single(row))
-        menu.addAction(upgrade_action)
+        menu.addAction(self._create_menu_action(self, "升级设备", ":/icons/device/upgrade.png", lambda: self.on_upgrade_single(row)))
         
         # 端口穿透操作
-        port_mapping_action = QAction(QIcon(":/icons/device/nat.png"), "端口穿透", self)
-        port_mapping_action.triggered.connect(lambda: self.on_port_mapping_single(row))
-        menu.addAction(port_mapping_action)
+        menu.addAction(self._create_menu_action(self, "端口穿透", ":/icons/device/nat.png", lambda: self.on_port_mapping_single(row)))
 
         # 调试连接
-        debug_action = QAction(QIcon(":/icons/system/console.png"), "连接调试", self)
-        debug_action.triggered.connect(lambda: self.on_debug_single(row))
-        menu.addAction(debug_action)
+        menu.addAction(self._create_menu_action(self, "连接调试", ":/icons/system/console.png", lambda: self.on_debug_single(row)))
 
         # 添加分隔符
         menu.addSeparator()
         
         # 数据采集子菜单
-        collect_menu = QMenu("数据采集", self)
-        collect_menu.setIcon(QIcon(":/icons/device/collect.png"))
-        collect_menu.setStyleSheet(menu.styleSheet())
-        
         # 动态生成采集类型菜单项
         from query_tool.utils.data_collect_api import get_enabled_collect_types
         collect_types = get_enabled_collect_types()
         
         for type_id, type_info in collect_types.items():
-            action = QAction(type_info['name'], self)
-            if type_info.get('icon'):
-                action.setIcon(QIcon(type_info['icon']))
-            action.triggered.connect(
-                lambda checked, tid=type_id, r=row: self.on_collect_single(r, tid)
+            collect_menu.addAction(
+                self._create_menu_action(
+                    self,
+                    type_info['name'],
+                    type_info.get('icon') or ":/icons/device/collect.png",
+                    lambda tid=type_id, r=row: self.on_collect_single(r, tid),
+                )
             )
-            collect_menu.addAction(action)
         
         menu.addMenu(collect_menu)
         
         # 显示菜单
-        menu.exec_(self.result_table.viewport().mapToGlobal(pos))
+        self._show_menu(menu, self.result_table.viewport().mapToGlobal(pos))
 
     def on_debug_single(self, row):
         """切换到调试页并连接当前设备"""
@@ -1009,45 +1028,7 @@ class DeviceStatusPage(BasePage):
         firmware_username, firmware_password = get_firmware_account_config()
         
         if not firmware_username or not firmware_password:
-            # 显示提示对话框
-            from PyQt5.QtWidgets import QMessageBox
-            from PyQt5.QtGui import QIcon
-            from PyQt5.QtCore import QSize, QTimer
-            from query_tool.utils.style_manager import StyleManager
-            from query_tool.widgets.custom_widgets import set_dark_title_bar
-            
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('需要配置固件账号')
-            msg_box.setText('检测到固件账号未配置，是否现在配置？')
-            msg_box.setIcon(QMessageBox.Question)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            
-            # 自定义按钮图标
-            yes_btn = msg_box.button(QMessageBox.Yes)
-            no_btn = msg_box.button(QMessageBox.No)
-            
-            if yes_btn:
-                yes_btn.setText("")
-                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                yes_btn.setIconSize(QSize(20, 20))
-                yes_btn.setFixedSize(60, 32)
-            
-            if no_btn:
-                no_btn.setText("")
-                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                no_btn.setIconSize(QSize(20, 20))
-                no_btn.setFixedSize(60, 32)
-            # 延迟设置深色标题栏
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            
-            reply = msg_box.exec_()
-            
-            if reply == QMessageBox.Yes:
-                # 打开设置对话框
-                from query_tool.widgets import SettingsDialog
-                dialog = SettingsDialog(self)
-                dialog.exec_()
-            
+            self._prompt_configure_firmware_account()
             return
         
         # 显示升级对话框
@@ -1145,41 +1126,10 @@ class DeviceStatusPage(BasePage):
         # 检查账号密码
         env, username, password = get_account_config()
         if not username or not password:
-            # 显示提示对话框
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('提示')
-            msg_box.setText('检测到运维系统账号信息未配置，点击OK前往配置。')
-            msg_box.setIcon(QMessageBox.Information)
-            msg_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-            
-            # 自定义按钮图标
-            ok_btn = msg_box.button(QMessageBox.Ok)
-            cancel_btn = msg_box.button(QMessageBox.Cancel)
-            
-            if ok_btn:
-                ok_btn.setText("")
-                ok_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                ok_btn.setIconSize(QSize(20, 20))
-                ok_btn.setFixedSize(60, 32)
-            
-            if cancel_btn:
-                cancel_btn.setText("")
-                cancel_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                cancel_btn.setIconSize(QSize(20, 20))
-                cancel_btn.setFixedSize(60, 32)
-            # 延迟设置深色标题栏
-            from query_tool.widgets.custom_widgets import set_dark_title_bar
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            
-            reply = msg_box.exec_()
-            
-            if reply == QMessageBox.Ok:
-                from query_tool.widgets import SettingsDialog
-                dialog = SettingsDialog(self.window())
-                # 切换到运维账号标签页
-                if hasattr(dialog, 'tab_widget'):
-                    dialog.tab_widget.setCurrentIndex(0)  # 索引0是运维账号
-                dialog.exec_()
+            self._prompt_configure_ops_account(
+                "需要配置运维账号",
+                "检测到运维系统账号信息未配置，是否现在配置？",
+            )
             return
         
         # 解析输入并去重（保留输入顺序）
@@ -1269,14 +1219,9 @@ class DeviceStatusPage(BasePage):
             
             for row in range(batch_start, batch_end):
                 # 复选框
-                checkbox = QCheckBox()
+                checkbox = CheckBox()
                 checkbox.stateChanged.connect(self.on_checkbox_state_changed)
-                checkbox_widget = QWidget()
-                checkbox_widget.setStyleSheet("background-color: transparent;")
-                checkbox_layout = QHBoxLayout(checkbox_widget)
-                checkbox_layout.addWidget(checkbox)
-                checkbox_layout.setAlignment(Qt.AlignCenter)
-                checkbox_layout.setContentsMargins(0, 0, 0, 0)
+                checkbox_widget = self._create_checkbox_cell_widget(checkbox)
                 self.result_table.setCellWidget(row, 0, checkbox_widget)
                 
                 # 占位
@@ -1451,7 +1396,7 @@ class DeviceStatusPage(BasePage):
         # 阻止所有复选框的信号，避免每个复选框变化都触发 on_checkbox_state_changed
         for row in range(self.result_table.rowCount()):
             checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
+            checkbox = self._find_checkbox(checkbox_widget)
             if checkbox:
                 checkbox.blockSignals(True)
                 checkbox.setChecked(state == Qt.Checked)
@@ -1473,7 +1418,7 @@ class DeviceStatusPage(BasePage):
         checked_count = 0
         for row in range(total_rows):
             checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
+            checkbox = self._find_checkbox(checkbox_widget)
             if checkbox and checkbox.isChecked():
                 checked_count += 1
         
@@ -1493,7 +1438,7 @@ class DeviceStatusPage(BasePage):
         has_checked = False
         for row in range(self.result_table.rowCount()):
             checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
+            checkbox = self._find_checkbox(checkbox_widget)
             if checkbox and checkbox.isChecked():
                 has_checked = True
                 break
@@ -1615,7 +1560,7 @@ class DeviceStatusPage(BasePage):
         # 禁用所有复选框
         for row in range(self.result_table.rowCount()):
             checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
+            checkbox = self._find_checkbox(checkbox_widget)
             if checkbox:
                 checkbox.setEnabled(False)
         
@@ -1636,7 +1581,7 @@ class DeviceStatusPage(BasePage):
                 # 重新启用所有复选框
                 for row in range(self.result_table.rowCount()):
                     checkbox_widget = self.result_table.cellWidget(row, 0)
-                    checkbox = checkbox_widget.findChild(QCheckBox)
+                    checkbox = self._find_checkbox(checkbox_widget)
                     if checkbox:
                         checkbox.setEnabled(True)
                 # 恢复状态显示
@@ -1659,7 +1604,7 @@ class DeviceStatusPage(BasePage):
             # 重新启用所有复选框
             for row in range(self.result_table.rowCount()):
                 checkbox_widget = self.result_table.cellWidget(row, 0)
-                checkbox = checkbox_widget.findChild(QCheckBox)
+                checkbox = self._find_checkbox(checkbox_widget)
                 if checkbox:
                     checkbox.setEnabled(True)
             # 恢复状态显示
@@ -1717,7 +1662,7 @@ class DeviceStatusPage(BasePage):
         # 启用所有复选框
         for row in range(self.result_table.rowCount()):
             checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
+            checkbox = self._find_checkbox(checkbox_widget)
             if checkbox:
                 checkbox.setEnabled(True)
         
@@ -1735,7 +1680,7 @@ class DeviceStatusPage(BasePage):
         # 启用所有复选框
         for row in range(self.result_table.rowCount()):
             checkbox_widget = self.result_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox)
+            checkbox = self._find_checkbox(checkbox_widget)
             if checkbox:
                 checkbox.setEnabled(True)
         
@@ -1856,45 +1801,7 @@ class DeviceStatusPage(BasePage):
         firmware_username, firmware_password = get_firmware_account_config()
         
         if not firmware_username or not firmware_password:
-            # 显示提示对话框
-            from PyQt5.QtWidgets import QMessageBox
-            from PyQt5.QtGui import QIcon
-            from PyQt5.QtCore import QSize, QTimer
-            from query_tool.utils.style_manager import StyleManager
-            from query_tool.widgets.custom_widgets import set_dark_title_bar
-            
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('需要配置固件账号')
-            msg_box.setText('检测到固件账号未配置，是否现在配置？')
-            msg_box.setIcon(QMessageBox.Question)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            
-            # 自定义按钮图标
-            yes_btn = msg_box.button(QMessageBox.Yes)
-            no_btn = msg_box.button(QMessageBox.No)
-            
-            if yes_btn:
-                yes_btn.setText("")
-                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                yes_btn.setIconSize(QSize(20, 20))
-                yes_btn.setFixedSize(60, 32)
-            
-            if no_btn:
-                no_btn.setText("")
-                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                no_btn.setIconSize(QSize(20, 20))
-                no_btn.setFixedSize(60, 32)
-            # 延迟设置深色标题栏
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            
-            reply = msg_box.exec_()
-            
-            if reply == QMessageBox.Yes:
-                # 打开设置对话框
-                from query_tool.widgets import SettingsDialog
-                dialog = SettingsDialog(self)
-                dialog.exec_()
-            
+            self._prompt_configure_firmware_account()
             return
         
         # 显示批量升级对话框
@@ -1932,13 +1839,7 @@ class DeviceStatusPage(BasePage):
 
         firmware_username, firmware_password = get_firmware_account_config()
         if not firmware_username or not firmware_password:
-            opened = prompt_configure_account(
-                self,
-                "需要配置固件账号",
-                "检测到固件账号未配置，是否现在配置？",
-                initial_tab=1,
-            )
-            if not opened:
+            if not self._prompt_configure_firmware_account():
                 return
 
         from query_tool.widgets import UpgradeStressDialog
@@ -2131,14 +2032,9 @@ class DeviceStatusPage(BasePage):
             self.display_row_to_original[display_row] = original_row
             
             # 复选框
-            checkbox = QCheckBox()
+            checkbox = CheckBox()
             checkbox.stateChanged.connect(self.on_checkbox_state_changed)
-            checkbox_widget = QWidget()
-            checkbox_widget.setStyleSheet("background-color: transparent;")
-            checkbox_layout = QHBoxLayout(checkbox_widget)
-            checkbox_layout.addWidget(checkbox)
-            checkbox_layout.setAlignment(Qt.AlignCenter)
-            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            checkbox_widget = self._create_checkbox_cell_widget(checkbox)
             self.result_table.setCellWidget(display_row, 0, checkbox_widget)
             
             # 数据
@@ -2262,8 +2158,9 @@ class DeviceStatusPage(BasePage):
             self.phone_input.addItems(app_config.phone_history)
             from PyQt5.QtWidgets import QCompleter
             completer = self.phone_input.completer()
-            completer.setCompletionMode(QCompleter.PopupCompletion)
-            completer.setCaseSensitivity(Qt.CaseInsensitive)
+            if completer is not None:
+                completer.setCompletionMode(QCompleter.PopupCompletion)
+                completer.setCaseSensitivity(Qt.CaseInsensitive)
     
     def save_config(self):
         """保存配置"""
@@ -2283,31 +2180,32 @@ class DeviceStatusPage(BasePage):
     def refresh_theme(self):
         """主题切换时刷新样式"""
         from query_tool.utils import StyleManager
-        StyleManager.apply_to_widget(self.result_table, "TABLE")
-        if hasattr(self, '_splitter'):
-            StyleManager.apply_to_widget(self._splitter, "SPLITTER")
+        self._apply_table_style()
         # 刷新各 Frame 样式
-        for attr in ('_account_frame', '_filter_frame', '_batch_frame', '_export_frame'):
+        for attr in ('_filter_frame', '_batch_frame', '_export_frame'):
             if hasattr(self, attr):
                 self._apply_plain_result_toolbar_style(getattr(self, attr))
         # 刷新输入框
         if hasattr(self, 'sn_input'):
-            self.sn_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+            self._apply_plain_text_edit_style(self.sn_input)
         if hasattr(self, 'id_input'):
-            self.id_input.setStyleSheet(StyleManager.get_PLAINTEXT_EDIT_TABLE())
+            self._apply_plain_text_edit_style(self.id_input)
         if hasattr(self, 'sn_filter_input'):
-            self.sn_filter_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
+            self._apply_read_only_line_edit_style(self.sn_filter_input)
         if hasattr(self, 'export_path_input'):
-            self.export_path_input.setStyleSheet(StyleManager.get_READONLY_INPUT())
+            self._apply_read_only_line_edit_style(self.export_path_input)
+        for attr in ('account_type_combo', 'thread_count_combo', 'model_combo', 'status_combo', 'version_combo'):
+            if hasattr(self, attr):
+                self._apply_combo_style(getattr(self, attr))
         if hasattr(self, 'match_count_label'):
             self.match_count_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px; border: none;")
         # 刷新分割线
         if hasattr(self, '_separator1'):
-            self._separator1.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+            self._apply_separator_style(self._separator1)
         if hasattr(self, '_separator2'):
-            self._separator2.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+            self._apply_separator_style(self._separator2)
         if hasattr(self, '_separator3'):
-            self._separator3.setStyleSheet(f"QFrame {{ background-color: {t('border')}; border: none; }}")
+            self._apply_separator_style(self._separator3)
     
     # ===== 账号查询相关方法 =====
     
@@ -2323,43 +2221,7 @@ class DeviceStatusPage(BasePage):
         # 检查账号密码
         env, username, password = get_account_config()
         if not username or not password:
-            # 显示提示对话框
-            from PyQt5.QtWidgets import QMessageBox
-            from PyQt5.QtGui import QIcon
-            from PyQt5.QtCore import QSize, QTimer
-            from query_tool.utils.style_manager import StyleManager
-            from query_tool.widgets.custom_widgets import set_dark_title_bar
-            
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('需要配置运维账号')
-            msg_box.setText('检测到运维账号未配置，是否现在配置？')
-            msg_box.setIcon(QMessageBox.Question)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            
-            # 自定义按钮图标
-            yes_btn = msg_box.button(QMessageBox.Yes)
-            no_btn = msg_box.button(QMessageBox.No)
-            
-            if yes_btn:
-                yes_btn.setText("")
-                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                yes_btn.setIconSize(QSize(20, 20))
-                yes_btn.setFixedSize(60, 32)
-            
-            if no_btn:
-                no_btn.setText("")
-                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                no_btn.setIconSize(QSize(20, 20))
-                no_btn.setFixedSize(60, 32)
-            # 延迟设置深色标题栏
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            
-            reply = msg_box.exec_()
-            
-            if reply == QMessageBox.Yes:
-                from query_tool.widgets import SettingsDialog
-                dialog = SettingsDialog(self)
-                dialog.exec_()
+            self._prompt_configure_ops_account()
             return
         
         # 清空SN和ID文本框
@@ -2489,9 +2351,7 @@ class DeviceStatusPage(BasePage):
             "email": "请输入邮箱...",
         }
         account_type = self.get_selected_account_query_type()
-        self.phone_input.lineEdit().setPlaceholderText(
-            placeholder_map.get(account_type, "请输入账号...")
-        )
+        self._set_combo_placeholder(self.phone_input, placeholder_map.get(account_type, "请输入账号..."))
     
     # ===== 筛选相关方法 =====
 

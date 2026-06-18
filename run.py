@@ -11,6 +11,14 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
+_INTERNAL_COMMANDS = {
+    "--siot-subprocess-runner",
+    "--siot-helper-prepare",
+    "--siot-helper-probe",
+    "--upgrade-stress-runner",
+}
+
+
 def _set_windows_appusermodel_id() -> None:
     """为 GUI 进程设置稳定的 Windows 任务栏身份。"""
     if sys.platform != "win32":
@@ -25,6 +33,9 @@ def _set_windows_appusermodel_id() -> None:
 
 
 def _dispatch_internal_command() -> int | None:
+    if len(sys.argv) <= 1 or sys.argv[1] not in _INTERNAL_COMMANDS:
+        return None
+
     from query_tool.utils.siot_debug.internal_cli import dispatch_internal_command
 
     return dispatch_internal_command(sys.argv[1:])

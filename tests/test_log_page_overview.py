@@ -1,6 +1,21 @@
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
-from query_tool.pages.log_page import LogPage
+from tests.test_fluent_widget_smokes import PAGES_DIR, _isolated_page_env, _load_module
+
+
+def _load_log_page_module():
+    with _isolated_page_env():
+        return _load_module(
+            "query_tool.pages._log_page_overview_test",
+            PAGES_DIR / "log_page.py",
+        )
+
+
+log_page_module = _load_log_page_module()
+LogPage = log_page_module.LogPage
+BatchLogFetchThread = log_page_module.BatchLogFetchThread
 
 
 class LogPageOverviewTests(unittest.TestCase):
@@ -58,6 +73,57 @@ class LogPageOverviewTests(unittest.TestCase):
         }
 
         self.assertEqual("", LogPage._extract_inline_syscmd_result_text(payload))
+
+
+class BatchLogFetchThreadCleanupTests(unittest.TestCase):
+    def test_process_single_device_ignores_closed_stdin_during_disconnect(self):
+        worker = BatchLogFetchThread(
+            sn_list=["LOG-SN-001"],
+            commands=["syscmd uname -a"],
+            download_root="C:/temp",
+            env="test",
+            device_username="admin",
+            device_password="123456",
+            seetong_username="cloud",
+            seetong_password="secret",
+        )
+        credentials = SimpleNamespace(
+            sn="LOG-SN-001",
+            username="admin",
+            password="123456",
+            dev_id="dev-1",
+            protocol="p2p",
+            is_siot=True,
+        )
+        process = mock.Mock()
+        process.poll.return_value = None
+        process.stdin = mock.Mock(closed=False)
+        event_queue = object()
+
+        with mock.patch.object(log_page_module, "resolve_device_credentials", return_value=(credentials, None)):
+            with mock.patch.object(worker, "_emit_device"):
+                with mock.patch.object(worker, "_start_process", return_value=(process, event_queue)):
+                    with mock.patch.object(worker, "_wait_for_connect"):
+                        with mock.patch.object(
+                            worker,
+                            "_run_command",
+                            return_value={"success": True, "message": "Linux", "saved_file": "", "missing_file": ""},
+                        ):
+                            with mock.patch.object(
+                                worker,
+                                "_send_payload",
+                                side_effect=ValueError("write to closed file"),
+                            ) as send_payload:
+                                with mock.patch.object(worker, "_drain_until_disconnected") as drain_until_disconnected:
+                                    with mock.patch.object(worker, "_close_process") as close_process:
+                                        with mock.patch.object(log_page_module.logger, "warning") as logger_warning:
+                                            result = worker._process_single_device("LOG-SN-001")
+
+        self.assertEqual("完成", result["status"])
+        send_payload.assert_called_once_with(process, {"action": "disconnect"})
+        drain_until_disconnected.assert_not_called()
+        logger_warning.assert_not_called()
+        close_process.assert_called_once_with(process)
 
 
 if __name__ == "__main__":
