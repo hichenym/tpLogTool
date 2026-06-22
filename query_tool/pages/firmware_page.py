@@ -155,6 +155,23 @@ class FirmwarePage(BasePage):
         label.setStyleSheet("border: none;")
         return label
 
+    @staticmethod
+    def _get_icon_button_stylesheet():
+        return """
+        QPushButton {
+            min-width: 0px;
+            padding: 0px;
+            text-align: center;
+        }
+        """
+
+    def _apply_icon_button_style(self, button):
+        button.setStyleSheet(self._get_icon_button_stylesheet())
+
+    @staticmethod
+    def _apply_hint_label_style(label):
+        label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px; border: none;")
+
     def _control_height(self, extra_padding: int = 12, minimum: int = 32) -> int:
         metrics = QFontMetrics(self.font())
         return max(minimum, metrics.height() + extra_padding)
@@ -386,11 +403,12 @@ class FirmwarePage(BasePage):
         # 上一页按钮
         self.prev_btn = PushButton()
         self.prev_btn.setIcon(QIcon(":/icons/common/ssy.png"))
-        self.prev_btn.setIconSize(QSize(18, 18))
+        self.prev_btn.setIconSize(QSize(16, 16))
         self.prev_btn.setFixedSize(36, 32)
         self.prev_btn.setEnabled(False)
         self.prev_btn.clicked.connect(self.on_prev_page)
-        
+        self._apply_icon_button_style(self.prev_btn)
+
         # 页码标签
         self.page_label = BodyLabel("[0/0]")
         self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
@@ -401,22 +419,25 @@ class FirmwarePage(BasePage):
         # 下一页按钮
         self.next_btn = PushButton()
         self.next_btn.setIcon(QIcon(":/icons/common/xyy.png"))
-        self.next_btn.setIconSize(QSize(18, 18))
+        self.next_btn.setIconSize(QSize(16, 16))
         self.next_btn.setFixedSize(36, 32)
         self.next_btn.setEnabled(False)
         self.next_btn.clicked.connect(self.on_next_page)
-        
+        self._apply_icon_button_style(self.next_btn)
+
         pagination_layout.addWidget(self.prev_btn)
         pagination_layout.addWidget(self.page_label)
         pagination_layout.addWidget(self.next_btn)
         pagination_layout.addStretch()
-        
+
         # 提示文本
         self.tip_label = BodyLabel("提示: 双击单元格修改固件信息，右键表格展开更多操作")
-        self.tip_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
+        self._apply_hint_label_style(self.tip_label)
         self.tip_label.setMinimumHeight(label_height)
+        self.tip_label.setWordWrap(False)
+        self.tip_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.tip_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        
+
         pagination_layout.addWidget(self.tip_label)
         
         group_layout.addWidget(self.result_table)
@@ -1413,5 +1434,9 @@ class FirmwarePage(BasePage):
         if hasattr(self, 'page_label'):
             self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         if hasattr(self, 'tip_label'):
-            self.tip_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
+            self._apply_hint_label_style(self.tip_label)
+        if hasattr(self, 'prev_btn'):
+            self._apply_icon_button_style(self.prev_btn)
+        if hasattr(self, 'next_btn'):
+            self._apply_icon_button_style(self.next_btn)
 

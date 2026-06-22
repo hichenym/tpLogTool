@@ -586,10 +586,11 @@ class ErrorRecordPage(BasePage):
 
         self.prev_btn = PushButton()
         self.prev_btn.setIcon(QIcon(":/icons/common/ssy.png"))
-        self.prev_btn.setIconSize(QSize(18, 18))
+        self.prev_btn.setIconSize(QSize(16, 16))
         self.prev_btn.setFixedSize(36, 32)
         self.prev_btn.setEnabled(False)
         self.prev_btn.clicked.connect(self.on_prev_page)
+        self._apply_icon_button_style(self.prev_btn)
 
         self.page_label = BodyLabel("[0/0]")
         self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
@@ -599,10 +600,11 @@ class ErrorRecordPage(BasePage):
 
         self.next_btn = PushButton()
         self.next_btn.setIcon(QIcon(":/icons/common/xyy.png"))
-        self.next_btn.setIconSize(QSize(18, 18))
+        self.next_btn.setIconSize(QSize(16, 16))
         self.next_btn.setFixedSize(36, 32)
         self.next_btn.setEnabled(False)
         self.next_btn.clicked.connect(self.on_next_page)
+        self._apply_icon_button_style(self.next_btn)
 
         self.total_label = BodyLabel("")
         self.total_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
@@ -648,6 +650,19 @@ class ErrorRecordPage(BasePage):
         lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         lbl.setStyleSheet("border: none;")
         return lbl
+
+    @staticmethod
+    def _get_icon_button_stylesheet():
+        return """
+        QPushButton {
+            min-width: 0px;
+            padding: 0px;
+            text-align: center;
+        }
+        """
+
+    def _apply_icon_button_style(self, button):
+        button.setStyleSheet(self._get_icon_button_stylesheet())
 
     def _make_lineedit(self, placeholder):
         w = LineEdit()
@@ -1174,6 +1189,10 @@ class ErrorRecordPage(BasePage):
             self.page_label.setStyleSheet(f"color: {t('text_primary')}; font-size: 12px;")
         if hasattr(self, 'total_label'):
             self.total_label.setStyleSheet(f"color: {t('text_hint')}; font-size: 11px;")
+        if hasattr(self, 'prev_btn'):
+            self._apply_icon_button_style(self.prev_btn)
+        if hasattr(self, 'next_btn'):
+            self._apply_icon_button_style(self.next_btn)
 
     def cleanup(self):
         if hasattr(self, '_query_thread') and self._query_thread:

@@ -16,7 +16,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 from PyQt5.QtCore import QPointF, QRectF, QSize, QThread, QTimer, Qt, QUrl, pyqtSignal
-from PyQt5.QtGui import QDesktopServices, QFontMetrics, QIcon, QTextDocument
+from PyQt5.QtGui import QDesktopServices, QColor, QFontMetrics, QIcon, QTextDocument
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QStyledItemDelegate,
     QStyle,
+    QStyleOptionViewItem,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -54,7 +55,12 @@ from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.logger import logger
 from query_tool.utils.siot_debug import DEFAULT_COMMAND_TIMEOUT_MS, is_getsystemcfg_command, is_syscmd_family_command
 from query_tool.utils.siot_debug.service import resolve_device_credentials
-from query_tool.utils.theme_manager import t
+from query_tool.utils.theme_manager import t, theme_manager
+
+try:
+    from qfluentwidgets.components.widgets.table_view import TableItemDelegate as FluentTableItemDelegate
+except Exception:  # pragma: no cover - runtime fallback
+    FluentTableItemDelegate = QStyledItemDelegate
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -82,7 +88,7 @@ class CommandPlainTextEdit(PlainTextEdit):
         self.focus_lost.emit()
 
 
-class RichTextItemDelegate(QStyledItemDelegate):
+class RichTextItemDelegate(FluentTableItemDelegate):
     """支持按行着色的表格委托。"""
 
     def paint(self, painter, option, index):
@@ -91,15 +97,9 @@ class RichTextItemDelegate(QStyledItemDelegate):
             super().paint(painter, option, index)
             return
 
-        option_copy = option
+        option_copy = QStyleOptionViewItem(option)
         self.initStyleOption(option_copy, index)
-        option_copy.text = ""
-
-        style = option.widget.style() if option.widget else None
-        if style is None:
-            style = self.parent().style() if self.parent() is not None else None
-        if style is not None:
-            style.drawControl(QStyle.CE_ItemViewItem, option_copy, painter, option.widget)
+        self._paint_cell_background(painter, option_copy, index)
 
         document = QTextDocument()
         document.setDefaultFont(option.font)
@@ -147,6 +147,92 @@ class RichTextItemDelegate(QStyledItemDelegate):
                 f'overflow-wrap: anywhere; word-break: break-word;">{text}</div>'
             )
         return "".join(lines)
+
+    @staticmethod
+    def _to_qcolor(color_value: str) -> QColor:
+        raw = str(color_value or "").strip()
+        rgba_match = re.fullmatch(
+            r"rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*([0-9]*\.?[0-9]+))?\s*\)",
+            raw,
+            re.IGNORECASE,
+        )
+        if rgba_match:
+            red, green, blue = (max(0, min(255, int(rgba_match.group(i)))) for i in range(1, 4))
+            alpha_raw = rgba_match.group(4)
+            if alpha_raw is None:
+                alpha = 255
+            else:
+                alpha_value = float(alpha_raw)
+                alpha = round(alpha_value * 255) if alpha_value <= 1 else round(alpha_value)
+                alpha = max(0, min(255, alpha))
+            return QColor(red, green, blue, alpha)
+
+        color = QColor(raw)
+        if color.isValid():
+            return color
+        return QColor(0, 0, 0, 0)
+
+    def _paint_cell_background(self, painter, option, index):
+        parent = self.parent()
+        base_delegate = getattr(parent, "delegate", None)
+        if base_delegate is not None and base_delegate is not self:
+            for attr in ("margin", "hoverRow", "pressedRow", "lightCheckedColor", "darkCheckedColor"):
+                if hasattr(base_delegate, attr):
+                    setattr(self, attr, getattr(base_delegate, attr))
+            if hasattr(base_delegate, "selectedRows"):
+                self.selectedRows = set(getattr(base_delegate, "selectedRows", set()))
+
+        if not all(hasattr(self, attr) for attr in ("margin", "hoverRow", "pressedRow", "selectedRows")):
+            painter.fillRect(option.rect, self._to_qcolor(t("bg_mid")))
+            if bool(option.state & QStyle.State_Selected):
+                painter.fillRect(option.rect, self._to_qcolor(t("accent_select")))
+            return
+
+        painter.save()
+        try:
+            painter.setPen(Qt.NoPen)
+            painter.setRenderHint(painter.Antialiasing)
+            painter.setClipping(True)
+            painter.setClipRect(option.rect)
+
+            draw_option = QStyleOptionViewItem(option)
+            draw_option.rect.adjust(0, self.margin, 0, -self.margin)
+
+            is_hover = self.hoverRow == index.row()
+            is_pressed = self.pressedRow == index.row()
+            is_alternate = index.row() % 2 == 0 and parent.alternatingRowColors()
+            is_selected = index.row() in self.selectedRows
+            is_dark = theme_manager.is_dark
+
+            channel = 255 if is_dark else 0
+            alpha = 0
+            if not is_selected:
+                if is_pressed:
+                    alpha = 9 if is_dark else 6
+                elif is_hover:
+                    alpha = 12
+                elif is_alternate:
+                    alpha = 5
+            else:
+                if is_pressed:
+                    alpha = 15 if is_dark else 9
+                elif is_hover:
+                    alpha = 25
+                else:
+                    alpha = 17
+
+            background_brush = index.data(Qt.BackgroundRole)
+            if background_brush:
+                painter.setBrush(background_brush)
+            else:
+                painter.setBrush(QColor(channel, channel, channel, alpha))
+
+            if hasattr(self, "_drawBackground"):
+                self._drawBackground(painter, draw_option, index)
+            else:
+                painter.drawRect(draw_option.rect)
+        finally:
+            painter.restore()
 
 
 class BatchLogFetchThread(QThread):
@@ -1016,6 +1102,55 @@ class LogPage(BasePage):
                 """
             )
 
+    @staticmethod
+    def _apply_hint_text_label_style(label, color_role="text_primary"):
+        label.setAttribute(Qt.WA_StyledBackground, True)
+        label.setStyleSheet(
+            f"color: {t(color_role)}; background: transparent; background-color: transparent; border: none;"
+        )
+
+    @staticmethod
+    def _apply_checkbox_text_style(checkbox, color_role="text_primary"):
+        checkbox.setAttribute(Qt.WA_StyledBackground, True)
+        checkbox.setStyleSheet(
+            f"""
+            QCheckBox {{
+                color: {t(color_role)};
+                background: transparent;
+                background-color: transparent;
+                border: none;
+            }}
+            """
+        )
+
+    @staticmethod
+    def _get_icon_button_stylesheet():
+        return f"""
+        QPushButton {{
+            min-width: 0px;
+            padding: 0px;
+            text-align: center;
+            border: 1px solid {t('border')};
+            border-radius: 4px;
+            background-color: {t('bg_mid')};
+        }}
+        QPushButton:hover {{
+            background-color: {t('bg_hover')};
+            border: 1px solid {t('border_hover')};
+        }}
+        QPushButton:pressed, QPushButton:checked {{
+            background-color: {t('bg_pressed')};
+            border: 1px solid {t('border_hover')};
+        }}
+        QPushButton:disabled {{
+            background-color: {t('bg_dark')};
+            border: 1px solid {t('border_dark')};
+        }}
+        """
+
+    def _apply_icon_button_style(self, button):
+        button.setStyleSheet(self._get_icon_button_stylesheet())
+
     def _create_card_section(self, title, vertical_policy=QSizePolicy.Fixed):
         card = ElevatedCardWidget(self)
         card.setObjectName(f"logPageCard{len(self._cards) + 1}")
@@ -1040,16 +1175,18 @@ class LogPage(BasePage):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(8)
 
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(8)
+        header_layout = None
+        if title:
+            header_layout = QHBoxLayout()
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.setSpacing(8)
 
-        title_label = BodyLabel(title)
-        self._card_title_labels.append(title_label)
-        self._apply_card_title_style(title_label)
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
+            title_label = BodyLabel(title)
+            self._card_title_labels.append(title_label)
+            self._apply_card_title_style(title_label)
+            header_layout.addWidget(title_label)
+            header_layout.addStretch()
+            layout.addLayout(header_layout)
 
         self._apply_card_style(card)
         return card, layout, header_layout
@@ -1062,9 +1199,58 @@ class LogPage(BasePage):
         if not QFLUENT_WIDGETS_AVAILABLE:
             widget.setStyleSheet(self._get_rich_text_edit_stylesheet())
 
+    @staticmethod
+    def _get_result_table_stylesheet():
+        return f"""
+        QTableWidget {{
+            background-color: {t('bg_mid')};
+            alternate-background-color: {t('bg_mid')};
+            color: {t('text_primary')};
+            gridline-color: {t('border')};
+            border: 1px solid {t('border')};
+            selection-background-color: {t('accent_select')};
+            selection-color: {t('text_primary')};
+            show-decoration-selected: 0;
+        }}
+        QTableWidget::item {{
+            background-color: {t('bg_mid')};
+            color: {t('text_primary')};
+            padding-right: 10px;
+            border: none;
+            outline: none;
+        }}
+        QTableWidget::item:selected {{
+            background-color: {t('accent_select')};
+            color: {t('text_primary')};
+            border: none;
+            outline: none;
+        }}
+        QTableWidget::item:focus {{
+            background-color: {t('accent_select')};
+            border: none;
+            outline: none;
+        }}
+        QTableWidget:focus {{
+            outline: none;
+            border: 1px solid {t('border')};
+        }}
+        QHeaderView::section {{
+            background-color: {t('bg_dark')};
+            color: {t('text_primary')};
+            border: 1px solid {t('border')};
+            padding: 4px;
+        }}
+        QTableCornerButton::section {{
+            background-color: {t('bg_dark')};
+            border: 1px solid {t('border')};
+        }}
+        """
+
     def _apply_table_style(self):
-        if hasattr(self, "result_table") and not QFLUENT_WIDGETS_AVAILABLE:
-            StyleManager.apply_to_widget(self.result_table, "TABLE")
+        if hasattr(self, "result_table"):
+            self.result_table.setShowGrid(True)
+            self.result_table.setFrameShape(TableWidget.NoFrame)
+            self.result_table.setStyleSheet(self._get_result_table_stylesheet())
 
     def _control_height(self, extra_padding: int = 12, minimum: int = 32) -> int:
         metrics = QFontMetrics(self.font())
@@ -1115,6 +1301,7 @@ class LogPage(BasePage):
         self.command_edit_btn.setFixedWidth(control_height)
         self.command_edit_btn.setIconSize(QSize(16, 16))
         self.command_edit_btn.clicked.connect(self.on_command_edit_button_clicked)
+        self._apply_icon_button_style(self.command_edit_btn)
         command_header_layout.addWidget(self.command_edit_btn)
         self.command_input = CommandPlainTextEdit()
         self.command_input.setPlaceholderText("一行一条命令")
@@ -1137,10 +1324,11 @@ class LogPage(BasePage):
         bottom_layout.setContentsMargins(2, 2, 2, 2)
         bottom_layout.setSpacing(6)
 
-        download_label = BodyLabel("保存位置:")
-        download_label.setFixedWidth(64)
-        download_label.setFixedHeight(control_height)
-        download_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.download_label = BodyLabel("保存位置:")
+        self.download_label.setFixedWidth(64)
+        self.download_label.setFixedHeight(control_height)
+        self.download_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._apply_hint_text_label_style(self.download_label)
         self.download_path_label = PathDisplayLabel()
         self.download_path_label.setFixedHeight(control_height)
         self.download_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -1153,6 +1341,7 @@ class LogPage(BasePage):
         self.choose_download_path_btn.setFixedSize(36, control_height)
         self.choose_download_path_btn.setToolTip("选择保存目录")
         self.choose_download_path_btn.clicked.connect(self.choose_download_directory)
+        self._apply_icon_button_style(self.choose_download_path_btn)
 
         self.fetch_btn = PrimaryPushButton("发送")
         self.fetch_btn.setIcon(QIcon(":/icons/common/run.png"))
@@ -1161,7 +1350,7 @@ class LogPage(BasePage):
         self.fetch_btn.setToolTip("执行命令")
         self.fetch_btn.clicked.connect(self.on_fetch_clicked)
 
-        bottom_layout.addWidget(download_label)
+        bottom_layout.addWidget(self.download_label)
         bottom_layout.addWidget(self.download_path_label, 1)
         bottom_layout.addWidget(self.choose_download_path_btn)
         bottom_layout.addSpacing(6)
@@ -1195,6 +1384,8 @@ class LogPage(BasePage):
         self.result_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.result_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.result_table.setWordWrap(False)
+        self.result_table.setShowGrid(True)
+        self.result_table.setFrameShape(TableWidget.NoFrame)
         self.result_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.result_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
         self.result_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Interactive)
@@ -1220,10 +1411,11 @@ class LogPage(BasePage):
         self.result_select_all_checkbox.setTristate(False)
         self.result_select_all_checkbox.setEnabled(False)
         self.result_select_all_checkbox.stateChanged.connect(self.on_result_select_all_changed)
+        self._apply_checkbox_text_style(self.result_select_all_checkbox)
         table_action_row.addWidget(self.result_select_all_checkbox)
 
         self.result_selection_label = BodyLabel("未选择设备")
-        self.result_selection_label.setStyleSheet(f"color: {t('text_secondary')}; border: none;")
+        self._apply_hint_text_label_style(self.result_selection_label, "text_secondary")
         table_action_row.addWidget(self.result_selection_label)
         table_action_row.addStretch()
 
@@ -1245,12 +1437,13 @@ class LogPage(BasePage):
         self.result_corner_checkbox.setEnabled(False)
         self.result_corner_checkbox.stateChanged.connect(self.on_corner_select_all_changed)
         corner_widget = QWidget()
+        corner_widget.setStyleSheet("background: transparent; background-color: transparent; border: none;")
         corner_layout = QHBoxLayout(corner_widget)
         corner_layout.setContentsMargins(0, 0, 0, 0)
         corner_layout.addWidget(self.result_corner_checkbox, 0, Qt.AlignCenter)
         self.result_table.setCornerWidget(corner_widget)
 
-        self.detail_panel, detail_layout, _detail_header_layout = self._create_subsection_card("设备执行详情")
+        self.detail_panel, detail_layout, _detail_header_layout = self._create_subsection_card("")
 
         self.detail_view = TextEdit()
         self.detail_view.setReadOnly(True)
@@ -1760,12 +1953,20 @@ class LogPage(BasePage):
             self._apply_plain_text_edit_style(self.command_input)
         if hasattr(self, "download_path_label"):
             self.download_path_label.setStyleSheet(self._get_download_path_label_stylesheet())
+        if hasattr(self, "download_label"):
+            self._apply_hint_text_label_style(self.download_label)
         if hasattr(self, "summary_label"):
             self.summary_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
         if hasattr(self, "detail_header_label"):
             self.detail_header_label.setStyleSheet("margin: 0px; padding: 0px; border: none;")
         if hasattr(self, "result_selection_label"):
-            self.result_selection_label.setStyleSheet(f"color: {t('text_secondary')}; border: none;")
+            self._apply_hint_text_label_style(self.result_selection_label, "text_secondary")
+        if hasattr(self, "result_select_all_checkbox"):
+            self._apply_checkbox_text_style(self.result_select_all_checkbox)
+        for attr in ("command_edit_btn", "choose_download_path_btn"):
+            button = getattr(self, attr, None)
+            if button is not None:
+                self._apply_icon_button_style(button)
         if hasattr(self, "detail_view"):
             self._apply_rich_text_edit_style(self.detail_view)
         if hasattr(self, "result_table"):
@@ -2073,7 +2274,7 @@ class LogPage(BasePage):
         payload = self._device_payloads.get((sn or "").strip())
         if not payload:
             self.detail_view.setHtml(
-                f'<div style="color: {t("text_secondary")};"><b>设备执行详情</b><br/><br/>选择一台设备后，可在这里查看完整执行详情。</div>'
+                f'<div style="color: {t("text_hint")}; font-size: 11px;">选择一台设备后，可在这里查看完整执行详情。</div>'
             )
             return
 
