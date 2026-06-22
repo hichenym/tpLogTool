@@ -6,7 +6,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 APP_ENTRY = PROJECT_ROOT / "run.py"
-HELPER_ENTRY = PROJECT_ROOT / "siot_helper.py"
+HELPER_ENTRY = PROJECT_ROOT / "query_tool" / "utils" / "siot_debug" / "siot_helper.py"
 
 
 def _is_compiled_app() -> bool:
@@ -29,7 +29,7 @@ def _is_real_app_executable(path_like: str | None) -> bool:
 
 def _get_current_program() -> str:
     if _is_compiled_app():
-        # Nuitka onefile 场景优先复用当前已展开的运行体，避免每次内部命令都重新拉起外层 stub。
+        # 打包态优先复用当前 exe，避免内部命令再次拉起外层启动器。
         for candidate in (sys.executable, sys.argv[0] if sys.argv else ""):
             if _is_real_app_executable(candidate):
                 return str(Path(candidate).resolve())

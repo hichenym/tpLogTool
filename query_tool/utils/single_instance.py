@@ -25,15 +25,6 @@ def build_server_name(scope_path: str) -> str:
 
 def get_current_scope_path() -> str:
     """获取当前应用实例作用域路径。"""
-    try:
-        from query_tool.utils.update_downloader import UpdateInstaller
-
-        launcher_path = UpdateInstaller.get_launcher_executable_path()
-        if launcher_path:
-            return _normalize_scope_path(launcher_path)
-    except Exception:
-        pass
-
     for candidate in (sys.argv[0] if sys.argv else "", sys.executable, __file__):
         if candidate:
             return _normalize_scope_path(candidate)

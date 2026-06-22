@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QCheckBox, QFrame, QMessageBox, QTabWidget, QWidget,
     QScrollArea, QGroupBox
 )
-from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QSize
 from PyQt5.QtGui import QCursor, QIcon
 from query_tool.widgets.adaptive_dialog import AdaptiveDialog
 from query_tool.utils.config import (
@@ -150,98 +150,6 @@ class VersionLabel(QLabel):
         super().mouseDoubleClickEvent(event)
 
 
-class BreathingLabel(QLabel):
-    """呼吸闪烁标签（用于静默更新提示）"""
-    def __init__(self, parent=None):
-        super().__init__("●", parent)
-        from query_tool.utils.theme_manager import t
-        _hint = t('text_hint')
-        self.setStyleSheet(f"color: {_hint}; font-weight: bold; padding-right: 5px; font-size: 14px;")
-        self._opacity = 1.0
-        self._direction = -1
-        self._timer = QTimer()
-        self._timer.timeout.connect(self._update_opacity)
-        self._is_running = False
-        self._current_color = _hint
-        self._is_breathing = True  # 是否呼吸
-    
-    def setVisible(self, visible):
-        """重写setVisible以控制定时器"""
-        super().setVisible(visible)
-        if visible and not self._is_running and self._is_breathing:
-            # 显示时启动定时器，降低频率到 100ms
-            self._timer.start(100)
-            self._is_running = True
-        elif not visible and self._is_running:
-            # 隐藏时停止定时器
-            self._timer.stop()
-            self._is_running = False
-    
-    def _update_opacity(self):
-        """更新透明度实现呼吸效果"""
-        self._opacity += self._direction * 0.03  # 降低步长，使呼吸更慢
-        
-        # 反向改变方向
-        if self._opacity >= 1.0:
-            self._opacity = 1.0
-            self._direction = -1
-        elif self._opacity <= 0.4:
-            self._opacity = 0.4
-            self._direction = 1
-        
-        # 使用当前颜色，通过改变透明度来实现呼吸效果
-        # 从十六进制颜色提取 RGB
-        color_hex = self._current_color.lstrip('#')
-        r = int(color_hex[0:2], 16)
-        g = int(color_hex[2:4], 16)
-        b = int(color_hex[4:6], 16)
-        
-        # 应用透明度
-        r_new = int(r * self._opacity)
-        g_new = int(g * self._opacity)
-        b_new = int(b * self._opacity)
-        
-        color_new = f"#{r_new:02x}{g_new:02x}{b_new:02x}"
-        self.setStyleSheet(f"color: {color_new}; font-weight: bold; padding-right: 5px; font-size: 14px;")
-    
-    def set_color(self, color_hex: str, breathing: bool = True):
-        """
-        设置颜色并控制是否呼吸
-        
-        Args:
-            color_hex: 颜色代码，如 "#888888"
-            breathing: 是否呼吸闪烁
-        """
-        self._current_color = color_hex
-        self._is_breathing = breathing
-        
-        if not breathing:
-            # 停止呼吸，显示固定颜色
-            if self._is_running:
-                self._timer.stop()
-                self._is_running = False
-            self._opacity = 1.0
-            self.setStyleSheet(f"color: {color_hex}; font-weight: bold; padding-right: 5px; font-size: 14px;")
-        else:
-            # 开始呼吸
-            if self.isVisible() and not self._is_running:
-                self._timer.start(100)
-                self._is_running = True
-    
-    def stop(self):
-        """停止呼吸动画"""
-        if self._is_running:
-            self._timer.stop()
-            self._is_running = False
-        self._is_breathing = False
-        self.setStyleSheet(f"color: {self._current_color}; font-weight: bold; padding-right: 5px; font-size: 14px;")
-
-
-class UpdateCheckSignals(QWidget):
-    """更新检查信号发射器"""
-    update_check_result = pyqtSignal(bool, object, str)  # (has_update, version_info, message)
-
-
 class PlainTextEdit(QTextEdit):
     """纯文本输入框，粘贴时自动清除格式"""
     def insertFromMimeData(self, source):
@@ -283,10 +191,6 @@ class SettingsDialog(AdaptiveDialog):
         
         # 保存初始标签页索引
         self.initial_tab = initial_tab
-        
-        # 创建信号发射器
-        self.update_signals = UpdateCheckSignals()
-        self.update_signals.update_check_result.connect(self._on_update_check_result)
         
         # 加载设备账号配置
         self.env, self.device_username, self.device_password = get_account_config()
@@ -502,16 +406,14 @@ class SettingsDialog(AdaptiveDialog):
         return tab
 
     def create_about_tab(self):
-        """创建关于/更新标签页"""
+        """创建关于标签页。"""
         from query_tool.version import get_short_version, get_build_date_formatted
-        from query_tool.utils.update_checker import UpdateChecker
 
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
         tab_layout.setSpacing(15)
         tab_layout.setContentsMargins(15, 15, 15, 10)
 
-        # 版本信息组
         version_group = QGroupBox("版本信息")
         version_group.setStyleSheet(StyleManager.get_GROUP_BOX())
 
@@ -519,57 +421,20 @@ class SettingsDialog(AdaptiveDialog):
         version_layout.setSpacing(8)
         version_layout.setContentsMargins(15, 15, 15, 15)
 
-        # 当前版本（双击显示详细信息）
         self.current_version_label = VersionLabel(f"当前版本：{get_short_version()}")
         self.current_version_label.setStyleSheet(f"color: {t('text_primary')};")
         self.current_version_label.double_clicked = self.on_version_double_click
-        
-        # 保存版本信息用于切换显示
+
         self.short_version = get_short_version()
         self.build_date = get_build_date_formatted()
         self.show_detail = False
-        
+
+        build_date_label = QLabel(f"编译日期：{self.build_date}")
+        build_date_label.setStyleSheet(f"color: {t('text_secondary')};")
+
         version_layout.addWidget(self.current_version_label)
-
+        version_layout.addWidget(build_date_label)
         tab_layout.addWidget(version_group)
-
-        # 检查更新策略，决定是否显示更新检测组
-        current_version = get_short_version().replace('V', '')
-        checker = UpdateChecker(current_version)
-        update_strategy = checker.should_auto_check()  # 获取更新策略
-        
-        # 从缓存加载版本信息以获取更新策略
-        cached_info = checker._load_cache()
-        if cached_info:
-            update_strategy_str = cached_info.update_strategy
-        else:
-            update_strategy_str = 'prompt'  # 默认策略
-
-        force_show_check_update_btn = bool(
-            getattr(self.main_window, 'debug_force_show_check_update_button', False)
-        )
-
-        # 只有当更新策略不是静默自动下载类时才显示更新检测组
-        if force_show_check_update_btn or update_strategy_str not in ('silent', 'auto'):
-            # 更新检测组
-            update_group = QGroupBox("更新检测")
-            update_group.setStyleSheet(StyleManager.get_GROUP_BOX())
-
-            update_layout = QVBoxLayout(update_group)
-            update_layout.setSpacing(12)
-            update_layout.setContentsMargins(15, 15, 15, 15)
-
-            # 检查更新按钮
-            self.check_update_btn_widget = QPushButton("检查更新")
-            self.check_update_btn_widget.setFixedSize(120, 32)
-            self.check_update_btn_widget.clicked.connect(self.on_check_update)
-            update_layout.addWidget(self.check_update_btn_widget)
-
-            tab_layout.addWidget(update_group)
-        else:
-            # 静默自动下载模式，不显示检查更新按钮
-            self.check_update_btn_widget = None
-
         tab_layout.addStretch()
         return tab
     
@@ -586,119 +451,6 @@ class SettingsDialog(AdaptiveDialog):
             # 只显示版本号
             self.current_version_label.setText(f"当前版本：{self.short_version}")
 
-    def on_check_update(self):
-        """检查更新"""
-        from PyQt5.QtWidgets import QApplication
-        from query_tool.version import get_short_version
-        from query_tool.utils.update_checker import UpdateChecker
-        from query_tool.utils.logger import logger
-
-        logger.info("用户点击检查更新按钮")
-
-        # 检查按钮是否存在（静默更新模式下不存在）
-        if not hasattr(self, 'check_update_btn_widget') or self.check_update_btn_widget is None:
-            logger.warning("检查更新按钮不存在（可能是静默更新模式）")
-            return
-
-        # 禁用按钮
-        self.check_update_btn_widget.setEnabled(False)
-        self.check_update_btn_widget.setText("检查中...")
-        logger.info("按钮已禁用，显示'检查中...'")
-
-        # 禁用保存和取消按钮
-        self.save_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(False)
-
-        # 强制刷新UI
-        QApplication.processEvents()
-
-        try:
-            # 获取当前版本（去掉V前缀）
-            current_version = get_short_version().replace('V', '')
-            logger.info(f"当前版本: {current_version}")
-
-            # 创建更新检查器
-            self.update_checker_temp = UpdateChecker(current_version)
-            logger.info("更新检查器已创建")
-            
-            # 异步检查（强制刷新，忽略缓存）
-            def callback(has_update, version_info, message):
-                logger.info(f"检查更新回调: has_update={has_update}, message={message}")
-                # 使用信号在主线程中处理结果
-                self.update_signals.update_check_result.emit(has_update, version_info, message)
-            
-            logger.info("启动异步检查更新（强制刷新）")
-            self.update_checker_temp.check_update_async_force_refresh(callback)
-
-        except Exception as e:
-            # 检查失败
-            logger.error(f"检查更新失败: {e}", exc_info=True)
-
-            if self.main_window and hasattr(self.main_window, 'show_error'):
-                self.main_window.show_error(f"检查更新失败：{str(e)}")
-            else:
-                logger.error(f"无法显示错误消息: main_window={self.main_window}")
-            
-            self._restore_buttons()
-    
-    def _on_update_check_result(self, has_update, version_info, message):
-        """处理更新检查结果"""
-        from query_tool.version import get_short_version
-        from query_tool.utils.logger import logger
-        
-        logger.info(f"处理更新检查结果: has_update={has_update}, message={message}")
-        
-        try:
-            if has_update:
-                # 有新版本，显示更新提示对话框
-                current_version = get_short_version().replace('V', '')
-                logger.info(f"发现新版本: {version_info.version}")
-                
-                if self.main_window:
-                    if hasattr(self.main_window, 'show_update_prompt_dialog'):
-                        logger.info("调用 show_update_prompt_dialog")
-                        self.main_window.show_update_prompt_dialog(version_info, current_version)
-                    else:
-                        logger.error("main_window 没有 show_update_prompt_dialog 方法")
-                else:
-                    logger.error("main_window 为 None")
-            else:
-                # 已是最新版本
-                logger.info(f"检查结果: {message}")
-                
-                if self.main_window:
-                    if hasattr(self.main_window, 'show_success'):
-                        logger.info("调用 show_success")
-                        self.main_window.show_success("已是最新版本")
-                    else:
-                        logger.error("main_window 没有 show_success 方法")
-                else:
-                    logger.error("main_window 为 None")
-        except Exception as e:
-            logger.error(f"处理更新检查结果失败: {e}", exc_info=True)
-        finally:
-            self._restore_buttons()
-    
-    def _restore_buttons(self):
-        """恢复按钮状态"""
-        if hasattr(self, 'check_update_btn_widget') and self.check_update_btn_widget is not None:
-            self.check_update_btn_widget.setEnabled(True)
-            self.check_update_btn_widget.setText("检查更新")
-        
-        self.save_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(True)
-
-
-    def _format_date(self, date_str: str) -> str:
-        """格式化日期"""
-        try:
-            if len(date_str) == 8:
-                return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-            return date_str
-        except:
-            return date_str
-
-    
     def on_file_log_changed(self, state):
         """文件日志复选框状态改变"""
         from query_tool.utils.logger import logger
@@ -853,9 +605,6 @@ class SettingsDialog(AdaptiveDialog):
         if device_saved and firmware_saved and seetong_saved:
             if self.main_window and hasattr(self.main_window, 'show_success'):
                 self.main_window.show_success("配置已保存！")
-            # 保存成功后同步用户版本信息
-            from query_tool.utils.data_sync import sync_user_version
-            sync_user_version()
             self.accept()
         else:
             if self.main_window and hasattr(self.main_window, 'show_error'):

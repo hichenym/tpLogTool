@@ -164,6 +164,7 @@ tpLogTool/
 │   │   ├── device_query.py
 │   │   ├── workers.py
 │   │   └── siot_debug/          # 调试/命令公共模块
+│   │       └── siot_helper.py   # 开发态内部 SIOT 命令入口
 │   ├── widgets/
 │   ├── main.py
 │   └── version.py
@@ -174,15 +175,14 @@ tpLogTool/
 ├── docs/
 ├── scripts/
 │   ├── build.py
-│   ├── release.py
 │   └── clean.py
 ├── requirements.txt
 └── run.py
 ```
 
-## 打包发布
+## 本地打包
 
-当前本地打包使用 `Nuitka`：
+当前本地打包使用 `PyInstaller`：
 
 ```bash
 python scripts/build.py

@@ -1,6 +1,5 @@
 import sys
 import os
-import json
 
 # 添加项目根目录到 Python 路径（支持直接运行 main.py）
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,14 +47,6 @@ from query_tool.widgets import SettingsDialog, TaskCenterDialog
 # 禁用SSL警告
 requests.packages.urllib3.disable_warnings()
 
-# 调试开关：改为 True 后，程序启动时会强制弹出“更新完成重启”弹窗
-FORCE_SHOW_UPDATE_COMPLETE_DIALOG = False
-# 调试开关：改为 True 后，在设置页“版本信息”区域强制显示“检查更新”按钮
-FORCE_SHOW_CHECK_UPDATE_BUTTON = False
-# 调试开关：改为 True 后，程序启动时会强制弹出“发现新版本”弹窗
-FORCE_SHOW_UPDATE_PROMPT_DIALOG = False
-
-
 def set_title_bar_theme(window, dark: bool = True):
     """设置标题栏深/浅色模式（Windows 10/11）"""
     try:
@@ -92,12 +83,7 @@ class MainWindow(QMainWindow):
         self.pages = []
         self.page_buttons = []
         
-        # 更新管理器
-        self.update_manager = None
-        self.pending_update_file = None  # 待安装的更新文件
-        self._update_shutdown_requested = False  # 是否正在为更新快速退出
         self._force_close = False  # 是否允许真正退出
-        self.debug_force_show_check_update_button = FORCE_SHOW_CHECK_UPDATE_BUTTON
         self._tray_icon = None
         self._tray_message_shown = False
         self._task_button_movie = None
@@ -113,23 +99,11 @@ class MainWindow(QMainWindow):
         
         # 监听主题切换
         theme_manager.theme_changed.connect(self._on_theme_changed)
-        # 启动时检查更新
-        QTimer.singleShot(2000, self.check_update_on_startup)
-
-        # 启动时同步用户版本信息到飞书
-        QTimer.singleShot(3000, self._sync_user_data)
-
-        # 定时检查更新（每 6 小时）
-        self._periodic_update_timer = QTimer(self)
-        self._periodic_update_timer.timeout.connect(self._periodic_update_check)
-        self._periodic_update_timer.start(6 * 60 * 60 * 1000)  # 6 小时
 
         self._task_indicator_timer = QTimer(self)
         self._task_indicator_timer.timeout.connect(self.refresh_running_task_indicator)
         self._task_indicator_timer.start(2000)
         QTimer.singleShot(0, self.refresh_running_task_indicator)
-        QTimer.singleShot(600, self._show_debug_update_prompt_dialog_if_needed)
-        QTimer.singleShot(800, self._show_debug_update_complete_dialog_if_needed)
 
     def _get_available_geometry(self):
         """获取当前可用屏幕区域，避开任务栏。"""
@@ -246,18 +220,6 @@ class MainWindow(QMainWindow):
         self.status_label.setStyleSheet(f"color: {theme_manager.token('text_primary')}; padding-left: 5px;")
         self.status_bar.addWidget(self.status_label, 1)
         
-        # 下载进度标签 - 右侧
-        self.download_progress_label = QLabel("")
-        self.download_progress_label.setStyleSheet(f"color: {theme_manager.token('status_info')}; padding-right: 10px;")
-        self.download_progress_label.setVisible(False)  # 默认隐藏
-        self.status_bar.addPermanentWidget(self.download_progress_label)
-        
-        # 呼吸闪烁标签（用于静默更新） - 右侧
-        from query_tool.widgets.custom_widgets import BreathingLabel
-        self.breathing_label = BreathingLabel()
-        self.breathing_label.setVisible(False)  # 默认隐藏
-        self.status_bar.addPermanentWidget(self.breathing_label)
-        
         self.status_bar.showMessage("就绪")
         self.show_info("就绪")
         
@@ -339,25 +301,6 @@ class MainWindow(QMainWindow):
         if app is not None:
             app.setQuitOnLastWindowClosed(True)
         self.close()
-
-    def _exit_for_update_install(self):
-        """进入更新安装专用退出流程。"""
-        from query_tool.utils.logger import logger
-
-        app = QApplication.instance()
-        self._force_close = True
-        self._update_shutdown_requested = True
-        if self._tray_icon is not None:
-            self._tray_icon.hide()
-        if app is not None:
-            app.setQuitOnLastWindowClosed(True)
-
-        logger.info("准备退出整个应用以执行更新安装")
-        self.show_progress("正在重启并安装更新...")
-        self.close()
-
-        if app is not None:
-            app.quit()
 
     def _minimize_on_close(self):
         """点击关闭按钮时最小化而不是直接退出。"""
@@ -510,9 +453,6 @@ class MainWindow(QMainWindow):
             self.status_label.setStyleSheet(
                 f"color: {theme_manager.token('text_primary')}; padding-left: 5px;"
             )
-            self.download_progress_label.setStyleSheet(
-                f"color: {theme_manager.token('status_info')}; padding-right: 10px;"
-            )
             # 刷新标题栏
             set_title_bar_theme(self, theme_manager.is_dark)
         except Exception as e:
@@ -628,28 +568,12 @@ class MainWindow(QMainWindow):
         self._tray_message_shown = app_config.tray_minimize_tip_shown
         if app_config.theme == 'light':
             theme_manager.set_light()
-    def _sync_user_data(self):
-        """同步用户版本信息到飞书"""
-        from query_tool.utils.data_sync import sync_user_version
-        sync_user_version()
     
     def save_config(self):
         """保存配置"""
         for page in self.pages:
             if hasattr(page, 'save_config'):
                 page.save_config()
-
-    def _cancel_update_download_if_needed(self):
-        """在退出前取消仍在进行的更新下载。"""
-        from query_tool.utils.logger import logger
-
-        if self.update_manager and hasattr(self.update_manager, 'downloader'):
-            if self.update_manager.downloader.download_thread and \
-               self.update_manager.downloader.download_thread.isRunning():
-                logger.info("检测到正在下载更新，取消下载...")
-                self.update_manager.downloader.download_thread.cancel()
-                self.download_progress_label.setVisible(False)
-                self.breathing_label.setVisible(False)
 
     def _cleanup_pages_for_exit(self, fast: bool = False):
         """根据退出场景清理页面资源。"""
@@ -669,160 +593,6 @@ class MainWindow(QMainWindow):
                     f"{'fast' if fast else 'normal'}): {e}"
                 )
 
-    def _start_external_update_install(self, file_path: str, restart: bool = True) -> bool:
-        """启动外部更新脚本，然后让当前应用进入更新专用退出流程。"""
-        from query_tool.utils.logger import logger
-        from query_tool.utils.update_downloader import UpdateInstaller
-
-        if not file_path:
-            logger.error("未提供更新文件路径，无法启动安装")
-            return False
-
-        if not os.path.exists(file_path):
-            logger.error(f"更新文件不存在: {file_path}")
-            return False
-
-        if not UpdateInstaller.can_apply_update():
-            logger.warning("当前运行方式不支持自动覆盖安装，跳过更新安装")
-            return False
-
-        logger.info(f"准备启动外部更新安装: {file_path}")
-        UpdateInstaller.launch_update_installer(file_path, restart=restart)
-        self.pending_update_file = file_path
-        self._exit_for_update_install()
-        return True
-
-    def _build_recovery_metadata_from_cache(self, file_path, cached_info):
-        """为旧版本下载包构建兼容的恢复元数据。"""
-        from pathlib import Path
-        from query_tool.utils.logger import logger
-        from query_tool.utils.update_checker import VersionInfo
-
-        if not cached_info:
-            return None
-
-        expected_name = f"TPQueryTool_{cached_info.version}.exe"
-        if Path(file_path).name != expected_name:
-            logger.info(
-                f"缓存版本 {cached_info.version} 与本地安装包文件名不匹配，"
-                f"跳过旧兼容恢复: {file_path}"
-            )
-            return None
-
-        return VersionInfo({
-            "version": cached_info.version,
-            "build_date": cached_info.build_date,
-            "download_url": cached_info.download_url,
-            "file_size_mb": cached_info.file_size_mb,
-            "file_size_bytes": cached_info.file_size_bytes,
-            "file_hash": cached_info.file_hash,
-            "hash_algorithm": cached_info.hash_algorithm,
-            "checksum_url": cached_info.checksum_url,
-            "release_notes_url": cached_info.release_notes_url,
-            "min_version": cached_info.min_version,
-            "update_strategy": cached_info.update_strategy,
-            "show_change": cached_info.show_change,
-            "changelog": cached_info.changelog,
-        })
-
-    def _verify_downloaded_update_file(self, file_path, version_info):
-        """校验本地已下载更新包，优先哈希，次选文件大小。"""
-        from pathlib import Path
-        from query_tool.utils.logger import logger
-        import hashlib
-
-        file_path = Path(file_path)
-        if not file_path.exists():
-            logger.warning(f"待恢复的更新包不存在: {file_path}")
-            return False
-
-        expected_hash = (getattr(version_info, 'file_hash', '') or '').strip()
-        hash_algorithm = (getattr(version_info, 'hash_algorithm', '') or 'sha256').strip() or 'sha256'
-        if expected_hash:
-            logger.info(f"开始验证文件哈希 ({hash_algorithm})...")
-            try:
-                hash_obj = hashlib.new(hash_algorithm)
-            except Exception as e:
-                logger.error(f"不支持的哈希算法 {hash_algorithm}: {e}")
-                return False
-
-            try:
-                with open(file_path, 'rb') as f:
-                    while True:
-                        chunk = f.read(8192)
-                        if not chunk:
-                            break
-                        hash_obj.update(chunk)
-            except Exception as e:
-                logger.error(f"计算文件哈希失败: {e}")
-                return False
-
-            actual_hash = hash_obj.hexdigest()
-            logger.info(f"期望哈希: {expected_hash}")
-            logger.info(f"实际哈希: {actual_hash}")
-            return actual_hash.lower() == expected_hash.lower()
-
-        expected_size = int(getattr(version_info, 'file_size_bytes', 0) or 0)
-        if expected_size > 0:
-            actual_size = file_path.stat().st_size
-            logger.info(f"未提供哈希，回退到文件大小校验: 期望 {expected_size}，实际 {actual_size}")
-            return actual_size == expected_size
-
-        actual_size = file_path.stat().st_size
-        logger.warning(
-            f"更新元数据未提供哈希和文件大小，无法严格校验；"
-            f"将仅确认文件非空后允许恢复: {file_path}"
-        )
-        return actual_size > 0
-
-    def _find_recoverable_update_package(self, current_version: str):
-        """查找可恢复的已下载更新包及其元数据。"""
-        from pathlib import Path
-        from query_tool.utils.logger import logger
-        from query_tool.utils.update_manager import UpdateManager
-
-        download_dir = Path.home() / '.TPQueryTool' / 'downloads'
-        if not download_dir.exists():
-            return None, None
-
-        exe_files = sorted(
-            download_dir.glob('TPQueryTool_*.exe'),
-            key=lambda item: item.stat().st_mtime,
-            reverse=True,
-        )
-        if not exe_files:
-            return None, None
-
-        cached_info = self.update_manager.checker._load_cache()
-
-        for candidate in exe_files:
-            logger.info(f"检查已下载的更新包: {candidate}")
-            metadata = UpdateManager.load_download_metadata(str(candidate))
-            if metadata is None:
-                metadata = self._build_recovery_metadata_from_cache(candidate, cached_info)
-
-            if metadata is None:
-                logger.info(f"未找到可用元数据，跳过恢复候选: {candidate}")
-                continue
-
-            if self.update_manager.checker._compare_version(metadata.version, current_version) <= 0:
-                logger.info(f"已下载包版本不高于当前版本，跳过: V{metadata.version}")
-                continue
-
-            if not self._verify_downloaded_update_file(candidate, metadata):
-                logger.error(f"更新包校验失败，删除损坏文件: {candidate}")
-                try:
-                    candidate.unlink()
-                except Exception as e:
-                    logger.error(f"删除文件失败: {e}")
-                UpdateManager.remove_download_metadata(str(candidate))
-                continue
-
-            logger.info(f"找到可恢复更新包: {candidate} (V{metadata.version})")
-            return candidate, metadata
-
-        return None, None
-
     def closeEvent(self, event):
         """窗口关闭事件"""
         if not self._force_close:
@@ -831,21 +601,13 @@ class MainWindow(QMainWindow):
             return
         
         # 停止定时器
-        if hasattr(self, '_periodic_update_timer'):
-            self._periodic_update_timer.stop()
         if hasattr(self, '_task_indicator_timer'):
             self._task_indicator_timer.stop()
-        
-        # 停止呼吸动画
-        if hasattr(self, 'breathing_label'):
-            self.breathing_label.stop()
-
-        self._cancel_update_download_if_needed()
 
         # 保存配置
         self.save_config()
 
-        self._cleanup_pages_for_exit(fast=self._update_shutdown_requested)
+        self._cleanup_pages_for_exit()
 
         try:
             pause_all_actionable_tasks(stop_processes=True)
@@ -853,402 +615,6 @@ class MainWindow(QMainWindow):
             pass
 
         event.accept()
-    
-    def _periodic_update_check(self):
-        """定时检查更新（运行期间每 3 小时触发一次，强制刷新，不走缓存）"""
-        try:
-            from query_tool.utils.logger import logger
-            
-            if not hasattr(self, 'update_manager') or self.update_manager is None:
-                return
-            
-            if not self.update_manager.should_auto_check():
-                return
-            
-            logger.info("定时检查更新（强制刷新）...")
-            
-            def callback(has_update, version_info, message):
-                if has_update:
-                    logger.info(f"定时检查发现新版本: {version_info}")
-                    self.update_manager.latest_version_info = version_info
-                    self.update_manager.update_available.emit(version_info)
-                else:
-                    logger.info(f"定时检查更新: {message}")
-            
-            self.update_manager.checker.check_update_async_force_refresh(callback)
-            
-        except Exception as e:
-            from query_tool.utils.logger import logger
-            logger.error(f"定时检查更新失败: {e}")
-
-    def check_update_on_startup(self):
-        """启动时检查更新"""
-        try:
-            from query_tool.utils.update_manager import UpdateManager
-            from query_tool.version import get_short_version
-            from query_tool.utils.logger import logger
-
-            # 获取当前版本号（去掉 V 前缀）
-            current_version = get_short_version().replace('V', '')
-
-            # 创建更新管理器
-            self.update_manager = UpdateManager(current_version, self)
-
-            # 检查下载目录中是否有已下载的文件（用于恢复中断的更新）
-            latest_file, recovered_info = self._find_recoverable_update_package(current_version)
-            if latest_file and recovered_info:
-                logger.info(f"发现已准备好的更新包: {latest_file}")
-                self.update_manager.latest_version_info = recovered_info
-                self.update_manager.downloaded_file_path = str(latest_file)
-                self.pending_update_file = str(latest_file)
-
-                strategy = recovered_info.update_strategy
-                if strategy == 'auto':
-                    from query_tool.utils.update_downloader import UpdateInstaller
-                    if UpdateInstaller.can_apply_update():
-                        logger.info("静默下载并自动重启模式，直接安装已下载的文件")
-                        self._start_external_update_install(str(latest_file), restart=True)
-                        return
-                    logger.warning("当前运行方式不支持自动安装已下载更新，跳过启动时自动应用")
-                elif strategy in ('prompt', 'silent', 'manual'):
-                    logger.info("检测到已下载更新包，显示强制重启弹窗")
-                    self._show_update_complete_dialog_with_focus()
-                    return
-
-            # 检查是否应该自动检查更新
-            if not self.update_manager.should_auto_check():
-                logger.info("更新策略为 manual，跳过自动检查")
-                return
-            
-            # 连接信号
-            self.update_manager.update_available.connect(self.on_update_available)
-            self.update_manager.download_progress.connect(self.on_download_progress)
-            self.update_manager.download_finished.connect(self.on_download_finished)
-            
-            # 异步检查更新
-            logger.info("开始检查更新...")
-            self.update_manager.check_update_async()
-            
-        except Exception as e:
-            from query_tool.utils.logger import logger
-            logger.error(f"检查更新失败: {e}")
-    
-    def on_update_available(self, version_info):
-        """发现新版本"""
-        from query_tool.utils.logger import logger
-        from query_tool.version import get_short_version
-        
-        logger.info(f"发现新版本: {version_info}")
-        
-        strategy = version_info.update_strategy
-        current_version = get_short_version().replace('V', '')
-        
-        if strategy == 'prompt':
-            # 提示更新：显示对话框
-            self.show_update_prompt_dialog(version_info, current_version)
-        
-        elif strategy in ('silent', 'auto'):
-            # 静默更新：后台下载，不显示任何提示
-            logger.info("静默更新模式，开始后台下载...")
-            self.start_download_update(version_info)
-    
-    def show_update_prompt_dialog(self, version_info, current_version):
-        """显示更新提示对话框"""
-        from query_tool.widgets.update_dialog import UpdatePromptDialog
-        from query_tool.utils.logger import logger
-        
-        dialog = UpdatePromptDialog(version_info, current_version, self)
-        
-        # 连接信号
-        dialog.update_now.connect(lambda: self.start_download_update(version_info))
-        dialog.remind_later.connect(lambda: logger.info("用户选择稍后提醒"))
-        dialog.skip_version.connect(lambda: self.on_skip_version(version_info))
-        
-        dialog.exec_()
-    
-    def on_skip_version(self, version_info):
-        """处理跳过版本"""
-        from query_tool.utils.logger import logger
-        
-        logger.info(f"用户跳过版本 {version_info.version}")
-
-        # 记录跳过的版本
-        if self.update_manager:
-            self.update_manager.skip_version(version_info.version)
-            self.show_info(f"已跳过版本 V{version_info.version}，下次不再提示", 3000)
-
-    def start_download_update(self, version_info):
-        """开始下载更新"""
-        from query_tool.utils.logger import logger
-
-        logger.info(f"开始下载更新: {version_info.version}")
-
-        strategy = self.update_manager.get_update_strategy()
-        logger.info(f"更新策略: {strategy}")
-        
-        if strategy in ('silent', 'auto'):
-            # 静默模式：只显示绿色呼吸闪烁提示
-            logger.info("静默更新模式，显示呼吸闪烁提示")
-            logger.info(f"breathing_label 存在: {hasattr(self, 'breathing_label')}")
-            logger.info(f"breathing_label 对象: {self.breathing_label}")
-            self.breathing_label.setVisible(True)
-            self.download_progress_label.setVisible(False)
-            logger.info("已设置 breathing_label 可见")
-        else:
-            # 提示模式：显示下载进度
-            logger.info("提示更新模式，显示下载进度")
-            self.download_progress_label.setText(f"正在下载更新 V{version_info.version}...")
-            self.download_progress_label.setVisible(True)
-            self.breathing_label.setVisible(False)
-        
-        # 开始下载
-        self.update_manager.download_update(version_info)
-    
-    def on_download_progress(self, downloaded, total):
-        """下载进度更新"""
-        strategy = self.update_manager.get_update_strategy()
-        
-        if strategy == 'silent':
-            # 静默模式：不显示进度，只显示呼吸闪烁
-            pass
-        else:
-            # 提示模式：显示下载进度
-            if total > 0:
-                progress = int((downloaded / total) * 100)
-                downloaded_mb = downloaded / (1024 * 1024)
-                total_mb = total / (1024 * 1024)
-                
-                # 在右下角显示下载进度
-                self.download_progress_label.setText(
-                    f"下载更新: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress}%)"
-                )
-                self.download_progress_label.setVisible(True)
-    
-    def on_download_finished(self, success, result):
-        """下载完成"""
-        from query_tool.utils.logger import logger
-        
-        if success:
-            logger.info(f"下载完成: {result}")
-            
-            # 隐藏下载进度标签
-            self.download_progress_label.setVisible(False)
-            
-            strategy = self.update_manager.get_update_strategy()
-            
-            if strategy == 'auto':
-                # 静默下载并自动重启模式：下载完成后立即应用更新
-                self.breathing_label.stop()
-                self.breathing_label.set_color("#4a9eff", breathing=False)
-                self.pending_update_file = result
-                logger.info("静默下载已完成，准备自动重启安装")
-
-                from query_tool.utils.update_downloader import UpdateInstaller
-                if not UpdateInstaller.can_apply_update():
-                    from PyQt5.QtWidgets import QMessageBox
-                    self._bring_window_to_front()
-                    QMessageBox.information(
-                        self,
-                        "更新已下载",
-                        "更新已下载完成。\n\n"
-                        "当前运行方式不支持自动覆盖安装。\n"
-                        "已保留安装包，可手动替换或使用发布版程序完成更新。"
-                    )
-                    return
-
-                QTimer.singleShot(300, self.apply_update_and_restart)
-            elif strategy in ('manual', 'prompt', 'silent'):
-                # 其余模式：下载完成后统一弹出强制重启对话框
-                self.breathing_label.stop()
-                self.breathing_label.setVisible(False)
-
-                self.show_success("更新下载完成", 2000)
-
-                from query_tool.utils.update_downloader import UpdateInstaller
-                if not UpdateInstaller.can_apply_update():
-                    from PyQt5.QtWidgets import QMessageBox
-                    QMessageBox.information(
-                        self,
-                        "更新已下载",
-                        "更新已下载完成。\n\n"
-                        "当前运行方式不支持自动覆盖安装。\n"
-                        "已保留安装包，可手动替换或使用发布版程序完成更新。"
-                    )
-                    return
-
-                QTimer.singleShot(500, self._show_update_complete_dialog_with_focus)
-        
-        else:
-            logger.error(f"下载失败: {result}")
-            
-            # 隐藏下载进度标签和呼吸闪烁
-            self.download_progress_label.setVisible(False)
-            self.breathing_label.stop()
-            self.breathing_label.setVisible(False)
-            
-            strategy = self.update_manager.get_update_strategy()
-            
-            # 只在非静默自动下载模式下显示错误提示
-            if strategy not in ('silent', 'auto'):
-                self.show_error(f"下载更新失败: {result}", 5000)
-    
-    def show_update_complete_dialog(self, version_info=None):
-        """显示更新完成对话框"""
-        from query_tool.widgets.update_dialog import UpdateCompleteDialog
-        
-        current_version_info = version_info or getattr(self.update_manager, "latest_version_info", None)
-        if not current_version_info:
-            return
-
-        dialog = UpdateCompleteDialog(current_version_info, self)
-        
-        # 连接信号
-        dialog.restart_now.connect(self.apply_update_and_restart)
-        
-        dialog.exec_()
-
-    def _show_update_complete_dialog_with_focus(self):
-        """拉起主窗口后显示更新完成对话框。"""
-        self._bring_window_to_front()
-        self.show_update_complete_dialog()
-
-    def _load_local_version_info_for_debug(self):
-        """加载本地 version.json，供调试强制弹窗使用。"""
-        from query_tool.utils.update_checker import VersionInfo
-
-        manifest_path = os.path.join(project_root, "version.json")
-        try:
-            if not os.path.exists(manifest_path):
-                return None
-            with open(manifest_path, "r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            return VersionInfo(payload)
-        except Exception:
-            return None
-
-    def _show_debug_update_complete_dialog_if_needed(self):
-        """当代码中的调试开关打开时，启动后直接展示重启弹窗。"""
-        if not FORCE_SHOW_UPDATE_COMPLETE_DIALOG:
-            return
-        version_info = self._load_local_version_info_for_debug()
-        if not version_info:
-            return
-        self._bring_window_to_front()
-        self.show_update_complete_dialog(version_info=version_info)
-
-    def _show_debug_update_prompt_dialog_if_needed(self):
-        """当代码中的调试开关打开时，启动后直接展示更新检测弹窗。"""
-        if not FORCE_SHOW_UPDATE_PROMPT_DIALOG:
-            return
-
-        version_info = self._load_local_version_info_for_debug()
-        if not version_info:
-            return
-
-        from query_tool.version import get_short_version
-
-        current_version = get_short_version().replace('V', '')
-        self._bring_window_to_front()
-        self.show_update_prompt_dialog(version_info, current_version)
-    
-    def _on_restart_later(self):
-        """用户选择稍后重启"""
-        from query_tool.utils.logger import logger
-
-        logger.info("用户选择稍后重启")
-
-        # 仅记录已下载完成的更新，后续由用户再次确认后安装
-        if self.update_manager and self.update_manager.downloaded_file_path:
-            self.pending_update_file = self.update_manager.downloaded_file_path
-            logger.info(f"已保存待安装文件: {self.pending_update_file}")
-    
-    def _show_update_ready_dialog(self, file_path):
-        """显示更新已准备好的对话框（启动时检测到已下载的文件）"""
-        from PyQt5.QtWidgets import QMessageBox
-        from query_tool.utils.logger import logger
-        from query_tool.utils.update_downloader import UpdateInstaller
-        
-        logger.info(f"显示更新已准备好对话框: {file_path}")
-        
-        # 设置更新管理器的下载文件路径
-        if self.update_manager:
-            self.update_manager.downloaded_file_path = file_path
-
-        if not UpdateInstaller.can_apply_update():
-            QMessageBox.information(
-                self,
-                "更新已下载",
-                "检测到更新安装包已下载完成。\n\n"
-                "当前运行方式不支持自动覆盖安装。\n"
-                "已保留安装包，可手动替换或使用发布版程序完成更新。"
-            )
-            return
-        
-        # 弹窗询问用户
-        reply = QMessageBox.question(
-            self,
-            "更新已准备好",
-            "检测到更新已下载完成，是否立即重启并安装？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
-        )
-        
-        if reply == QMessageBox.Yes:
-            logger.info("用户选择立即重启")
-            self.apply_update_and_restart()
-        else:
-            logger.info("用户选择稍后重启")
-            self._on_restart_later()
-    
-    def apply_update_and_restart(self):
-        """应用更新并重启"""
-        from query_tool.utils.logger import logger
-        from PyQt5.QtWidgets import QMessageBox
-        from query_tool.utils.update_downloader import UpdateInstaller
-        
-        try:
-            logger.info("用户选择立即重启，应用更新...")
-            
-            # 检查是否有下载的文件
-            if not self.update_manager or not self.update_manager.downloaded_file_path:
-                error_msg = "没有找到下载的更新文件"
-                logger.error(error_msg)
-                QMessageBox.warning(self, "更新失败", error_msg)
-                return
-            
-            # 检查文件是否存在
-            import os
-            if not os.path.exists(self.update_manager.downloaded_file_path):
-                error_msg = f"更新文件不存在: {self.update_manager.downloaded_file_path}"
-                logger.error(error_msg)
-                QMessageBox.warning(self, "更新失败", error_msg)
-                return
-            
-            logger.info(f"更新文件路径: {self.update_manager.downloaded_file_path}")
-
-            if not UpdateInstaller.can_apply_update():
-                QMessageBox.information(
-                    self,
-                    "更新已下载",
-                    "当前运行方式不支持自动覆盖安装。\n"
-                    "已保留安装包，可手动替换或使用发布版程序完成更新。"
-                )
-                return
-            
-            if not self._start_external_update_install(
-                self.update_manager.downloaded_file_path,
-                restart=True,
-            ):
-                QMessageBox.warning(self, "更新失败", "无法启动更新安装流程，请查看日志。")
-            
-        except Exception as e:
-            logger.error(f"应用更新失败: {e}", exc_info=True)
-            QMessageBox.critical(
-                self, 
-                "更新失败", 
-                f"应用更新时发生错误：\n\n{str(e)}\n\n请查看日志文件获取详细信息。"
-            )
-            self.show_error(f"应用更新失败: {e}", 5000)
 
 
 def _get_windows_theme() -> str:
@@ -1288,11 +654,61 @@ def _get_startup_theme() -> str:
         return _get_windows_theme()
 
 
+def _cleanup_legacy_update_artifacts() -> None:
+    """清理遗留的注册表和缓存目录。"""
+    from pathlib import Path
+    import shutil
+    import winreg
+
+    from query_tool.utils.logger import logger
+
+    update_root = r"Software\TPQueryTool\Update"
+    reg_key = None
+    try:
+        reg_key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            update_root,
+            0,
+            winreg.KEY_READ | winreg.KEY_WRITE,
+        )
+        while True:
+            try:
+                child_name = winreg.EnumKey(reg_key, 0)
+            except OSError:
+                break
+            winreg.DeleteKey(reg_key, child_name)
+        winreg.CloseKey(reg_key)
+        reg_key = None
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, update_root)
+        logger.info("已清理历史更新注册表信息")
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning(f"清理历史更新注册表信息失败: {exc}")
+    finally:
+        if reg_key is not None:
+            try:
+                winreg.CloseKey(reg_key)
+            except Exception:
+                pass
+
+    for cache_dir in (
+        Path.home() / ".TPQueryTool" / "update",
+        Path.home() / ".TPQueryTool" / "downloads",
+    ):
+        if not cache_dir.exists():
+            continue
+        try:
+            shutil.rmtree(cache_dir)
+            logger.info(f"已清理历史更新缓存目录: {cache_dir}")
+        except Exception as exc:
+            logger.warning(f"清理历史更新缓存目录失败 {cache_dir}: {exc}")
+
+
 def main():
     """主函数入口"""
     # 设置全局异常处理
     from query_tool.utils.logger import logger, setup_exception_handler
-    from query_tool.utils.update_downloader import UpdateInstaller
     from query_tool.version import get_version_string
     import platform
     
@@ -1302,14 +718,7 @@ def main():
     logger.info(f"程序启动: {get_version_string()}")
     logger.info(f"Python版本: {sys.version.split()[0]}")
     logger.info(f"操作系统: {platform.system()} {platform.release()}")
-
-    if UpdateInstaller.launch_runtime_self_heal(restart=True):
-        logger.warning("已启动套娃 onefile 自愈流程，当前进程退出等待外部修复")
-        raise SystemExit(0)
-
-    cleaned_runtime_dirs = UpdateInstaller.cleanup_stale_nested_runtime_dirs()
-    if cleaned_runtime_dirs:
-        logger.info(f"启动时已清理 {len(cleaned_runtime_dirs)} 个残留套娃 onefile 目录")
+    _cleanup_legacy_update_artifacts()
     
     try:
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)

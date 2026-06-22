@@ -26,27 +26,11 @@
 
 电池采集与相关数据功能说明。
 
-### [`update-feature-summary.md`](./update-feature-summary.md)
-
-自动更新能力说明。
-
-## 构建与发布文档
+## 构建文档
 
 ### [`build-guide.md`](./build-guide.md)
 
-本地构建、Nuitka 打包、DLL 打包校验与测试清单说明。
-
-### [`github-actions-guide.md`](./github-actions-guide.md)
-
-GitHub Actions 自动构建与发布说明。
-
-### [`hash-verification-guide.md`](./hash-verification-guide.md)
-
-发布产物校验与哈希验证说明。
-
-### [`skip-version-registry.md`](./skip-version-registry.md)
-
-版本跳过配置说明。
+本地构建、PyInstaller 打包、DLL 打包校验与测试清单说明。
 
 ## 快速导航
 
@@ -57,9 +41,4 @@ GitHub Actions 自动构建与发布说明。
 | 了解当前功能 | [`features-summary.md`](./features-summary.md) |
 | 查看模块结构 | [`modules-guide.md`](./modules-guide.md) |
 | 本地打包 | [`build-guide.md`](./build-guide.md) |
-| 自动发布 | [`github-actions-guide.md`](./github-actions-guide.md) |
-| 校验发布文件 | [`hash-verification-guide.md`](./hash-verification-guide.md) |
-
----
-
 最后更新时间：2026-05-16

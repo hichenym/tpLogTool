@@ -2,17 +2,9 @@
 
 ## 当前打包方案
 
-当前项目以 **Nuitka** 作为主打包方案，入口脚本为：
+当前项目统一使用 **PyInstaller** 打包，入口脚本为：
 
 - [scripts/build.py](/D:/GIT/tpLogTool/scripts/build.py)
-
-历史 `PyInstaller` 脚本仍保留在：
-
-- [scripts/archive_pyinstaller/build.py](/D:/GIT/tpLogTool/scripts/archive_pyinstaller/build.py)
-
-CI 发布流程：
-
-- [.github/workflows/release.yml](/D:/GIT/tpLogTool/.github/workflows/release.yml)
 
 ## 快速打包
 
@@ -29,19 +21,18 @@ python scripts/build.py --debug
 脚本会自动：
 
 1. 更新 `query_tool/version.py` 中的 `BUILD_DATE`
-2. 清理旧的 Nuitka 构建目录
-3. 调用 Nuitka 生成单文件 `exe`
+2. 清理旧的 PyInstaller 构建目录
+3. 调用 PyInstaller 生成单文件 `exe`
 4. 输出打包结果与文件大小
 
 ## 打包前检查清单
 
 - [ ] 已激活虚拟环境
 - [ ] `pip install -r requirements.txt`
-- [ ] `pip install nuitka ordered-set zstandard`
 - [ ] 本地 `python run.py` 可正常启动
 - [ ] 调试页、命令页相关改动已验证
 - [ ] `resources/icon_res.py` 已和 `icon_res.qrc` 同步
-- [ ] 版本号和 `VERSION_HISTORY` 已更新
+- [ ] 版本号和编译日期已确认
 - [ ] 相关文档已更新
 
 ## 关键打包资源
@@ -62,37 +53,35 @@ resources/icons/
 query_tool/dll/
 ```
 
-当前目录中包含：
+当前打包脚本会逐个校验并显式打入以下必要 DLL：
 
+- `Funclib.dll`
 - `libsiot.dll`
 - `libtps_crypt.dll`
 - `libgcc_s_seh-1.dll`
 - `libstdc++-6.dll`
 - `libwinpthread-1.dll`
 
-Nuitka 打包脚本已显式包含该目录：
-
-```text
---include-data-dir=query_tool/dll=query_tool/dll
-```
-
 说明：
 
 - 当前项目已经不再依赖旧的 `windows-siot-command-client` 目录
 - 如果打包后调试页或命令页无法连接，优先检查 `query_tool/dll` 是否被带入产物
 
-## Nuitka 关键参数
+## PyInstaller 关键参数
 
 当前核心参数包括：
 
-- `--standalone`
 - `--onefile`
-- `--output-dir=dist`
-- `--output-filename=TPQueryTool.exe`
-- `--enable-plugin=pyqt5`
-- `--include-package=query_tool`
-- `--include-data-dir=resources/icons=resources/icons`
-- `--include-data-dir=query_tool/dll=query_tool/dll`
+- `--name TPQueryTool`
+- `--icon ./resources/icons/app/logo.ico`
+- `--hidden-import ddddocr`
+- `--hidden-import onnxruntime`
+- `--hidden-import cv2`
+- `--hidden-import numpy`
+- `--hidden-import pkg_resources`
+- `--collect-all ddddocr`
+- `--collect-binaries onnxruntime`
+- `--collect-data onnxruntime`
 
 ## 打包输出
 
@@ -103,9 +92,8 @@ dist/
 
 中间目录：
 
-- `run.build`
-- `run.dist`
-- `run.onefile-build`
+- `build`
+- `TPQueryTool.spec`
 
 ## 打包后建议测试
 
@@ -163,19 +151,10 @@ dist/
 - `query_tool/dll` 未被正确打包
 - 或 DLL 缺失/损坏
 
-### Q4: 构建失败提示缺少 Nuitka
+### Q4: 构建失败提示缺少 PyInstaller
 
 ```bash
-pip install nuitka ordered-set zstandard
+pip install -r requirements.txt
 ```
 
-## 发布补充
-
-如需通过 GitHub Actions 自动发布，请参考：
-
-- [github-actions-guide.md](./github-actions-guide.md)
-- [hash-verification-guide.md](./hash-verification-guide.md)
-
----
-
-最后更新时间：2026-05-16
+最后更新时间：2026-06-22

@@ -12,15 +12,10 @@ numpy==1.24.4
 onnxruntime==1.16.3
 
 # Build Tooling
-Nuitka==4.1
-ordered-set==4.1.0
-zstandard==0.25.0
+PyInstaller>=6.0,<7
+setuptools>=65.5.0
 
 # Web Scraping
 beautifulsoup4==4.12.3
 
-# Utilities
-coloredlogs==15.0.1
 
-# Feishu SDK
-lark-oapi==1.6.5

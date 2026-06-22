@@ -20,7 +20,7 @@ class BuildScriptTests(unittest.TestCase):
     def setUpClass(cls):
         cls.build_script = _load_build_script_module()
 
-    def test_get_sdk_dll_include_args_includes_funclib_like_other_sdk_dlls(self):
+    def test_get_sdk_dll_data_args_includes_funclib_like_other_sdk_dlls(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             dll_dir = Path(tmpdir) / "query_tool" / "dll"
             dll_dir.mkdir(parents=True)
@@ -28,21 +28,27 @@ class BuildScriptTests(unittest.TestCase):
                 (dll_dir / name).write_bytes(b"")
 
             with mock.patch.object(self.build_script, "PROJECT_ROOT", tmpdir):
-                include_args = self.build_script.get_sdk_dll_include_args()
+                include_args = self.build_script.get_sdk_dll_data_args()
 
         self.assertEqual(
             [
-                f"--include-data-files={os.path.join('query_tool', 'dll', 'Funclib.dll')}=query_tool/dll/Funclib.dll",
-                f"--include-data-files={os.path.join('query_tool', 'dll', 'libgcc_s_seh-1.dll')}=query_tool/dll/libgcc_s_seh-1.dll",
-                f"--include-data-files={os.path.join('query_tool', 'dll', 'libsiot.dll')}=query_tool/dll/libsiot.dll",
-                f"--include-data-files={os.path.join('query_tool', 'dll', 'libstdc++-6.dll')}=query_tool/dll/libstdc++-6.dll",
-                f"--include-data-files={os.path.join('query_tool', 'dll', 'libtps_crypt.dll')}=query_tool/dll/libtps_crypt.dll",
-                f"--include-data-files={os.path.join('query_tool', 'dll', 'libwinpthread-1.dll')}=query_tool/dll/libwinpthread-1.dll",
+                "--add-data",
+                f"{os.path.join('query_tool', 'dll', 'Funclib.dll')};query_tool/dll",
+                "--add-data",
+                f"{os.path.join('query_tool', 'dll', 'libgcc_s_seh-1.dll')};query_tool/dll",
+                "--add-data",
+                f"{os.path.join('query_tool', 'dll', 'libsiot.dll')};query_tool/dll",
+                "--add-data",
+                f"{os.path.join('query_tool', 'dll', 'libstdc++-6.dll')};query_tool/dll",
+                "--add-data",
+                f"{os.path.join('query_tool', 'dll', 'libtps_crypt.dll')};query_tool/dll",
+                "--add-data",
+                f"{os.path.join('query_tool', 'dll', 'libwinpthread-1.dll')};query_tool/dll",
             ],
             include_args,
         )
 
-    def test_get_sdk_dll_include_args_fails_fast_when_funclib_is_missing(self):
+    def test_get_sdk_dll_data_args_fails_fast_when_funclib_is_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             dll_dir = Path(tmpdir) / "query_tool" / "dll"
             dll_dir.mkdir(parents=True)
@@ -53,7 +59,7 @@ class BuildScriptTests(unittest.TestCase):
 
             with mock.patch.object(self.build_script, "PROJECT_ROOT", tmpdir):
                 with self.assertRaisesRegex(FileNotFoundError, "Funclib.dll"):
-                    self.build_script.get_sdk_dll_include_args()
+                    self.build_script.get_sdk_dll_data_args()
 
 
 if __name__ == "__main__":

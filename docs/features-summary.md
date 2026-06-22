@@ -86,7 +86,6 @@
   - 固件账号
 - 主题支持深色/浅色切换，并保存到注册表
 - 配置、历史输入、下载路径、快捷命令会保存到注册表
-- 支持自动更新检查与下载
 - 支持文件日志
 
 ## 配置存储
@@ -121,6 +120,7 @@ HKEY_CURRENT_USER\Software\TPQueryTool
 - `session.py`：云端鉴权、设备连接、命令发送、文件接收
 - `subprocess_runner.py`：命令页使用的子进程运行封装
 - `command_catalog.py`：命令类型识别
+- `siot_helper.py`：开发态内部 SIOT 命令入口
 
 当前依赖的 SIOT 动态库统一放在：
 
@@ -130,11 +130,7 @@ query_tool/dll/
 
 ## 打包说明
 
-当前本地与 CI 打包均已切换到 `query_tool/dll`，不再依赖旧的 `windows-siot-command-client` 目录。
-
-- 本地 Nuitka 打包脚本：`scripts/build.py`
-- CI 发布流程：`.github/workflows/release.yml`
-- 历史 PyInstaller 脚本：`scripts/archive_pyinstaller/build.py`
+当前本地打包使用 `scripts/build.py`，会从 `query_tool/dll` 打入所需 DLL，不再依赖旧的 `windows-siot-command-client` 目录。
 
 ## 说明
 
