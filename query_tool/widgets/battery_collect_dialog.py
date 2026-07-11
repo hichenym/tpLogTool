@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt5.QtCore import Qt, QDateTime, pyqtSignal
 from PyQt5.QtGui import QIcon
 from query_tool.widgets.adaptive_dialog import AdaptiveDialog
-from query_tool.widgets.custom_widgets import set_dark_title_bar
+from query_tool.widgets.custom_widgets import prompt_configure_account, set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
 from query_tool.utils.data_collect_api import DataCollectThread
@@ -270,7 +270,7 @@ class BatteryCollectDialog(AdaptiveDialog):
             from query_tool.utils.device_query import DeviceQuery
             env, username, password = get_account_config()
             if not username or not password:
-                QMessageBox.warning(self, "错误", "未配置账号信息，请先在设置中配置")
+                prompt_configure_account(self, account_type="device")
                 self.query_btn.setEnabled(True)
                 self.query_btn.setText("开始查询")
                 return

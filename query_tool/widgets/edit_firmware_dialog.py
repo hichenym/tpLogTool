@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QDateTime, QEvent, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QIcon
 from .adaptive_dialog import AdaptiveDialog
-from .custom_widgets import set_dark_title_bar
+from .custom_widgets import prompt_configure_account, set_dark_title_bar
 from query_tool.utils.theme_manager import t
 from query_tool.utils import StyleManager
 from query_tool.utils.logger import logger
@@ -275,6 +275,7 @@ class SnQueryDialog(AdaptiveDialog):
         if not username or not password:
             self.status_label.setText("运维账号未配置，请先在设置中配置")
             self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 11px;")
+            prompt_configure_account(self, account_type="device")
             return
 
         self.status_label.setText("正在查询...")

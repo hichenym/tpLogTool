@@ -23,7 +23,7 @@ from .page_registry import register_page
 from query_tool.utils import ButtonManager, ThreadManager, StyleManager, config_manager, get_account_config
 from query_tool.utils.theme_manager import t
 from query_tool.widgets.custom_widgets import set_dark_title_bar
-from query_tool.widgets import EditFirmwareDialog
+from query_tool.widgets import EditFirmwareDialog, open_settings_dialog, prompt_configure_account
 from query_tool.utils.logger import logger
 from query_tool.utils.runtime_credential_cache import get_shared_device_query
 from query_tool.widgets.batch_upgrade_dialog import BatchUpgradeThread
@@ -462,38 +462,7 @@ class FirmwarePage(BasePage):
         firmware_username, firmware_password = get_firmware_account_config()
         
         if not firmware_username or not firmware_password:
-            # 显示提示对话框
-            from PyQt5.QtWidgets import QMessageBox
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('需要配置固件账号')
-            msg_box.setText('检测到固件账号未配置，是否现在配置？')
-            msg_box.setIcon(QMessageBox.Question)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            
-            # 自定义按钮图标
-            yes_btn = msg_box.button(QMessageBox.Yes)
-            no_btn = msg_box.button(QMessageBox.No)
-            
-            if yes_btn:
-                yes_btn.setText("")
-                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                yes_btn.setIconSize(QSize(20, 20))
-                yes_btn.setFixedSize(60, 32)
-            
-            if no_btn:
-                no_btn.setText("")
-                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                no_btn.setIconSize(QSize(20, 20))
-                no_btn.setFixedSize(60, 32)
-            # 延迟设置深色标题栏
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            
-            reply = msg_box.exec_()
-            
-            if reply == QMessageBox.Yes:
-                # 打开设置对话框
-                self.open_settings_dialog()
-            
+            prompt_configure_account(self, account_type="firmware")
             return
         
         self.show_progress("正在加载新增页面...")
@@ -702,38 +671,7 @@ class FirmwarePage(BasePage):
         firmware_username, firmware_password = get_firmware_account_config()
         
         if not firmware_username or not firmware_password:
-            # 显示提示对话框
-            from PyQt5.QtWidgets import QMessageBox
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle('需要配置固件账号')
-            msg_box.setText('检测到固件账号未配置，是否现在配置？')
-            msg_box.setIcon(QMessageBox.Question)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            
-            # 自定义按钮图标
-            yes_btn = msg_box.button(QMessageBox.Yes)
-            no_btn = msg_box.button(QMessageBox.No)
-            
-            if yes_btn:
-                yes_btn.setText("")
-                yes_btn.setIcon(QIcon(":/icons/common/ok.png"))
-                yes_btn.setIconSize(QSize(20, 20))
-                yes_btn.setFixedSize(60, 32)
-            
-            if no_btn:
-                no_btn.setText("")
-                no_btn.setIcon(QIcon(":/icons/common/cancel.png"))
-                no_btn.setIconSize(QSize(20, 20))
-                no_btn.setFixedSize(60, 32)
-            # 延迟设置深色标题栏
-            QTimer.singleShot(0, lambda: set_dark_title_bar(msg_box))
-            
-            reply = msg_box.exec_()
-            
-            if reply == QMessageBox.Yes:
-                # 打开设置对话框
-                self.open_settings_dialog()
-            
+            prompt_configure_account(self, account_type="firmware")
             return
         
         # 更新当前页码
@@ -829,12 +767,7 @@ class FirmwarePage(BasePage):
     
     def open_settings_dialog(self):
         """打开设置对话框"""
-        from query_tool.widgets import SettingsDialog
-        dialog = SettingsDialog(self.window())
-        # 切换到固件账号标签页
-        if hasattr(dialog, 'tab_widget'):
-            dialog.tab_widget.setCurrentIndex(1)  # 索引1是固件账号
-        dialog.exec_()
+        open_settings_dialog(self.window(), target_account_type="firmware")
     
     def on_query_success(self, firmware_list, total_count, total_pages):
         """查询成功"""

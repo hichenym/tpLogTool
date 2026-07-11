@@ -40,7 +40,7 @@ from query_tool.utils.siot_debug import (
     parse_startlogp2p_level,
 )
 from query_tool.widgets.adaptive_dialog import AdaptiveDialog
-from query_tool.widgets.custom_widgets import set_dark_title_bar
+from query_tool.widgets.custom_widgets import prompt_configure_account, set_dark_title_bar
 
 
 class FlowLayout(QLayout):
@@ -1222,6 +1222,13 @@ class DebugPage(BasePage):
             self.on_disconnect_clicked()
             return
 
+        seetong_username, seetong_password = get_seetong_account_config()
+        seetong_username = (seetong_username or "").strip()
+        seetong_password = (seetong_password or "").strip()
+        if not seetong_username or not seetong_password:
+            prompt_configure_account(self, account_type="seetong")
+            return
+
         sn = self.sn_input.text().strip()
         if not sn:
             self.show_warning("请输入设备SN")
@@ -1229,12 +1236,8 @@ class DebugPage(BasePage):
 
         env, device_username, device_password = get_account_config()
         if not device_username or not device_password:
-            self.show_warning("请先在设置中配置运维账号")
+            prompt_configure_account(self, account_type="device")
             return
-
-        seetong_username, seetong_password = get_seetong_account_config()
-        seetong_username = (seetong_username or "").strip()
-        seetong_password = (seetong_password or "").strip()
 
         self.set_connecting_state(True)
         self.request_connect.emit(

@@ -30,7 +30,7 @@ from PyQt5.QtWidgets import (
 
 from .adaptive_dialog import AdaptiveDialog
 from .batch_upgrade_dialog import FirmwareQueryThread
-from .custom_widgets import ClickableLineEdit, set_dark_title_bar
+from .custom_widgets import ClickableLineEdit, prompt_configure_account, set_dark_title_bar
 from query_tool.utils import StyleManager, get_account_config
 from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.task_center import TASK_LIST_LIMIT, count_all_tasks, create_task, ensure_unique_task_name
@@ -573,8 +573,7 @@ class UpgradeStressDialog(AdaptiveDialog):
 
         env, username, password = get_account_config()
         if not username or not password:
-            if self.parent_window:
-                self.parent_window.show_error("运维账号未配置，无法启动升级压测")
+            prompt_configure_account(self, account_type="device")
             return
         if count_all_tasks() >= TASK_LIST_LIMIT:
             if self.parent_window:

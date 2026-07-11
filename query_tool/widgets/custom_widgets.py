@@ -22,6 +22,27 @@ from query_tool.utils.style_manager import StyleManager
 from query_tool.utils.theme_manager import t
 
 
+ACCOUNT_TYPE_DEVICE = "device"
+ACCOUNT_TYPE_SEETONG = "seetong"
+ACCOUNT_TYPE_FIRMWARE = "firmware"
+ACCOUNT_CONFIG_TAB_INDEX = 0
+
+ACCOUNT_PROMPT_COPY = {
+    ACCOUNT_TYPE_DEVICE: {
+        "title": "需要配置运维账号",
+        "text": "检测到运维账号未配置，是否现在配置？",
+    },
+    ACCOUNT_TYPE_SEETONG: {
+        "title": "需要配置 Seetong 账号",
+        "text": "检测到 Seetong 账号未配置，是否现在配置？",
+    },
+    ACCOUNT_TYPE_FIRMWARE: {
+        "title": "需要配置固件账号",
+        "text": "检测到固件账号未配置，是否现在配置？",
+    },
+}
+
+
 def set_title_bar_theme(window, dark: bool = True):
     """设置标题栏深/浅色（Windows 10/11）"""
     try:
@@ -92,7 +113,33 @@ def show_question_box(parent, title, text):
     return msg_box.exec_()
 
 
-def prompt_configure_account(parent, title, text, initial_tab=0):
+def _normalize_account_type(account_type):
+    normalized = str(account_type or "").strip().lower()
+    return normalized if normalized in ACCOUNT_PROMPT_COPY else None
+
+
+def _resolve_account_prompt_copy(account_type=None, title=None, text=None):
+    normalized_account_type = _normalize_account_type(account_type)
+    defaults = ACCOUNT_PROMPT_COPY.get(normalized_account_type, {})
+    return {
+        "account_type": normalized_account_type,
+        "title": title or defaults.get("title") or "需要配置账号",
+        "text": text or defaults.get("text") or "检测到账号未配置，是否现在配置？",
+    }
+
+
+def open_settings_dialog(parent, initial_tab=0, target_account_type=None):
+    """打开设置对话框，并按账号类型定位到对应配置分组。"""
+    dialog = SettingsDialog(
+        parent,
+        initial_tab=initial_tab,
+        target_account_type=target_account_type,
+    )
+    dialog.exec_()
+    return dialog
+
+
+def prompt_configure_account(parent, title=None, text=None, initial_tab=0, account_type=None):
     """
     显示统一样式的账号配置提示框，并在确认后打开设置对话框。
 
@@ -101,13 +148,15 @@ def prompt_configure_account(parent, title, text, initial_tab=0):
         title: 弹窗标题
         text: 弹窗内容
         initial_tab: 设置对话框初始标签页
+        account_type: 账号类型，支持 device / seetong / firmware
 
     Returns:
         bool: 是否已打开设置对话框
     """
+    prompt_copy = _resolve_account_prompt_copy(account_type, title, text)
     msg_box = QMessageBox(parent)
-    msg_box.setWindowTitle(title)
-    msg_box.setText(text)
+    msg_box.setWindowTitle(prompt_copy["title"])
+    msg_box.setText(prompt_copy["text"])
     msg_box.setIcon(QMessageBox.Question)
     msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
     msg_box.setDefaultButton(QMessageBox.No)
@@ -132,8 +181,11 @@ def prompt_configure_account(parent, title, text, initial_tab=0):
     if msg_box.exec_() != QMessageBox.Yes:
         return False
 
-    dialog = SettingsDialog(parent, initial_tab=initial_tab)
-    dialog.exec_()
+    open_settings_dialog(
+        parent,
+        initial_tab=initial_tab,
+        target_account_type=prompt_copy["account_type"],
+    )
     return True
 
 
@@ -273,7 +325,7 @@ class ClickableLineEdit(QLineEdit):
 
 class SettingsDialog(AdaptiveDialog):
     """设置对话框"""
-    def __init__(self, parent=None, initial_tab=0):
+    def __init__(self, parent=None, initial_tab=0, target_account_type=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
@@ -283,7 +335,13 @@ class SettingsDialog(AdaptiveDialog):
         
         # 保存初始标签页索引
         self.initial_tab = initial_tab
-        
+        self.target_account_type = _normalize_account_type(target_account_type)
+        self.account_scroll_area = None
+        self.account_scroll_content = None
+        self.account_group_widgets = {}
+        self.account_username_inputs = {}
+        self._target_account_scroll_scheduled = False
+
         # 创建信号发射器
         self.update_signals = UpdateCheckSignals()
         self.update_signals.update_check_result.connect(self._on_update_check_result)
@@ -308,10 +366,39 @@ class SettingsDialog(AdaptiveDialog):
         """对话框显示时设置深色标题栏"""
         super().showEvent(event)
         set_dark_title_bar(self)
-        
+
         # 设置初始标签页
         if hasattr(self, 'tab_widget') and hasattr(self, 'initial_tab'):
             self.tab_widget.setCurrentIndex(self.initial_tab)
+        self._schedule_target_account_focus()
+
+    def _schedule_target_account_focus(self):
+        if not self.target_account_type or self._target_account_scroll_scheduled:
+            return
+        self._target_account_scroll_scheduled = True
+        QTimer.singleShot(0, self.focus_target_account_group)
+
+    def focus_target_account_group(self):
+        """切换到账号配置页，并滚动定位到目标账号分组。"""
+        self._target_account_scroll_scheduled = False
+        if not self.target_account_type:
+            return
+
+        if hasattr(self, 'tab_widget'):
+            self.tab_widget.setCurrentIndex(ACCOUNT_CONFIG_TAB_INDEX)
+
+        group = self.account_group_widgets.get(self.target_account_type)
+        username_input = self.account_username_inputs.get(self.target_account_type)
+
+        if self.account_scroll_area is not None and group is not None:
+            scroll_bar = self.account_scroll_area.verticalScrollBar()
+            target_value = max(0, group.y() - 12)
+            scroll_bar.setValue(target_value)
+
+        if username_input is not None:
+            username_input.setFocus(Qt.OtherFocusReason)
+            if hasattr(username_input, "selectAll"):
+                username_input.selectAll()
         
     def init_ui(self):
         layout = self.init_dialog_layout(
@@ -377,38 +464,40 @@ class SettingsDialog(AdaptiveDialog):
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
         scroll_area.setStyleSheet(StyleManager.get_SCROLL_AREA())
-        
+        self.account_scroll_area = scroll_area
+
         # 滚动内容容器
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setSpacing(0)
         scroll_layout.setContentsMargins(15, 15, 15, 15)
+        self.account_scroll_content = scroll_content
         
         # 运维账号组
-        device_group = self.create_account_group(
+        self.create_account_group(
             "运维账号",
             self.device_username,
             self.device_password,
             account_type="device"
         )
-        scroll_layout.addWidget(device_group)
-        
-        # 固件账号组
-        seetong_group = self.create_account_group(
+        scroll_layout.addWidget(self.account_group_widgets[ACCOUNT_TYPE_DEVICE])
+
+        # Seetong 账号组
+        self.create_account_group(
             "Seetong账号",
             self.seetong_username,
             self.seetong_password,
             account_type="seetong"
         )
-        scroll_layout.addWidget(seetong_group)
+        scroll_layout.addWidget(self.account_group_widgets[ACCOUNT_TYPE_SEETONG])
 
-        firmware_group = self.create_account_group(
+        self.create_account_group(
             "固件账号",
             self.firmware_username,
             self.firmware_password,
             account_type="firmware"
         )
-        scroll_layout.addWidget(firmware_group)
+        scroll_layout.addWidget(self.account_group_widgets[ACCOUNT_TYPE_FIRMWARE])
         
         scroll_layout.addStretch()
         
@@ -419,6 +508,7 @@ class SettingsDialog(AdaptiveDialog):
     
     def create_account_group(self, title, username, password, account_type="device"):
         """创建账号配置组"""
+        account_type = _normalize_account_type(account_type) or ACCOUNT_TYPE_DEVICE
         group = QGroupBox(title)
         group.setStyleSheet(StyleManager.get_GROUP_BOX())
         
@@ -481,7 +571,10 @@ class SettingsDialog(AdaptiveDialog):
         else:
             self.seetong_username_input = username_input
             self.seetong_password_input = password_input
-        
+
+        self.account_group_widgets[account_type] = group
+        self.account_username_inputs[account_type] = username_input
+
         return group
     
     def create_log_tab(self):

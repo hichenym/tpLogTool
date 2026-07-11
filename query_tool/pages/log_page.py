@@ -45,7 +45,7 @@ from query_tool.utils.logger import logger
 from query_tool.utils.siot_debug import DEFAULT_COMMAND_TIMEOUT_MS, is_getsystemcfg_command, is_syscmd_family_command
 from query_tool.utils.siot_debug.service import resolve_device_credentials
 from query_tool.utils.theme_manager import t
-from query_tool.widgets import PlainTextEdit
+from query_tool.widgets import PlainTextEdit, prompt_configure_account
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -1250,6 +1250,13 @@ class LogPage(BasePage):
                 self.worker_thread.cancel()
             return
 
+        seetong_username, seetong_password = get_seetong_account_config()
+        seetong_username = (seetong_username or "").strip()
+        seetong_password = (seetong_password or "").strip()
+        if not seetong_username or not seetong_password:
+            prompt_configure_account(self, account_type="seetong")
+            return
+
         sn_list = self._parse_sn_input(self.sn_input.toPlainText())
         self._start_execution(sn_list, reset_table=True, run_mode="execute")
 
@@ -1272,12 +1279,15 @@ class LogPage(BasePage):
 
         env, device_username, device_password = get_account_config()
         if not device_username or not device_password:
-            self.show_warning("请先在设置中配置运维账号")
+            prompt_configure_account(self, account_type="device")
             return None
 
         seetong_username, seetong_password = get_seetong_account_config()
         seetong_username = (seetong_username or "").strip()
         seetong_password = (seetong_password or "").strip()
+        if not seetong_username or not seetong_password:
+            prompt_configure_account(self, account_type="seetong")
+            return None
         return {
             "commands": commands,
             "env": env,
