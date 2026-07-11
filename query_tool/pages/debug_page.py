@@ -6,10 +6,11 @@ from datetime import datetime
 from pathlib import Path
 import time
 
-from PyQt5.QtCore import QMetaObject, QMimeData, QRect, QSize, QThread, QTimer, Qt, QUrl, pyqtSignal
+from PyQt5.QtCore import QEvent, QMetaObject, QMimeData, QPoint, QRect, QSize, QThread, QTimer, Qt, QUrl, pyqtSignal
 from PyQt5.QtGui import QColor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPixmap, QTextCharFormat, QTextCursor
 from PyQt5.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -21,6 +22,8 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QListWidget,
+    QListWidgetItem,
     QScrollArea,
     QTextEdit,
     QVBoxLayout,
@@ -227,6 +230,287 @@ class DraggableShortcutButton(QPushButton):
         event.acceptProposedAction()
 
 
+class HistorySuggestionPopup(QFrame):
+    """璋冭瘯鍛戒护鍘嗗彶鍊欓€夊脊灞傘€?"""
+
+    command_clicked = pyqtSignal(str)
+    delete_requested = pyqtSignal(str)
+
+    MAX_VISIBLE_ITEMS = 5
+    MIN_WIDTH = 140
+    MAX_WIDTH = 420
+    HORIZONTAL_PADDING = 22
+    VERTICAL_PADDING = 6
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setObjectName("historySuggestionPopup")
+        self.setFocusPolicy(Qt.NoFocus)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
+
+        self.list_widget = QListWidget(self)
+        self.list_widget.setFocusPolicy(Qt.NoFocus)
+        self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.list_widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list_widget.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.list_widget.setTextElideMode(Qt.ElideMiddle)
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
+        self.list_widget.itemActivated.connect(self._on_item_clicked)
+        self.list_widget.currentRowChanged.connect(self._refresh_row_styles)
+        layout.addWidget(self.list_widget)
+
+        self.refresh_theme()
+        self.hide()
+
+    def refresh_theme(self):
+        self.setStyleSheet(
+            f"""
+            QFrame#historySuggestionPopup {{
+                background-color: {t('bg_mid')};
+                border: 1px solid {t('border')};
+                border-radius: 4px;
+            }}
+            QListWidget {{
+                background-color: transparent;
+                color: {t('text_primary')};
+                border: none;
+                outline: none;
+                padding: 2px;
+                show-decoration-selected: 0;
+            }}
+            QListWidget::item {{
+                padding: 0px;
+                margin: 0px;
+                border: none;
+            }}
+            QListWidget::item:selected {{
+                background-color: transparent;
+                color: {t('text_primary')};
+                padding: 0px;
+                margin: 0px;
+                border: none;
+            }}
+            """
+        )
+        self._refresh_row_styles()
+
+    def set_suggestions(self, suggestions):
+        self.list_widget.clear()
+        for command in suggestions:
+            item = QListWidgetItem()
+            item.setData(Qt.UserRole, command)
+            self.list_widget.addItem(item)
+            row_widget = self._create_row_widget(command, item)
+            item.setSizeHint(row_widget.sizeHint())
+            self.list_widget.setItemWidget(item, row_widget)
+        self.list_widget.setCurrentRow(-1)
+        self.list_widget.clearSelection()
+        self._refresh_row_styles()
+
+    def current_value(self):
+        if not self.has_active_selection():
+            return ""
+        item = self.list_widget.currentItem()
+        return self._item_command(item)
+
+    def has_suggestions(self):
+        return self.list_widget.count() > 0
+
+    def has_active_selection(self):
+        return self.list_widget.currentItem() is not None and self.list_widget.currentRow() >= 0
+
+    def select_next(self):
+        count = self.list_widget.count()
+        if count <= 0:
+            return
+        current_row = self.list_widget.currentRow()
+        next_row = 0 if current_row < 0 else min(count - 1, current_row + 1)
+        next_item = self.list_widget.item(next_row)
+        self.list_widget.setCurrentRow(next_row)
+        if next_item is not None:
+            self.list_widget.setCurrentItem(next_item)
+            self.list_widget.scrollToItem(next_item)
+        self._refresh_row_styles()
+
+    def select_prev(self):
+        count = self.list_widget.count()
+        if count <= 0:
+            return
+        current_row = self.list_widget.currentRow()
+        prev_row = count - 1 if current_row < 0 else max(0, current_row - 1)
+        prev_item = self.list_widget.item(prev_row)
+        self.list_widget.setCurrentRow(prev_row)
+        if prev_item is not None:
+            self.list_widget.setCurrentItem(prev_item)
+            self.list_widget.scrollToItem(prev_item)
+        self._refresh_row_styles()
+
+    def show_popup(self, anchor_pos: QPoint, width_hint: int):
+        if not self.has_suggestions():
+            self.hide()
+            return
+
+        popup_size = self._popup_size(width_hint)
+        popup_width = popup_size.width()
+        popup_height = popup_size.height()
+        parent_widget = self.parentWidget()
+        x = anchor_pos.x()
+        y = anchor_pos.y()
+        if parent_widget is not None:
+            max_x = max(4, parent_widget.width() - popup_width - 4)
+            x = max(4, min(x, max_x))
+            if y + popup_height > parent_widget.height() - 4:
+                y = max(4, anchor_pos.y() - popup_height - 6)
+
+        self.resize(popup_width, popup_height)
+        self.move(x, y)
+        self.show()
+        self.raise_()
+
+    def _popup_size(self, width_hint: int) -> QSize:
+        row_height = self.list_widget.sizeHintForRow(0)
+        if row_height <= 0:
+            row_height = max(self.list_widget.fontMetrics().height() + 6, 22)
+        visible_rows = min(self.list_widget.count(), self.MAX_VISIBLE_ITEMS)
+        max_text_width = 0
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            if item is None:
+                continue
+            row_widget = self.list_widget.itemWidget(item)
+            if row_widget is not None:
+                max_text_width = max(max_text_width, row_widget.sizeHint().width())
+            else:
+                max_text_width = max(max_text_width, self.list_widget.fontMetrics().horizontalAdvance(self._item_command(item)))
+
+        popup_width = max_text_width + self.HORIZONTAL_PADDING
+        popup_width = max(self.MIN_WIDTH, popup_width)
+        popup_width = min(popup_width, int(width_hint or self.MAX_WIDTH), self.MAX_WIDTH)
+        popup_height = row_height * visible_rows + self.VERTICAL_PADDING
+        return QSize(popup_width, popup_height)
+
+    def _on_item_clicked(self, item):
+        if item is not None:
+            self.list_widget.setCurrentItem(item)
+            self.command_clicked.emit(self._item_command(item))
+
+    def _create_row_widget(self, command, item):
+        row_widget = HistorySuggestionRowWidget(command, self.list_widget)
+        row_widget.command_clicked.connect(lambda _cmd, list_item=item: self._on_row_command_clicked(list_item))
+        row_widget.delete_requested.connect(lambda cmd: self.delete_requested.emit(cmd))
+        return row_widget
+
+    def _on_row_command_clicked(self, item):
+        if item is not None:
+            self.list_widget.setCurrentItem(item)
+            self.command_clicked.emit(self._item_command(item))
+
+    def _refresh_row_styles(self, _row=None):
+        current_item = self.list_widget.currentItem()
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            row_widget = self.list_widget.itemWidget(item)
+            if row_widget is not None:
+                row_widget.refresh_theme(selected=item is current_item)
+
+    @staticmethod
+    def _item_command(item):
+        if item is None:
+            return ""
+        return item.data(Qt.UserRole) or item.text() or ""
+
+
+class HistorySuggestionRowWidget(QWidget):
+    """鍘嗗彶鍛戒护鍊欓€夎锛屾敮鎸侀€夋嫨鍜屽垹闄ゃ€?"""
+
+    command_clicked = pyqtSignal(str)
+    delete_requested = pyqtSignal(str)
+
+    def __init__(self, command: str, parent=None):
+        super().__init__(parent)
+        self.command = command
+        self.setObjectName("historySuggestionRow")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
+
+        self.command_button = QPushButton(command, self)
+        self.command_button.setObjectName("historySuggestionCommandButton")
+        self.command_button.setFocusPolicy(Qt.NoFocus)
+        self.command_button.setFlat(True)
+        self.command_button.clicked.connect(self._emit_command_clicked)
+
+        self.delete_button = QPushButton("x", self)
+        self.delete_button.setObjectName("historySuggestionDeleteButton")
+        self.delete_button.setFocusPolicy(Qt.NoFocus)
+        self.delete_button.setFixedSize(18, 18)
+        self.delete_button.setToolTip("Delete history command")
+        self.delete_button.clicked.connect(self._emit_delete_requested)
+
+        layout.addWidget(self.command_button, 1)
+        layout.addWidget(self.delete_button, 0)
+
+        self.refresh_theme(selected=False)
+
+    def refresh_theme(self, selected=False):
+        row_background = t("selection_bg") if selected else "transparent"
+        delete_hover_background = t("bg_hover") if not selected else t("border")
+        self.setStyleSheet(
+            f"""
+            QWidget#historySuggestionRow {{
+                background-color: {row_background};
+                border: none;
+                border-radius: 3px;
+            }}
+            QPushButton#historySuggestionCommandButton {{
+                border: none;
+                background-color: {row_background};
+                color: {t('text_primary')};
+                padding: 0px;
+                margin: 0px;
+                text-align: left;
+            }}
+            QPushButton#historySuggestionCommandButton:hover {{
+                background-color: {row_background};
+            }}
+            QPushButton#historySuggestionCommandButton:pressed {{
+                background-color: {row_background};
+            }}
+            QPushButton#historySuggestionDeleteButton {{
+                border: none;
+                background-color: {row_background};
+                color: {t('text_hint')};
+                padding: 0px;
+                margin: 0px;
+                text-align: center;
+                font-weight: bold;
+                border-radius: 9px;
+            }}
+            QPushButton#historySuggestionDeleteButton:hover {{
+                color: {t('status_offline')};
+                background-color: {delete_hover_background};
+            }}
+            QPushButton#historySuggestionDeleteButton:pressed {{
+                background-color: {delete_hover_background};
+            }}
+            """
+        )
+
+    def _emit_command_clicked(self):
+        self.command_clicked.emit(self.command)
+
+    def _emit_delete_requested(self):
+        self.delete_requested.emit(self.command)
+
+
 class DebugConsoleEdit(QTextEdit):
     """支持在交互区直接输入并发送命令的控制台文本框。"""
 
@@ -237,6 +521,7 @@ class DebugConsoleEdit(QTextEdit):
     history_prev_requested = pyqtSignal()
     history_next_requested = pyqtSignal()
     clear_requested = pyqtSignal()
+    input_text_changed = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -411,6 +696,12 @@ class DebugConsoleEdit(QTextEdit):
     def set_current_input(self, text: str):
         self._replace_current_input(text)
         self._move_cursor_to_end()
+        self.input_text_changed.emit(self.current_input())
+
+    def clear_current_input(self):
+        self._replace_current_input("")
+        self._move_cursor_to_end()
+        self.input_text_changed.emit("")
 
     def keyPressEvent(self, event):
         if event.matches(QKeySequence.Copy) or event.matches(QKeySequence.SelectAll):
@@ -441,6 +732,7 @@ class DebugConsoleEdit(QTextEdit):
                 return
             command = self.current_input()
             self._replace_current_input("")
+            self.input_text_changed.emit("")
             self.command_submitted.emit(command)
             return
 
@@ -459,9 +751,11 @@ class DebugConsoleEdit(QTextEdit):
         if event.key() == Qt.Key_Delete and cursor.position() < self._input_start:
             return
 
-        if event.text() or event.key() in (Qt.Key_Backspace, Qt.Key_Delete):
+        if event.text() or event.key() in (Qt.Key_Backspace, Qt.Key_Delete) or event.matches(QKeySequence.Paste):
             self._protect_cursor()
         super().keyPressEvent(event)
+        if event.text() or event.key() in (Qt.Key_Backspace, Qt.Key_Delete) or event.matches(QKeySequence.Paste):
+            self.input_text_changed.emit(self.current_input())
 
     def mousePressEvent(self, event):
         cursor = self.cursorForPosition(event.pos())
@@ -853,12 +1147,16 @@ class DebugPage(BasePage):
         self.connecting = False
         self.canceling_connect = False
         self.command_running = False
+        self._executing_command = ""
         self.current_context = {}
         self.shortcut_commands = []
         self.shortcut_collapsed = False
         self.command_history = []
         self.history_index = None
         self.history_draft = ""
+        self._active_suggestion_context = None
+        self._history_suggestion_suppressed_contexts = set()
+        self._history_programmatic_update_contexts = set()
         self.command_type_prefix = self.COMMAND_TYPES[0][1]
         self.last_command_source = "input"
         self.download_root = self._default_download_root()
@@ -871,6 +1169,7 @@ class DebugPage(BasePage):
         self._stream_log_active = False
         self._pending_stream_log_state = None
         self._last_command_failed = False
+        self.history_popup = None
         self._output_flush_timer = QTimer(self)
         self._output_flush_timer.setInterval(120)
         self._output_flush_timer.timeout.connect(self._flush_pending_output)
@@ -982,6 +1281,8 @@ class DebugPage(BasePage):
         self.console_edit.history_prev_requested.connect(self.on_history_prev_requested_from_console)
         self.console_edit.history_next_requested.connect(self.on_history_next_requested_from_console)
         self.console_edit.clear_requested.connect(self.on_console_clear_requested)
+        self.console_edit.input_text_changed.connect(self.on_console_input_text_changed)
+        self.console_edit.installEventFilter(self)
         command_layout.addWidget(self.console_edit, 1)
 
         command_input_frame = QFrame()
@@ -1014,6 +1315,8 @@ class DebugPage(BasePage):
         self.command_input.returnPressed.connect(self.on_send_button_clicked)
         self.command_input.history_prev_requested.connect(self.on_history_prev_requested_from_input)
         self.command_input.history_next_requested.connect(self.on_history_next_requested_from_input)
+        self.command_input.textChanged.connect(self.on_command_input_text_changed)
+        self.command_input.installEventFilter(self)
 
         self.send_btn = QPushButton()
         self.send_btn.setFixedSize(84, 28)
@@ -1086,8 +1389,16 @@ class DebugPage(BasePage):
         page_layout.addWidget(self.connect_group, 0)
         page_layout.addWidget(self.command_group, 1)
 
+        self.history_popup = HistorySuggestionPopup(self)
+        self.history_popup.command_clicked.connect(self.on_history_popup_command_clicked)
+        self.history_popup.delete_requested.connect(self.on_history_popup_delete_requested)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
         self.on_command_type_changed()
         self.update_send_button()
+        self._hide_history_suggestions()
         self.update_connect_button()
 
     def _apply_plain_toolbar_style(self, frame):
@@ -1139,6 +1450,21 @@ class DebugPage(BasePage):
 
         self.worker_thread.start()
 
+    def eventFilter(self, watched, event):
+        if self.history_popup is not None and self.history_popup.isVisible():
+            if event.type() == QEvent.MouseButtonPress:
+                if self._should_hide_history_popup_on_click(watched, event):
+                    self._hide_history_suggestions()
+
+        if event.type() == QEvent.KeyPress:
+            if watched is self.command_input:
+                if self._handle_history_popup_key_event("input", self.command_input.text(), event):
+                    return True
+            elif watched is self.console_edit:
+                if self._handle_history_popup_key_event("console", self.console_edit.current_input(), event):
+                    return True
+        return super().eventFilter(watched, event)
+
     def on_page_show(self):
         self.show_info("调试页面")
         self.refresh_shortcut_area_geometry()
@@ -1162,6 +1488,15 @@ class DebugPage(BasePage):
             for normalized in [self._normalize_display_command(cmd)]
             if normalized
         ]
+        self.command_history = [
+            normalized
+            for cmd in app_config.debug_command_history[:self.MAX_HISTORY]
+            if cmd.strip()
+            for normalized in [self._normalize_history_command(cmd)]
+            if normalized
+        ]
+        self.history_index = None
+        self.history_draft = ""
         self.refresh_shortcut_buttons()
 
     def save_config(self):
@@ -1170,7 +1505,28 @@ class DebugPage(BasePage):
         app_config.debug_download_path = self.download_root
         app_config.debug_shortcuts = self.shortcut_commands[:self.MAX_SHORTCUTS]
         app_config.debug_shortcuts_initialized = True
+        app_config.debug_command_history = self.command_history[-self.MAX_HISTORY:]
         config_manager.save_app_config(app_config)
+
+    def _normalize_history_command(self, command):
+        return self._normalize_display_command(command)
+
+    def _persist_command_history(self):
+        self.save_config()
+
+    def _record_successful_command(self, command):
+        command = self._normalize_history_command(command)
+        if not command:
+            return
+
+        if command in self.command_history:
+            self.command_history.remove(command)
+        self.command_history.append(command)
+        if len(self.command_history) > self.MAX_HISTORY:
+            self.command_history = self.command_history[-self.MAX_HISTORY:]
+        self.history_index = None
+        self.history_draft = ""
+        self._persist_command_history()
 
     def on_sn_input_changed(self, _text):
         self.save_config()
@@ -1482,26 +1838,259 @@ class DebugPage(BasePage):
             self.on_clear_shortcuts_clicked()
 
     def on_history_prev_requested_from_input(self):
-        value = self._navigate_history(self.command_input.text(), previous=True)
+        current_text = self.command_input.text()
+        if self._should_handle_popup_navigation("input", current_text):
+            self.history_popup.select_prev()
+            return
+        value = self._navigate_history(current_text, previous=True)
         if value is not None:
+            self._prepare_history_navigation_update("input")
             self.command_input.setText(value)
             self.command_input.setCursorPosition(len(value))
 
     def on_history_next_requested_from_input(self):
-        value = self._navigate_history(self.command_input.text(), previous=False)
+        current_text = self.command_input.text()
+        if self._should_handle_popup_navigation("input", current_text):
+            self.history_popup.select_next()
+            return
+        value = self._navigate_history(current_text, previous=False)
         if value is not None:
+            self._prepare_history_navigation_update("input")
             self.command_input.setText(value)
             self.command_input.setCursorPosition(len(value))
 
     def on_history_prev_requested_from_console(self):
-        value = self._navigate_history(self.console_edit.current_input(), previous=True)
+        current_text = self.console_edit.current_input()
+        if self._should_handle_popup_navigation("console", current_text):
+            self.history_popup.select_prev()
+            return
+        value = self._navigate_history(current_text, previous=True)
         if value is not None:
+            self._prepare_history_navigation_update("console")
             self.console_edit.set_current_input(value)
 
     def on_history_next_requested_from_console(self):
-        value = self._navigate_history(self.console_edit.current_input(), previous=False)
+        current_text = self.console_edit.current_input()
+        if self._should_handle_popup_navigation("console", current_text):
+            self.history_popup.select_next()
+            return
+        value = self._navigate_history(current_text, previous=False)
         if value is not None:
+            self._prepare_history_navigation_update("console")
             self.console_edit.set_current_input(value)
+
+    def on_command_input_text_changed(self, text):
+        self._handle_history_input_changed("input", text)
+
+    def on_console_input_text_changed(self, text):
+        self._handle_history_input_changed("console", text)
+
+    def on_history_popup_command_clicked(self, command):
+        self._apply_history_suggestion(self._active_suggestion_context, command, submit=False)
+
+    def on_history_popup_delete_requested(self, command):
+        self._delete_history_suggestion(self._active_suggestion_context, command)
+
+    def _prepare_history_navigation_update(self, context):
+        self._history_suggestion_suppressed_contexts.add(context)
+        self._history_programmatic_update_contexts.add(context)
+        if self._active_suggestion_context == context:
+            self._hide_history_suggestions()
+
+    def _handle_history_input_changed(self, context, text):
+        if context in self._history_programmatic_update_contexts:
+            self._history_programmatic_update_contexts.discard(context)
+            return
+
+        if context in self._history_suggestion_suppressed_contexts:
+            self._history_suggestion_suppressed_contexts.discard(context)
+
+        self._update_history_suggestions(context, text)
+
+    def _should_handle_popup_navigation(self, context, current_text):
+        return (
+            bool(str(current_text or "").strip())
+            and self._active_suggestion_context == context
+            and self.history_popup is not None
+            and self.history_popup.isVisible()
+            and self.history_popup.has_suggestions()
+        )
+
+    def _match_command_history(self, text):
+        query = self._normalize_history_command(text)
+        if not query:
+            return []
+
+        lowered_query = query.lower()
+        prefix_matches = []
+        for command in reversed(self.command_history):
+            lowered_command = command.lower()
+            if lowered_command.startswith(lowered_query):
+                prefix_matches.append(command)
+        return prefix_matches
+
+    def _update_history_suggestions(self, context, text):
+        normalized_text = self._normalize_history_command(text)
+        if not normalized_text:
+            if self._active_suggestion_context == context:
+                self._hide_history_suggestions()
+            return
+
+        suggestions = self._match_command_history(normalized_text)
+        if not suggestions:
+            if self._active_suggestion_context == context:
+                self._hide_history_suggestions()
+            return
+
+        self._active_suggestion_context = context
+        self.history_popup.set_suggestions(suggestions)
+        self.history_popup.show_popup(
+            self._history_popup_position(context),
+            self._history_popup_available_width(context),
+        )
+
+    def _history_popup_position(self, context):
+        if context == "console":
+            cursor_rect = self.console_edit.cursorRect()
+            popup_origin = cursor_rect.bottomLeft() + QPoint(0, 4)
+            return self.console_edit.viewport().mapTo(self, popup_origin)
+        return self.command_input.mapTo(self, QPoint(0, self.command_input.height() + 2))
+
+    def _history_popup_available_width(self, context):
+        if context == "console":
+            viewport_width = self.console_edit.viewport().width()
+            cursor_rect = self.console_edit.cursorRect()
+            return max(HistorySuggestionPopup.MIN_WIDTH, viewport_width - cursor_rect.x() - 20)
+        return self.command_input.width()
+
+    def _hide_history_suggestions(self):
+        self._active_suggestion_context = None
+        if self.history_popup is not None:
+            self.history_popup.hide()
+
+    def _remove_command_history_entry(self, command):
+        normalized_command = self._normalize_history_command(command)
+        if not normalized_command or normalized_command not in self.command_history:
+            return False
+
+        self.command_history = [cmd for cmd in self.command_history if cmd != normalized_command]
+        self.history_index = None
+        self.history_draft = ""
+        self._persist_command_history()
+        return True
+
+    def _delete_history_suggestion(self, context, command):
+        if not self._remove_command_history_entry(command):
+            return
+
+        if not context:
+            self._hide_history_suggestions()
+            return
+
+        self._update_history_suggestions(context, self._current_history_input(context))
+
+    def _current_history_input(self, context):
+        if context == "console":
+            return self.console_edit.current_input()
+        return self.command_input.text()
+
+    def _apply_history_suggestion(self, context, command, submit=False):
+        if not context or not command:
+            return
+
+        if context == "console":
+            if submit:
+                self.console_edit.clear_current_input()
+                self._hide_history_suggestions()
+                self._submit_command(command, source="console")
+                return
+            self.console_edit.set_current_input(command)
+        else:
+            self.command_input.setText(command)
+            self.command_input.setCursorPosition(len(command))
+            if submit:
+                self._hide_history_suggestions()
+                self._submit_command(command, source="input")
+                return
+
+        self._hide_history_suggestions()
+
+    def _handle_history_popup_key_event(self, context, current_text, event):
+        if not self._should_handle_popup_navigation(context, current_text):
+            return False
+        if context == "console" and self.console_edit.textCursor().position() < self.console_edit._input_start:
+            return False
+
+        key = event.key()
+        if key == Qt.Key_Up:
+            self.history_popup.select_prev()
+            return True
+        if key == Qt.Key_Down:
+            self.history_popup.select_next()
+            return True
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            if not self.history_popup.has_active_selection():
+                return False
+            selected_command = self.history_popup.current_value()
+            if selected_command:
+                self._apply_history_suggestion(context, selected_command, submit=True)
+                return True
+            return False
+        if key == Qt.Key_Delete:
+            if not self.history_popup.has_active_selection():
+                return False
+            selected_command = self.history_popup.current_value()
+            if selected_command:
+                self._delete_history_suggestion(context, selected_command)
+                return True
+            return False
+        if key == Qt.Key_Tab:
+            selected_command = self.history_popup.current_value()
+            if selected_command:
+                self._apply_history_suggestion(context, selected_command, submit=False)
+            return True
+        if key == Qt.Key_Escape:
+            self._hide_history_suggestions()
+            return True
+        return False
+
+    def _should_hide_history_popup_on_click(self, watched, event):
+        if self._is_history_popup_widget(watched):
+            return False
+
+        if watched in (self.command_input, self.console_edit):
+            return False
+
+        widget = watched if isinstance(watched, QWidget) else None
+        if self.history_popup is not None and hasattr(event, "globalPos"):
+            popup_global_rect = QRect(
+                self.history_popup.mapToGlobal(QPoint(0, 0)),
+                self.history_popup.size(),
+            )
+            if popup_global_rect.contains(event.globalPos()):
+                return False
+
+        if widget is None or event is None or not hasattr(event, "pos"):
+            return True
+
+        global_pos = widget.mapToGlobal(event.pos())
+        popup_pos = self.mapFromGlobal(global_pos)
+        return not self.history_popup.geometry().contains(popup_pos)
+
+    def _is_history_popup_widget(self, widget):
+        current = widget if isinstance(widget, QWidget) else None
+        while current is not None:
+            if current is self.history_popup:
+                return True
+            current = current.parentWidget()
+        return False
+
+    def _hide_history_suggestions_if_inactive(self):
+        if self.history_popup is None or not self.history_popup.isVisible():
+            return
+        if self.command_input.hasFocus() or self.console_edit.hasFocus():
+            return
+        self._hide_history_suggestions()
 
     def _navigate_history(self, current_text, previous=True):
         if not self.command_history:
@@ -1523,22 +2112,6 @@ class DebugPage(BasePage):
         self.history_index = None
         return self.history_draft
 
-    def _record_history(self, command):
-        command = (command or "").strip()
-        if not command:
-            return
-
-        if self.command_history and self.command_history[-1] == command:
-            self.history_index = None
-            self.history_draft = ""
-            return
-
-        self.command_history.append(command)
-        if len(self.command_history) > self.MAX_HISTORY:
-            self.command_history = self.command_history[-self.MAX_HISTORY:]
-        self.history_index = None
-        self.history_draft = ""
-
     def _submit_command(self, command, source="input", record_history=True):
         if not self.connected:
             self.show_warning("请先登录设备")
@@ -1555,9 +2128,9 @@ class DebugPage(BasePage):
             return
 
         backend_command = self._build_backend_command(command)
+        self._hide_history_suggestions()
         self._queue_stream_log_state_update(backend_command)
-        if record_history:
-            self._record_history(command)
+        self._executing_command = command if record_history else ""
         self.last_command_source = source
         self._last_command_failed = False
         self.command_running = True
@@ -1654,6 +2227,7 @@ class DebugPage(BasePage):
         self.connected = False
         self.connecting = False
         self.command_running = False
+        self._executing_command = ""
         self.current_context = {}
         self._stream_log_active = False
         self._pending_stream_log_state = None
@@ -1670,12 +2244,14 @@ class DebugPage(BasePage):
         self.command_type_combo.setEnabled(True)
         self.update_shortcut_controls()
         self.update_send_button()
+        self._hide_history_suggestions()
         self.append_output(disconnected_message)
         self.show_info(disconnected_message)
         self._schedule_pending_connect()
 
     def on_command_failed(self, message):
         self._last_command_failed = True
+        self._hide_history_suggestions()
         self.append_output(message, color=t("status_offline"))
         self.show_error(message)
 
@@ -1686,6 +2262,9 @@ class DebugPage(BasePage):
 
     def on_command_finished(self):
         self.command_running = False
+        if not self._last_command_failed:
+            self._record_successful_command(self._executing_command)
+        self._executing_command = ""
         if self._pending_stream_log_state is not None and not self._last_command_failed:
             self._stream_log_active = self._pending_stream_log_state
         self._pending_stream_log_state = None
@@ -1709,6 +2288,7 @@ class DebugPage(BasePage):
 
     def on_console_clear_requested(self):
         self._console_suppress_until = time.monotonic() + 0.2
+        self._hide_history_suggestions()
         self.console_edit.clear_console()
         self._pending_output_entries = []
         self._pending_stream_log_entries = []
@@ -1980,6 +2560,8 @@ class DebugPage(BasePage):
             self.shortcut_hint_label.setStyleSheet(self._get_shortcut_hint_stylesheet())
         if hasattr(self, "shortcut_scroll"):
             self.shortcut_scroll.setStyleSheet(StyleManager.get_SCROLL_AREA())
+        if hasattr(self, "history_popup") and self.history_popup is not None:
+            self.history_popup.refresh_theme()
         self.refresh_shortcut_buttons()
 
     def _update_shortcut_hint_position(self):

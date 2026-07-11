@@ -43,6 +43,7 @@ class AppConfig:
     phone_history: List[str] = field(default_factory=list)
     debug_shortcuts: List[str] = field(default_factory=list)
     debug_shortcuts_initialized: bool = False
+    debug_command_history: List[str] = field(default_factory=list)
     last_debug_sn: str = ''
     debug_download_path: str = ''
     last_log_sn: str = ''
@@ -243,6 +244,8 @@ class ConfigManager:
         debug_shortcuts_str = self._get_value('debug_shortcuts', '')
         debug_shortcuts = self._decode_string_list(debug_shortcuts_str)
         debug_shortcuts_initialized = self._get_value('debug_shortcuts_initialized', '0') == '1'
+        debug_command_history_str = self._get_value('debug_command_history', '')
+        debug_command_history = self._decode_string_list(debug_command_history_str)
         last_debug_sn = self._get_value('last_debug_sn', '')
         debug_download_path = self._get_value('debug_download_path', '')
         last_log_sn = self._get_value('last_log_sn', '')
@@ -259,6 +262,7 @@ class ConfigManager:
             phone_history=phone_history,
             debug_shortcuts=debug_shortcuts,
             debug_shortcuts_initialized=debug_shortcuts_initialized,
+            debug_command_history=debug_command_history,
             last_debug_sn=last_debug_sn,
             debug_download_path=debug_download_path,
             last_log_sn=last_log_sn,
@@ -279,6 +283,8 @@ class ConfigManager:
             debug_shortcuts_str = json.dumps(config.debug_shortcuts[:50], ensure_ascii=False)
             self._set_value('debug_shortcuts', debug_shortcuts_str)
             self._set_value('debug_shortcuts_initialized', '1' if config.debug_shortcuts_initialized else '0')
+            debug_command_history_str = json.dumps(config.debug_command_history[:100], ensure_ascii=False)
+            self._set_value('debug_command_history', debug_command_history_str)
             self._set_value('last_debug_sn', config.last_debug_sn)
             self._set_value('debug_download_path', config.debug_download_path)
             self._set_value('last_log_sn', config.last_log_sn)

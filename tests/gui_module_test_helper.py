@@ -65,6 +65,7 @@ def _install_pyqt_stubs(originals):
         NoEditTriggers = 0
         SelectRows = 0
         SingleSelection = 0
+        ScrollPerPixel = 0
 
     class _Style(_Dummy):
         CE_ItemViewItem = 0
@@ -84,6 +85,11 @@ def _install_pyqt_stubs(originals):
         def exec_(self):
             return self.Yes
 
+    class _Application(_Dummy):
+        @staticmethod
+        def instance():
+            return None
+
     class _QtNamespace:
         AlignRight = 0
         AlignVCenter = 0
@@ -93,29 +99,47 @@ def _install_pyqt_stubs(originals):
         Vertical = 0
         Horizontal = 0
         StrongFocus = 0
-        OtherFocusReason = 0
-        CustomContextMenu = 0
+        NoFocus = 1
+        OtherFocusReason = 2
+        CustomContextMenu = 3
         LeftButton = 1
-        MoveAction = 0
-        Key_Up = 0
-        Key_Down = 0
+        MoveAction = 4
+        Popup = 5
+        FramelessWindowHint = 6
+        WA_ShowWithoutActivating = 7
+        ScrollBarAlwaysOff = 8
+        Key_Up = 9
+        Key_Down = 10
+        Key_Return = 11
+        Key_Enter = 12
+        Key_Tab = 13
+        Key_Escape = 14
+        Key_Delete = 15
         UserRole = 1000
-        green = 0
-        red = 0
-        gray = 0
-        darkYellow = 0
+        ElideMiddle = 16
+        green = 17
+        red = 18
+        gray = 19
+        darkYellow = 20
 
         @staticmethod
         def Orientations(_value):
             return 0
 
+    class _EventNamespace:
+        KeyPress = 1
+        MouseButtonPress = 2
+        FocusOut = 3
+
     qtwidgets.QWidget = _Dummy
     qtwidgets.QDialog = _Dummy
-    qtwidgets.QApplication = _Dummy
+    qtwidgets.QApplication = _Application
     qtwidgets.QVBoxLayout = _Dummy
     qtwidgets.QHBoxLayout = _Dummy
     qtwidgets.QLabel = _Dummy
     qtwidgets.QPushButton = _Dummy
+    qtwidgets.QListWidget = _Dummy
+    qtwidgets.QListWidgetItem = _Dummy
     qtwidgets.QTableWidget = _Dummy
     qtwidgets.QTableWidgetItem = _Dummy
     qtwidgets.QHeaderView = _Dummy
@@ -138,6 +162,7 @@ def _install_pyqt_stubs(originals):
     qtwidgets.QStyle = _Style
 
     qtcore.Qt = _QtNamespace
+    qtcore.QEvent = _EventNamespace
     qtcore.QSize = _Dummy
     qtcore.QRect = _Dummy
     qtcore.QRectF = _Dummy
