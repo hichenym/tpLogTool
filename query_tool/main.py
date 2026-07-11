@@ -977,6 +977,11 @@ class MainWindow(QMainWindow):
             self.update_manager.skip_version(version_info.version)
             self.show_info(f"已跳过版本 V{version_info.version}，下次不再提示", 3000)
 
+    @staticmethod
+    def _should_show_update_progress_text(strategy: str) -> bool:
+        """仅提示型更新在状态栏显示下载文案。"""
+        return strategy not in ('silent', 'auto')
+
     def start_download_update(self, version_info):
         """开始下载更新"""
         from query_tool.utils.logger import logger
@@ -985,8 +990,8 @@ class MainWindow(QMainWindow):
 
         strategy = self.update_manager.get_update_strategy()
         logger.info(f"更新策略: {strategy}")
-        
-        if strategy in ('silent', 'auto'):
+
+        if not self._should_show_update_progress_text(strategy):
             # 静默模式：只显示绿色呼吸闪烁提示
             logger.info("静默更新模式，显示呼吸闪烁提示")
             logger.info(f"breathing_label 存在: {hasattr(self, 'breathing_label')}")
@@ -1007,22 +1012,23 @@ class MainWindow(QMainWindow):
     def on_download_progress(self, downloaded, total):
         """下载进度更新"""
         strategy = self.update_manager.get_update_strategy()
-        
-        if strategy == 'silent':
-            # 静默模式：不显示进度，只显示呼吸闪烁
-            pass
-        else:
-            # 提示模式：显示下载进度
-            if total > 0:
-                progress = int((downloaded / total) * 100)
-                downloaded_mb = downloaded / (1024 * 1024)
-                total_mb = total / (1024 * 1024)
-                
-                # 在右下角显示下载进度
-                self.download_progress_label.setText(
-                    f"下载更新: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress}%)"
-                )
-                self.download_progress_label.setVisible(True)
+
+        if not self._should_show_update_progress_text(strategy):
+            # 静默/自动模式：不显示进度文案，只保留呼吸闪烁
+            self.download_progress_label.setVisible(False)
+            return
+
+        # 提示模式：显示下载进度
+        if total > 0:
+            progress = int((downloaded / total) * 100)
+            downloaded_mb = downloaded / (1024 * 1024)
+            total_mb = total / (1024 * 1024)
+
+            # 在右下角显示下载进度
+            self.download_progress_label.setText(
+                f"下载更新: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress}%)"
+            )
+            self.download_progress_label.setVisible(True)
     
     def on_download_finished(self, success, result):
         """下载完成"""
