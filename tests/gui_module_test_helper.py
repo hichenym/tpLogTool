@@ -309,6 +309,8 @@ def _install_log_page_stubs(originals):
 
     siot_debug_stub = types.ModuleType("query_tool.utils.siot_debug")
     siot_debug_stub.DEFAULT_COMMAND_TIMEOUT_MS = 1000
+    siot_debug_stub.CloudCredentialPrefetcher = type("CloudCredentialPrefetcher", (), {})
+    siot_debug_stub.build_connect_payload = lambda *args, **kwargs: {}
     siot_debug_stub.is_getsystemcfg_command = lambda *_args, **_kwargs: False
     siot_debug_stub.is_syscmd_family_command = lambda *_args, **_kwargs: False
     _swap_module("query_tool.utils.siot_debug", siot_debug_stub, originals)

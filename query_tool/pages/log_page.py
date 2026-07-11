@@ -1134,6 +1134,15 @@ class LogPage(BasePage):
         self.retry_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.retry_btn.setEnabled(False)
         self.retry_btn.clicked.connect(self.on_retry_clicked)
+        self.reset_btn = QPushButton("重置")
+        self.reset_btn.setIcon(QIcon(":/icons/common/clean.png"))
+        self.reset_btn.setIconSize(QSize(16, 16))
+        self.reset_btn.setFixedSize(72, 28)
+        self.reset_btn.setToolTip("清空当前执行结果")
+        self.reset_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+        self.reset_btn.setEnabled(False)
+        self.reset_btn.clicked.connect(self.on_reset_clicked)
+        table_action_row.addWidget(self.reset_btn)
         table_action_row.addWidget(self.retry_btn)
 
         table_layout.addLayout(table_action_row)
@@ -1276,6 +1285,11 @@ class LogPage(BasePage):
             return
 
         self._start_execution(selected_sns, reset_table=False, run_mode="retry")
+
+    def on_reset_clicked(self):
+        if self.fetch_running:
+            return
+        self._reset_result_view()
 
     def _collect_execution_context(self):
         commands = self.get_command_list()
@@ -1513,6 +1527,27 @@ class LogPage(BasePage):
         self._apply_result_column_widths()
         self._update_result_selection_state()
 
+    def _reset_result_view(self):
+        self._row_map = {}
+        self._device_payloads = {}
+        self.result_table.clearSelection()
+        self.result_table.setRowCount(0)
+        self.summary_label.setText("等待开始")
+        self.summary_label.setVisible(False)
+        self.detail_header_label.setText("设备执行详情")
+        self.detail_header_label.setVisible(False)
+        self.detail_view.clear()
+
+        self._result_checkbox_updating = True
+        try:
+            self.result_select_all_checkbox.setChecked(False)
+            self.result_corner_checkbox.setChecked(False)
+        finally:
+            self._result_checkbox_updating = False
+
+        self._apply_result_column_widths()
+        self._update_result_selection_state()
+
     def _prepare_retry_rows(self, sn_list):
         total_commands = len(self.get_command_list())
         for sn in sn_list:
@@ -1561,9 +1596,11 @@ class LogPage(BasePage):
         self.command_input.setEnabled(not running)
         self.sn_input.setEnabled(not running)
         self._set_result_checkboxes_enabled(not running)
-        self.result_select_all_checkbox.setEnabled(not running and self.result_table.rowCount() > 0)
-        self.result_corner_checkbox.setEnabled(not running and self.result_table.rowCount() > 0)
+        has_result_rows = self._has_result_rows()
+        self.result_select_all_checkbox.setEnabled(not running and has_result_rows)
+        self.result_corner_checkbox.setEnabled(not running and has_result_rows)
         self.retry_btn.setEnabled((not running) and self._has_selected_retryable_rows())
+        self.reset_btn.setEnabled((not running) and has_result_rows)
         self._update_fetch_button_state()
         if running:
             self.command_input.setReadOnly(True)
@@ -1662,6 +1699,8 @@ class LogPage(BasePage):
             self.choose_download_path_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         if hasattr(self, "fetch_btn"):
             self.fetch_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+        if hasattr(self, "reset_btn"):
+            self.reset_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         if hasattr(self, "retry_btn"):
             self.retry_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         if hasattr(self, "download_path_label"):
@@ -2188,6 +2227,9 @@ class LogPage(BasePage):
     def _has_selected_retryable_rows(self) -> bool:
         return bool(self._get_selected_retryable_sns())
 
+    def _has_result_rows(self) -> bool:
+        return self.result_table.rowCount() > 0
+
     def _update_result_selection_state(self):
         total = self.result_table.rowCount()
         selected_rows = self._selected_result_rows()
@@ -2213,6 +2255,7 @@ class LogPage(BasePage):
             self.result_selection_label.setText(f"已选 {selected_count} / {total}，可重试 {retryable_count} 台")
 
         self.retry_btn.setEnabled((not self.fetch_running) and retryable_count > 0)
+        self.reset_btn.setEnabled((not self.fetch_running) and total > 0)
 
     def _build_file_segments(self, lines):
         return [
