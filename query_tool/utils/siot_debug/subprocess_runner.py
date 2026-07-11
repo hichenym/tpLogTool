@@ -11,15 +11,13 @@ from pathlib import Path
 
 from .command_catalog import is_getsystemcfg_command, is_startlogp2p_command, is_syscmd_family_command, parse_startlogp2p_level
 from .config import APP_LOG_DIR, DEFAULT_COMMAND_TIMEOUT_MS, RUN_LOG_PATH
-from .models import CommandResult, DeviceCredentials, TransferProgress
+from .models import CloudCredentials, CommandResult, DeviceCredentials, TransferProgress
 from .p2p_session import P2PDeviceSession
 from .session import DeviceSession
 
 CONNECT_WAKEUP_ATTEMPTS = 1
 AUTH_RETRY_ATTEMPTS = 2
 AUTH_RETRY_DELAY_S = 0.8
-INIT_START_ATTEMPTS = 2
-INIT_START_RETRY_DELAY_S = 0.8
 INIT_START_TIMEOUT_MS = 5_000
 STREAM_LOG_FLUSH_INTERVAL_S = 0.2
 STREAM_LOG_MAX_BATCH = 50
@@ -307,6 +305,7 @@ def _build_session_factories(
     credentials: DeviceCredentials,
     cloud_username: str,
     cloud_password: str,
+    prefetched_cloud_credentials: CloudCredentials | None = None,
 ) -> list[tuple[str, Callable[[], object]]]:
     protocol = _normalized_protocol(credentials)
     factories: list[tuple[str, Callable[[], object]]] = []
@@ -318,11 +317,29 @@ def _build_session_factories(
     if protocol == "siot":
         if not cloud_username or not cloud_password:
             raise RuntimeError("当前设备为SIOT设备，请先在设置中配置Seetong账号")
-        factories.append(("siot", lambda: DeviceSession(cloud_username, cloud_password)))
+        factories.append(
+            (
+                "siot",
+                lambda: DeviceSession(
+                    cloud_username,
+                    cloud_password,
+                    prefetched_cloud_credentials=prefetched_cloud_credentials,
+                ),
+            )
+        )
         return factories
 
     if cloud_username and cloud_password:
-        factories.append(("siot", lambda: DeviceSession(cloud_username, cloud_password)))
+        factories.append(
+            (
+                "siot",
+                lambda: DeviceSession(
+                    cloud_username,
+                    cloud_password,
+                    prefetched_cloud_credentials=prefetched_cloud_credentials,
+                ),
+            )
+        )
     factories.append(("p2p", P2PDeviceSession))
     return factories
 
@@ -410,24 +427,17 @@ def _connect_with_retries(session_factory: Callable[[], object], credentials: De
             session = session_factory()
             try:
                 session.connect(credentials, status_callback=lambda msg: _emit("status", message=msg))
-                init_result = None
-                for init_attempt in range(INIT_START_ATTEMPTS):
-                    init_result = session.execute_command(
-                        "syscmd start",
-                        timeout_ms=INIT_START_TIMEOUT_MS,
-                        progress_callback=None,
-                        stream_log_callback=None,
-                    )
-                    if init_result.success:
-                        break
-                    if _is_empty_start_result(init_result):
-                        if init_attempt < INIT_START_ATTEMPTS - 1:
-                            time.sleep(INIT_START_RETRY_DELAY_S)
-                            continue
-                        logging.warning("syscmd start returned empty result during connect; treating as soft success")
-                        break
+                init_result = session.execute_command(
+                    "syscmd start",
+                    timeout_ms=INIT_START_TIMEOUT_MS,
+                    progress_callback=None,
+                    stream_log_callback=None,
+                )
+                if not init_result.success and not _is_empty_start_result(init_result):
                     init_message = (init_result.display_text or _format_command_result("syscmd start", init_result)).strip()
                     raise RuntimeError(init_message or "初始化交互终端失败")
+                if _is_empty_start_result(init_result):
+                    logging.warning("syscmd start returned empty result during connect; treating as soft success")
                 return session
             except Exception as exc:
                 last_connect_error = str(exc)
@@ -480,8 +490,20 @@ def main():
 
         cloud_username = str(cloud.get("username") or "").strip()
         cloud_password = str(cloud.get("password") or "").strip()
+        prefetched_cloud_credentials = None
+        cloud_credentials_payload = cloud.get("credentials")
+        if isinstance(cloud_credentials_payload, dict):
+            try:
+                prefetched_cloud_credentials = CloudCredentials(**cloud_credentials_payload)
+            except Exception:
+                prefetched_cloud_credentials = None
         connect_errors = []
-        session_factories = _build_session_factories(credentials, cloud_username, cloud_password)
+        session_factories = _build_session_factories(
+            credentials,
+            cloud_username,
+            cloud_password,
+            prefetched_cloud_credentials=prefetched_cloud_credentials,
+        )
         if len(session_factories) > 1:
             protocol_names = " -> ".join(name.upper() for name, _ in session_factories)
             _emit("status", message=f"设备类型未明确，按 {protocol_names} 顺序尝试连接...")

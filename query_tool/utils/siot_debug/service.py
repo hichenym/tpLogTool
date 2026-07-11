@@ -15,6 +15,7 @@ from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.logger import logger
 from query_tool.utils.runtime_credential_cache import get_shared_device_query
 
+from .connect_payload import CloudCredentialPrefetcher, build_connect_payload
 from .config import DEFAULT_COMMAND_TIMEOUT_MS, DEVICE_USERNAME
 from .models import DeviceCredentials
 from .session import fetch_cloud_credentials
@@ -104,22 +105,6 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
     if not dev_id:
         raise RuntimeError("设备ID为空，无法获取设备密码")
 
-    if not model and is_siot is not False:
-        try:
-            header_info = query.get_device_header(real_sn)
-            header_data = header_info.get("data") or {}
-            model = str(header_data.get("productName") or "").strip()
-        except Exception:
-            model = ""
-
-    if not model:
-        try:
-            version = str(query.get_device_version(dev_id) or "").strip()
-            if "-" in version:
-                model = version.split("-", 1)[0].strip()
-        except Exception:
-            model = ""
-
     device_password = (query.get_cloud_password(dev_id) or "").strip()
     if not device_password:
         raise RuntimeError(f"未获取到设备密码：{real_sn}")
@@ -189,6 +174,7 @@ class SiotDebugWorker(QObject):
             self._close_process(wait=True)
             if self._is_connect_cancelled():
                 return
+            prefetcher = CloudCredentialPrefetcher(seetong_username, seetong_password).start()
             self.status_message.emit("正在查询设备密码...")
             credentials, context = resolve_device_credentials(sn, env, device_username, device_password)
             if self._is_connect_cancelled():
@@ -200,6 +186,9 @@ class SiotDebugWorker(QObject):
                 self.status_message.emit("查询到非SIOT设备")
             if protocol == "siot" and (not seetong_username.strip() or not seetong_password.strip()):
                 raise RuntimeError("当前设备为SIOT设备，请先在设置中配置Seetong账号")
+            prefetched_cloud_credentials = None
+            if protocol != "p2p":
+                prefetched_cloud_credentials = prefetcher.get(require=protocol == "siot")
             self.status_message.emit(f"已获取设备密码，目标设备: {context['sn']}")
 
             process = subprocess.Popen(
@@ -232,21 +221,12 @@ class SiotDebugWorker(QObject):
                 return
 
             self._send_to_process(
-                {
-                    "action": "connect",
-                    "cloud": {
-                        "username": seetong_username,
-                        "password": seetong_password,
-                    },
-                    "device": {
-                        "sn": credentials.sn,
-                        "username": credentials.username,
-                        "password": credentials.password,
-                        "dev_id": credentials.dev_id,
-                        "protocol": credentials.protocol,
-                        "is_siot": credentials.is_siot,
-                    },
-                }
+                build_connect_payload(
+                    device_credentials=credentials,
+                    cloud_username=seetong_username,
+                    cloud_password=seetong_password,
+                    prefetched_cloud_credentials=prefetched_cloud_credentials,
+                )
             )
         except Exception as exc:
             if self._is_connect_cancelled():

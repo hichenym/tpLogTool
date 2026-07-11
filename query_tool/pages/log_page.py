@@ -42,7 +42,13 @@ from .page_registry import register_page
 from query_tool.utils import StyleManager, config_manager, get_account_config, get_seetong_account_config
 from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.logger import logger
-from query_tool.utils.siot_debug import DEFAULT_COMMAND_TIMEOUT_MS, is_getsystemcfg_command, is_syscmd_family_command
+from query_tool.utils.siot_debug import (
+    CloudCredentialPrefetcher,
+    DEFAULT_COMMAND_TIMEOUT_MS,
+    build_connect_payload,
+    is_getsystemcfg_command,
+    is_syscmd_family_command,
+)
 from query_tool.utils.siot_debug.service import resolve_device_credentials
 from query_tool.utils.theme_manager import t
 from query_tool.widgets import PlainTextEdit, prompt_configure_account
@@ -175,6 +181,7 @@ class BatchLogFetchThread(QThread):
         self._process_lock = threading.Lock()
         self._active_processes = set()
         self._executor = None
+        self._cloud_prefetcher = CloudCredentialPrefetcher(seetong_username, seetong_password)
 
     def cancel(self):
         self._stop_event.set()
@@ -199,6 +206,7 @@ class BatchLogFetchThread(QThread):
         failed_devices = 0
         total_files = 0
 
+        self._cloud_prefetcher.start()
         executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self._executor = executor
         pending_futures = set()
@@ -372,7 +380,14 @@ class BatchLogFetchThread(QThread):
         process = None
         event_queue = None
         try:
-            process, event_queue = self._start_process(credentials)
+            prefetched_cloud_credentials = None
+            protocol = str(credentials.protocol or "").strip().lower()
+            if protocol != "p2p":
+                prefetched_cloud_credentials = self._cloud_prefetcher.get(require=protocol == "siot")
+            process, event_queue = self._start_process(
+                credentials,
+                prefetched_cloud_credentials=prefetched_cloud_credentials,
+            )
             self._wait_for_connect(
                 event_queue,
                 status_callback=lambda text: self._on_connect_status(
@@ -592,7 +607,7 @@ class BatchLogFetchThread(QThread):
             return command
         return f"GetSystemCfg {command}"
 
-    def _start_process(self, credentials):
+    def _start_process(self, credentials, prefetched_cloud_credentials=None):
         process = subprocess.Popen(
             build_internal_command("--siot-subprocess-runner"),
             stdin=subprocess.PIPE,
@@ -613,21 +628,12 @@ class BatchLogFetchThread(QThread):
             self._active_processes.add(process)
         self._send_payload(
             process,
-            {
-                "action": "connect",
-                "cloud": {
-                    "username": self.seetong_username,
-                    "password": self.seetong_password,
-                },
-                "device": {
-                    "sn": credentials.sn,
-                    "username": credentials.username,
-                    "password": credentials.password,
-                    "dev_id": credentials.dev_id,
-                    "protocol": credentials.protocol,
-                    "is_siot": credentials.is_siot,
-                },
-            },
+            build_connect_payload(
+                device_credentials=credentials,
+                cloud_username=self.seetong_username,
+                cloud_password=self.seetong_password,
+                prefetched_cloud_credentials=prefetched_cloud_credentials,
+            ),
         )
         return process, event_queue
 

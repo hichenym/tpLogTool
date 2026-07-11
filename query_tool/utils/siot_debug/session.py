@@ -394,7 +394,12 @@ class _CommandWaiter:
 
 
 class DeviceSession:
-    def __init__(self, cloud_username: str, cloud_password: str) -> None:
+    def __init__(
+        self,
+        cloud_username: str,
+        cloud_password: str,
+        prefetched_cloud_credentials: Optional[CloudCredentials] = None,
+    ) -> None:
         self.sdk = SdkLibraries()
         self.lib = self.sdk.lib
         self.crypt = self.sdk.crypt
@@ -402,6 +407,7 @@ class DeviceSession:
         self.cloud_credentials: Optional[CloudCredentials] = None
         self.cloud_username = cloud_username
         self.cloud_password = cloud_password
+        self._prefetched_cloud_credentials = prefetched_cloud_credentials
 
         self._siot_conn = None
         self._peer_conn = None
@@ -440,6 +446,23 @@ class DeviceSession:
         self._cb_peer_event = TPSRTC_PeerEventCallback(self._on_peer_event)
         self._cb_recv_data = TPSRTC_RecvDataCallback(self._on_peer_data)
         self._cb_send_sdp = TPSRTC_SendSDPCallback(self._on_send_sdp)
+
+    def _load_cloud_credentials_for_connect(self, force_refresh: bool) -> CloudCredentials:
+        if not force_refresh and self._prefetched_cloud_credentials is not None:
+            credentials = self._prefetched_cloud_credentials
+            self._prefetched_cloud_credentials = None
+            logging.info("Using prefetched SIOT cloud credentials")
+            return credentials
+        return fetch_cloud_credentials(
+            self.cloud_username,
+            self.cloud_password,
+            force_refresh=force_refresh,
+        )
+
+    def _query_device_wait_timeout(self) -> float:
+        if self._current_gateway_id != DEVICE_GATEWAY_ID or self._device_online:
+            return 0.0
+        return DEFAULT_QUERY_DEVICE_DELAY_S
 
     def connect(self, device: DeviceCredentials, status_callback: Optional[Callable[[str], None]] = None) -> None:
         self.device = device
@@ -481,11 +504,7 @@ class DeviceSession:
         self._device_online = False
         self._device_is_4g = False
         self._emit_status("正在检查设备状态...")
-        self.cloud_credentials = fetch_cloud_credentials(
-            self.cloud_username,
-            self.cloud_password,
-            force_refresh=force_refresh,
-        )
+        self.cloud_credentials = self._load_cloud_credentials_for_connect(force_refresh)
         status = self._probe_device_status_via_siot_helper(self.cloud_credentials)
         self._apply_device_status(status)
         if self._is_device_offline(status):
@@ -499,7 +518,7 @@ class DeviceSession:
             self._emit_status("设备已在线，正在连接设备...")
         self._emit_status("正在连接设备...")
         self._connect_signaling()
-        self._query_device()
+        self._query_device(wait_timeout=self._query_device_wait_timeout())
         self._authenticate_via_signaling()
         self._connect_peer()
         self._invalidate_interactive_command_session()
@@ -723,7 +742,7 @@ class DeviceSession:
             str(credentials.jwt_key_version).encode("utf-8"),
         )
 
-    def _query_device(self) -> None:
+    def _query_device(self, wait_timeout: float = DEFAULT_QUERY_DEVICE_DELAY_S) -> None:
         if not self._siot_conn or self.device is None:
             raise SiotError("signaling connection is not ready")
         self._status_ready.clear()
@@ -741,7 +760,8 @@ class DeviceSession:
         )
         if ret != 0:
             logging.warning("TPSIOT_AppSend(query_dev) failed: %s", ret)
-        self._status_ready.wait(DEFAULT_QUERY_DEVICE_DELAY_S)
+        if wait_timeout > 0:
+            self._status_ready.wait(wait_timeout)
 
     def _authenticate_via_signaling(self) -> None:
         if not self._siot_conn or self.device is None:
