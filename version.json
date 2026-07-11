@@ -2,15 +2,23 @@
   "version": "3.7.5",
   "build_date": "20260711",
   "download_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.7.5/TPQueryTool.exe",
-  "file_size_mb": 170.18,
-  "file_size_bytes": 178444800,
-  "file_hash": "0eb991dedd2e8609f0035e0c39cb45a38c1df3c2c08f04af7a440fe38397c3a3",
+  "file_size_mb": 170.24,
+  "file_size_bytes": 178513408,
+  "file_hash": "f5aa05ba578d070be1072b2e6abaafc4ab4cabb7087f4f66603b35939d3b9291",
   "hash_algorithm": "sha256",
   "checksum_url": "https://github.com/hichenym/tpLogTool/releases/download/v3.7.5/TPQueryTool.exe.sha256",
   "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.7.5",
   "min_version": "3.0.0",
   "update_strategy": "auto",
   "show_change": true,
-  "changelog": ["优化设备连接和文件下载速度","交互页增加命令提示功能","交互页文件下载后直接打开","优化账号未配置时的提示"],
-  "analytics": {"doc_id":"IVx0bqWefaVflZssxeycgHvSn5J","sheet_id":"tblyZtqCQEC43Hzl"}
+  "changelog": [
+    "优化设备连接和文件下载速度",
+    "交互页增加命令提示功能",
+    "交互页文件下载后直接打开",
+    "优化账号未配置时的提示"
+  ],
+  "analytics": {
+    "doc_id": "IVx0bqWefaVflZssxeycgHvSn5J",
+    "sheet_id": "tblyZtqCQEC43Hzl"
+  }
 }
