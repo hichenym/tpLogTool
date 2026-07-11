@@ -233,10 +233,12 @@ class DebugPageCommandHistoryTests(unittest.TestCase):
             command_running=True,
             _last_command_failed=False,
             _executing_command="cat /tmp/test.log",
+            _executing_backend_command="syscmd cat /tmp/test.log",
             _pending_stream_log_state=None,
             _stream_log_active=False,
             connected=False,
             _record_successful_command=lambda command: recorded_commands.append(command),
+            _auto_open_pending_downloads=lambda: None,
         )
 
         DebugPage.on_command_finished(page)
@@ -246,6 +248,7 @@ class DebugPageCommandHistoryTests(unittest.TestCase):
         page.command_running = True
         page._last_command_failed = True
         page._executing_command = "rm /tmp/test.log"
+        page._executing_backend_command = "syscmd rm /tmp/test.log"
         DebugPage.on_command_finished(page)
         self.assertEqual(["cat /tmp/test.log"], recorded_commands)
         self.assertEqual("", page._executing_command)

@@ -3,6 +3,7 @@
 提供 Seetong 登录、设备登录和命令交互功能
 """
 from datetime import datetime
+import locale
 from pathlib import Path
 import time
 
@@ -1134,6 +1135,21 @@ class DebugPage(BasePage):
         "P2P服务器登录成功，正在建立设备通道",
         "P2P设备连接成功，正在初始化交互",
     )
+    DOWNLOAD_OUTPUT_PREFIX = "文件已下载到:"
+    AUTO_OPEN_TEXT_SUFFIXES = {
+        ".txt",
+        ".log",
+        ".cfg",
+        ".conf",
+        ".ini",
+        ".json",
+        ".xml",
+        ".csv",
+        ".yaml",
+        ".yml",
+        ".data",
+        ".md",
+    }
 
     request_connect = pyqtSignal(str, str, str, str, str, str)
     request_command = pyqtSignal(str, int, str)
@@ -1148,6 +1164,7 @@ class DebugPage(BasePage):
         self.canceling_connect = False
         self.command_running = False
         self._executing_command = ""
+        self._executing_backend_command = ""
         self.current_context = {}
         self.shortcut_commands = []
         self.shortcut_collapsed = False
@@ -1169,6 +1186,7 @@ class DebugPage(BasePage):
         self._stream_log_active = False
         self._pending_stream_log_state = None
         self._last_command_failed = False
+        self._pending_auto_open_download_paths = []
         self.history_popup = None
         self._output_flush_timer = QTimer(self)
         self._output_flush_timer.setInterval(120)
@@ -2131,6 +2149,8 @@ class DebugPage(BasePage):
         self._hide_history_suggestions()
         self._queue_stream_log_state_update(backend_command)
         self._executing_command = command if record_history else ""
+        self._executing_backend_command = backend_command
+        self._pending_auto_open_download_paths = []
         self.last_command_source = source
         self._last_command_failed = False
         self.command_running = True
@@ -2228,10 +2248,12 @@ class DebugPage(BasePage):
         self.connecting = False
         self.command_running = False
         self._executing_command = ""
+        self._executing_backend_command = ""
         self.current_context = {}
         self._stream_log_active = False
         self._pending_stream_log_state = None
         self._last_command_failed = False
+        self._pending_auto_open_download_paths = []
         self._pending_output_entries = []
         self._pending_stream_log_entries = []
         self._output_flush_timer.stop()
@@ -2264,7 +2286,9 @@ class DebugPage(BasePage):
         self.command_running = False
         if not self._last_command_failed:
             self._record_successful_command(self._executing_command)
+            self._auto_open_pending_downloads()
         self._executing_command = ""
+        self._executing_backend_command = ""
         if self._pending_stream_log_state is not None and not self._last_command_failed:
             self._stream_log_active = self._pending_stream_log_state
         self._pending_stream_log_state = None
@@ -2298,6 +2322,7 @@ class DebugPage(BasePage):
     def append_output(self, text, color=None):
         if not text:
             return
+        self._collect_auto_open_download_path(text)
         if time.monotonic() < self._console_suppress_until:
             return
         self._pending_output_entries.append((str(text), color))
@@ -2318,6 +2343,85 @@ class DebugPage(BasePage):
             return
         if not self._stream_log_flush_timer.isActive():
             self._stream_log_flush_timer.start()
+
+    def _collect_auto_open_download_path(self, text):
+        if not self._should_auto_open_downloads_for_current_command():
+            return
+
+        output_text = str(text or "").strip()
+        if not output_text.startswith(self.DOWNLOAD_OUTPUT_PREFIX):
+            return
+
+        saved_path = output_text.split(":", 1)[1].strip()
+        if not saved_path:
+            return
+
+        normalized_path = str(Path(saved_path).expanduser())
+        if normalized_path not in self._pending_auto_open_download_paths:
+            self._pending_auto_open_download_paths.append(normalized_path)
+
+    def _should_auto_open_downloads_for_current_command(self):
+        source = str(self.last_command_source or "").strip().lower()
+        if source not in {"console", "input"}:
+            return False
+        return self._is_download_command(self._executing_backend_command)
+
+    @staticmethod
+    def _is_download_command(command: str) -> bool:
+        parts = str(command or "").strip().split(None, 1)
+        return bool(parts) and parts[0] == "GetSystemCfg"
+
+    def _auto_open_pending_downloads(self):
+        pending_paths = list(self._pending_auto_open_download_paths)
+        self._pending_auto_open_download_paths = []
+        for raw_path in pending_paths:
+            path = Path(raw_path)
+            if not path.is_file():
+                self.append_output(f"自动打开文件失败: 文件不存在 {path}")
+                continue
+            if not self._is_text_download_file_path(path):
+                continue
+            if not self._open_downloaded_file_with_default_viewer(path):
+                self.append_output(f"自动打开文件失败: {path}")
+
+    def _is_text_download_file_path(self, path: Path) -> bool:
+        suffix = path.suffix.lower()
+        if suffix in self.AUTO_OPEN_TEXT_SUFFIXES:
+            return True
+
+        try:
+            with path.open("rb") as handle:
+                sample = handle.read(4096)
+        except OSError:
+            return False
+
+        if not sample:
+            return True
+        if b"\x00" in sample:
+            return False
+
+        encodings = ("utf-8", "utf-8-sig", locale.getpreferredencoding(False), "gbk")
+        for encoding in encodings:
+            if not encoding:
+                continue
+            try:
+                decoded = sample.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+            return self._looks_like_text_content(decoded)
+        return False
+
+    @staticmethod
+    def _looks_like_text_content(content: str) -> bool:
+        if not content:
+            return True
+        allowed_controls = {"\n", "\r", "\t", "\f", "\b"}
+        suspicious = sum(1 for char in content if ord(char) < 32 and char not in allowed_controls)
+        return suspicious <= max(1, len(content) // 50)
+
+    @staticmethod
+    def _open_downloaded_file_with_default_viewer(path: Path) -> bool:
+        return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
 
     def _flush_pending_output(self):
         if time.monotonic() < self._console_suppress_until:
