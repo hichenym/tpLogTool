@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import shlex
 import sys
 import threading
 import time
@@ -147,6 +145,11 @@ def _format_file_progress(progress: TransferProgress) -> str:
     return f"正在下载 {filename}: {size_kb:.1f} kb，包#{progress.packet_index}"
 
 
+def _format_prepare_download_message(command: str) -> str:
+    filename = _resolve_requested_filename(command)
+    return f"正在准备下载 {filename}..."
+
+
 class _ProgressEmitter:
     """限制文件下载进度输出频率，避免大量 UI 刷新导致卡顿。"""
 
@@ -180,6 +183,15 @@ class _ProgressEmitter:
             "progress",
             progress_id=self.progress_id,
             message=self._format_progress_text(progress),
+        )
+
+    def emit_message(self, message: str):
+        if message is None:
+            return
+        _emit(
+            "progress",
+            progress_id=self.progress_id,
+            message=str(message),
         )
 
     def _format_progress_text(self, progress: TransferProgress) -> str:
@@ -227,6 +239,13 @@ def _resolve_output_filename(command: str, result: CommandResult) -> str:
         parts = command.split(maxsplit=1)
         candidate = parts[1].strip() if len(parts) > 1 else "download.bin"
     return Path(candidate).name or "download.bin"
+
+
+def _resolve_requested_filename(command: str) -> str:
+    requested_path = _extract_getsystemcfg_path(command)
+    if not requested_path:
+        return "download.bin"
+    return Path(requested_path).name or "download.bin"
 
 
 def _save_getsystemcfg_file(command: str, result: CommandResult, download_root: str, device_sn: str) -> str:
@@ -308,31 +327,6 @@ def _build_session_factories(
     return factories
 
 
-def _try_probe_file_size(session, command: str) -> int:
-    file_path = _extract_getsystemcfg_path(command)
-    if not file_path:
-        return 0
-
-    quoted_path = shlex.quote(file_path)
-    probe_commands = (
-        f"syscmd stat -c %s -- {quoted_path}",
-        f"syscmd wc -c < {quoted_path}",
-    )
-    for probe_command in probe_commands:
-        try:
-            result = session.execute_command(probe_command, timeout_ms=5000, progress_callback=None)
-        except Exception:
-            continue
-        text = (result.display_text or "").strip()
-        match = re.search(r"(\d+)", text)
-        if match:
-            try:
-                return int(match.group(1))
-            except ValueError:
-                continue
-    return 0
-
-
 def _handle_command(session, payload: dict):
     command = str(payload.get("command") or "").strip()
     timeout_ms = int(payload.get("timeout_ms") or DEFAULT_COMMAND_TIMEOUT_MS)
@@ -359,11 +353,12 @@ def _handle_command(session, payload: dict):
                 _emit("output", message=f"已开启 P2P 实时日志监听，开始写入: {stream_log_path}")
             else:
                 _emit("output", message="已开启 P2P 实时日志监听")
-        total_bytes = _try_probe_file_size(session, command) if is_getsystemcfg_command(command) else 0
         progress_emitter = _ProgressEmitter(
             progress_id=f"{command}:{time.monotonic_ns()}",
-            total_bytes=total_bytes,
+            total_bytes=0,
         )
+        if is_getsystemcfg_command(command):
+            progress_emitter.emit_message(_format_prepare_download_message(command))
         result = session.execute_command(
             command,
             timeout_ms=timeout_ms,
