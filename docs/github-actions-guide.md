@@ -114,11 +114,23 @@ V3.0.0 (20260224)
   "file_size_mb": 168.06,
   "release_notes_url": "https://github.com/用户名/仓库名/releases/tag/v3.0.1",
   "min_version": "3.0.0",
+  "update_strategy": "prompt",
+  "show_change": true,
   "changelog": [
     "请查看 Release 页面获取完整更新日志"
   ]
 }
 ```
+
+### `version.json` 关键字段说明
+
+- `update_strategy`：更新策略，支持 `manual`、`prompt`、`silent`、`auto`。
+- `manual`：不自动检查更新，只能由用户手动点击“检查更新”。
+- `prompt`：启动自动检查；发现更新后弹出提示框，由用户决定是否下载。
+- `silent`：启动自动检查；发现更新后后台下载；下载完成后提示用户重启安装。
+- `auto`：启动自动检查；发现更新后后台下载；下载完成后自动进入安装/重启流程。
+- `show_change`：是否在更新相关弹窗中显示 `changelog` 内容。该字段只影响弹窗中的变更内容区域，不会改变 `update_strategy` 的流程。
+- 当 `update_strategy=auto` 时，`show_change=true` 不会额外触发提示弹窗；只有在当前流程本来就会显示弹窗时，`show_change` 才会生效。
 
 ### Release 资产
 - `查询工具.exe` - Windows 可执行文件

@@ -4,11 +4,11 @@
 
 import json
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import lark_oapi as lark
-from lark_oapi.core.exception import ObtainAccessTokenException, NoAuthorizationException
 from lark_oapi.api.bitable.v1 import *
+from lark_oapi.core.exception import NoAuthorizationException, ObtainAccessTokenException
 
 
 class FeishuBitableError(Exception):
@@ -53,41 +53,54 @@ class FeishuBitable:
         )
         return self._call(self.client.bitable.v1.app_table_record.create, request)
 
-    def add_or_update_record(self, **fields) -> Dict[str, Any]:
+    @staticmethod
+    def _normalize_match_value(value: Any) -> str:
+        """Normalize text-ish bitable values into comparable strings."""
+        if isinstance(value, list):
+            if not value:
+                return ""
+            first = value[0]
+            if isinstance(first, dict):
+                return str(first.get("text", "") or "").strip()
+            return str(first or "").strip()
+        return str(value or "").strip()
+
+    def add_or_update_record(self, *, match_fields: Sequence[str] = ("User",), **fields) -> Dict[str, Any]:
         """
-        新增或更新记录（按 User 去重）。
-        - User 不存在：新增，Count=1，Date=当前时间戳。
-        - User 已存在：Count+1，Date=当前时间戳，更新 Version。
+        新增或更新记录。
+
+        - 未找到匹配记录：新增，Count=1，Date=当前时间戳。
+        - 找到匹配记录：更新所有传入字段，Count+1，Date=当前时间戳。
         """
-        user = fields.get("User")
-        if user is None:
-            raise ValueError("add_or_update_record 必须提供 User 字段")
+        normalized_match_fields = tuple(str(field or "").strip() for field in match_fields if str(field or "").strip())
+        if not normalized_match_fields:
+            raise ValueError("add_or_update_record 必须提供至少一个匹配字段")
+
+        missing_fields = [field for field in normalized_match_fields if field not in fields]
+        if missing_fields:
+            raise ValueError(f"add_or_update_record 缺少匹配字段: {', '.join(missing_fields)}")
+
+        match_key = tuple(self._normalize_match_value(fields.get(field)) for field in normalized_match_fields)
 
         for rec in self.list_records():
             rec_fields = rec.get("fields", {})
-            rec_user = rec_fields.get("User")
-            # 飞书文本字段可能返回富文本 list[dict]，兼容处理
-            if isinstance(rec_user, list):
-                rec_user = rec_user[0].get("text", "") if rec_user else ""
-            if rec_user != user:
+            rec_key = tuple(self._normalize_match_value(rec_fields.get(field)) for field in normalized_match_fields)
+            if rec_key != match_key:
                 continue
 
             old_count = rec_fields.get("Count", 0)
             if not isinstance(old_count, (int, float)):
                 old_count = 0
-            new_count = int(old_count) + 1
 
-            update_data = {"Count": new_count, "Date": int(time.time() * 1000)}
-            if "Version" in fields:
-                update_data["Version"] = fields["Version"]
-
-            # print(f"[FeishuBitable] User={user} 已存在 (record_id={rec['record_id']})，Count: {int(old_count)} -> {new_count}")
+            update_data = dict(fields)
+            update_data["Count"] = int(old_count) + 1
+            update_data["Date"] = int(time.time() * 1000)
             return self.update_record(rec["record_id"], **update_data)
 
-        fields["Count"] = 1
-        fields["Date"] = int(time.time() * 1000)
-        # print(f"[FeishuBitable] User={user} 不存在，新增记录 (Count=1)")
-        return self.add_record(**fields)
+        create_data = dict(fields)
+        create_data["Count"] = 1
+        create_data["Date"] = int(time.time() * 1000)
+        return self.add_record(**create_data)
 
     def list_records(self, page_size: int = 20) -> List[Dict[str, Any]]:
         """查询当前表格的所有记录，自动处理分页"""
@@ -137,19 +150,13 @@ class FeishuBitable:
         )
         return self._call(self.client.bitable.v1.app_table_record.update, request)
 
-    # ------------------------------------------------------------------
-    # 内部方法
-    # ------------------------------------------------------------------
-
     def _call(self, fn, request) -> Dict[str, Any]:
         """统一调用入口，处理鉴权异常和响应错误"""
         try:
             response = fn(request)
         except ObtainAccessTokenException as e:
-            # print(f"获取 tenant_access_token 失败: code={e.code}, msg={e.msg}")
             raise FeishuBitableError(code=e.code, msg=e.msg) from e
         except NoAuthorizationException as e:
-            # print(f"鉴权信息缺失: {e}")
             raise FeishuBitableError(code=-1, msg=str(e)) from e
 
         if not response.success():
@@ -157,7 +164,6 @@ class FeishuBitable:
                 detail = json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)
             except Exception:
                 detail = str(response.raw.content) if response.raw else ""
-            # print(detail)
-            raise FeishuBitableError(response.code, response.msg, response.get_log_id())
+            raise FeishuBitableError(response.code, f"{response.msg} {detail}".strip(), response.get_log_id())
 
         return json.loads(lark.JSON.marshal(response.data))

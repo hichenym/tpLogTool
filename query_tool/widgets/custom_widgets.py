@@ -781,6 +781,37 @@ class SettingsDialog(AdaptiveDialog):
         self.save_btn.setEnabled(True)
         self.cancel_btn.setEnabled(True)
 
+    @staticmethod
+    def _normalize_account_field(value):
+        return str(value or "").strip()
+
+    def _have_account_credentials_changed(
+        self,
+        device_username,
+        device_password,
+        firmware_username,
+        firmware_password,
+        seetong_username,
+        seetong_password,
+    ):
+        current_values = (
+            self._normalize_account_field(self.device_username),
+            self._normalize_account_field(self.device_password),
+            self._normalize_account_field(self.firmware_username),
+            self._normalize_account_field(self.firmware_password),
+            self._normalize_account_field(self.seetong_username),
+            self._normalize_account_field(self.seetong_password),
+        )
+        next_values = (
+            self._normalize_account_field(device_username),
+            self._normalize_account_field(device_password),
+            self._normalize_account_field(firmware_username),
+            self._normalize_account_field(firmware_password),
+            self._normalize_account_field(seetong_username),
+            self._normalize_account_field(seetong_password),
+        )
+        return current_values != next_values
+
 
     def _format_date(self, date_str: str) -> str:
         """格式化日期"""
@@ -914,6 +945,14 @@ class SettingsDialog(AdaptiveDialog):
         # 获取 Seetong 账号
         seetong_username = self.seetong_username_input.text().strip()
         seetong_password = self.seetong_password_input.text().strip()
+        account_credentials_changed = self._have_account_credentials_changed(
+            device_username,
+            device_password,
+            firmware_username,
+            firmware_password,
+            seetong_username,
+            seetong_password,
+        )
         
         # 检查运维账号是否部分填写（只填了账号或只填了密码）
         if (device_username and not device_password) or (not device_username and device_password):
@@ -944,11 +983,17 @@ class SettingsDialog(AdaptiveDialog):
         seetong_saved = save_seetong_account_config(seetong_username, seetong_password)
         
         if device_saved and firmware_saved and seetong_saved:
+            self.device_username = device_username
+            self.device_password = device_password
+            self.firmware_username = firmware_username
+            self.firmware_password = firmware_password
+            self.seetong_username = seetong_username
+            self.seetong_password = seetong_password
             if self.main_window and hasattr(self.main_window, 'show_success'):
                 self.main_window.show_success("配置已保存！")
-            # 保存成功后同步用户版本信息
-            from query_tool.utils.data_sync import sync_user_version
-            sync_user_version()
+            if account_credentials_changed:
+                from query_tool.utils.data_sync import sync_user_version
+                sync_user_version(force=True)
             self.accept()
         else:
             if self.main_window and hasattr(self.main_window, 'show_error'):

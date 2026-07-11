@@ -117,7 +117,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(2000, self.check_update_on_startup)
 
         # 启动时同步用户版本信息到飞书
-        QTimer.singleShot(3000, self._sync_user_data)
+        QTimer.singleShot(15000, self._sync_user_data)
 
         # 定时检查更新（每 6 小时）
         self._periodic_update_timer = QTimer(self)
