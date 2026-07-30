@@ -199,40 +199,100 @@ jobs:
           if ($changelogItems.Count -eq 0) {
               $changelogItems = @("请查看 Release 页面获取完整更新日志")
           }
-          $changelogJson = $changelogItems | ConvertTo-Json -Compress
+          
+          if (-not (Test-Path "version.json")) {
+              throw "version.json is missing in the tagged commit. Release build requires a committed version.json."
+          }
 
-          $showChangeJson = 'true'
-          $analyticsJson = '{}'
-          if (Test-Path "version.json") {
-              $existing = Get-Content "version.json" -Raw -Encoding UTF8 | ConvertFrom-Json
-              if ($existing.PSObject.Properties.Name -contains 'show_change') {
-                  $showChangeJson = $existing.show_change | ConvertTo-Json -Compress
+          function ConvertTo-OrderedData($value) {
+              if ($null -eq $value) {
+                  return $null
               }
-              if ($existing.PSObject.Properties.Name -contains 'analytics' -and $null -ne $existing.analytics) {
-                  $analyticsJson = $existing.analytics | ConvertTo-Json -Compress
+
+              if ($value -is [System.Collections.IDictionary]) {
+                  $map = [ordered]@{}
+                  foreach ($entry in $value.GetEnumerator()) {
+                      $map[$entry.Key] = ConvertTo-OrderedData $entry.Value
+                  }
+                  return $map
+              }
+
+              if ($value -is [pscustomobject]) {
+                  $map = [ordered]@{}
+                  foreach ($prop in $value.PSObject.Properties) {
+                      $map[$prop.Name] = ConvertTo-OrderedData $prop.Value
+                  }
+                  return $map
+              }
+
+              if ($value -is [System.Collections.IEnumerable] -and $value -isnot [string]) {
+                  $items = @()
+                  foreach ($item in $value) {
+                      $items += ,(ConvertTo-OrderedData $item)
+                  }
+                  return $items
+              }
+
+              return $value
+          }
+
+          try {
+              $existingRaw = Get-Content "version.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+              $existing = ConvertTo-OrderedData $existingRaw
+          }
+          catch {
+              throw "Failed to parse committed version.json: $($_.Exception.Message)"
+          }
+
+          if (-not ($existing -is [System.Collections.IDictionary])) {
+              throw "Committed version.json must deserialize to a JSON object."
+          }
+
+          $manualFields = @("min_version", "update_strategy", "show_change", "analytics")
+          foreach ($field in $manualFields) {
+              if (-not $existing.Contains($field)) {
+                  throw "Committed version.json is missing required manual field: $field"
               }
           }
 
-          $versionJson = @"
-          {
-            "version": "$version",
-            "build_date": "$buildDate",
-            "download_url": "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe",
-            "file_size_mb": $fileSize,
-            "file_size_bytes": $fileSizeBytes,
-            "file_hash": "$sha256",
-            "hash_algorithm": "sha256",
-            "checksum_url": "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256",
-            "release_notes_url": "https://github.com/$repo/releases/tag/$tag",
-            "min_version": "3.0.0",
-            "update_strategy": "silent",
-            "show_change": $showChangeJson,
-            "changelog": $changelogJson,
-            "analytics": $analyticsJson
+          $minVersion = $existing["min_version"]
+          if ([string]::IsNullOrWhiteSpace([string]$minVersion)) {
+              throw "Committed version.json field 'min_version' must be a non-empty string."
           }
-          "@
 
-          $versionJson | Set-Content "version.json" -Encoding UTF8
+          $allowedStrategies = @("manual", "prompt", "silent", "auto")
+          $updateStrategy = [string]$existing["update_strategy"]
+          if ([string]::IsNullOrWhiteSpace($updateStrategy) -or $allowedStrategies -notcontains $updateStrategy) {
+              throw "Committed version.json field 'update_strategy' must be one of: $($allowedStrategies -join ', ')"
+          }
+
+          $showChange = $existing["show_change"]
+          if ($showChange -isnot [bool]) {
+              throw "Committed version.json field 'show_change' must be a JSON boolean."
+          }
+
+          $analytics = $existing["analytics"]
+          if ($null -ne $analytics -and $analytics -isnot [System.Collections.IDictionary]) {
+              throw "Committed version.json field 'analytics' must be a JSON object or null."
+          }
+
+          $versionInfo = [ordered]@{}
+          foreach ($entry in $existing.GetEnumerator()) {
+              $versionInfo[$entry.Key] = $entry.Value
+          }
+
+          $versionInfo["version"] = $version
+          $versionInfo["build_date"] = $buildDate
+          $versionInfo["download_url"] = "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe"
+          $versionInfo["file_size_mb"] = [double]$fileSize
+          $versionInfo["file_size_bytes"] = [int64]$fileSizeBytes
+          $versionInfo["file_hash"] = $sha256
+          $versionInfo["hash_algorithm"] = "sha256"
+          $versionInfo["checksum_url"] = "https://github.com/$repo/releases/download/$tag/TPQueryTool.exe.sha256"
+          $versionInfo["release_notes_url"] = "https://github.com/$repo/releases/tag/$tag"
+          $versionInfo["changelog"] = $changelogItems
+
+          $versionInfo | ConvertTo-Json -Depth 10 | Set-Content "version.json" -Encoding UTF8
           Write-Host "Generated version.json"
 
       - name: Generate Release Notes
