@@ -2,7 +2,6 @@
 数据同步模块
 """
 
-import json
 import time
 from typing import Dict, Optional
 
@@ -29,45 +28,13 @@ def _load_analytics_config():
         doc_id, sheet_id = cfg.get("doc_id", ""), cfg.get("sheet_id", "")
         return (doc_id, sheet_id) if doc_id and sheet_id else ("", "")
 
-    from pathlib import Path
-
-    cache_file = Path.home() / ".TPQueryTool" / "update" / "version_cache.json"
-
     try:
-        if cache_file.exists():
-            with open(cache_file, "r", encoding="utf-8") as f:
-                result = _extract(json.load(f).get("version_info", {}))
-                if result[0]:
-                    return result
+        # 复用更新检查已获取的进程内存数据，不再额外下载或落盘 version.json。
+        from query_tool.utils.update_checker import UpdateChecker
+
+        return _extract(UpdateChecker.get_memory_cache_data())
     except Exception:
-        pass
-
-    try:
-        import requests
-        from datetime import datetime
-
-        response = requests.get(
-            "https://raw.githubusercontent.com/hichenym/tpLogTool/main/version.json",
-            timeout=10,
-        )
-        if response.status_code == 200:
-            version_data = response.json()
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "timestamp": datetime.now().isoformat(),
-                        "version_info": version_data,
-                    },
-                    f,
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            return _extract(version_data)
-    except Exception:
-        pass
-
-    return "", ""
+        return "", ""
 
 
 def _load_account_snapshot() -> Dict[str, str]:

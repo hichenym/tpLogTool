@@ -50,8 +50,6 @@ requests.packages.urllib3.disable_warnings()
 
 # 调试开关：改为 True 后，程序启动时会强制弹出“更新完成重启”弹窗
 FORCE_SHOW_UPDATE_COMPLETE_DIALOG = False
-# 调试开关：改为 True 后，在设置页“版本信息”区域强制显示“检查更新”按钮
-FORCE_SHOW_CHECK_UPDATE_BUTTON = False
 # 调试开关：改为 True 后，程序启动时会强制弹出“发现新版本”弹窗
 FORCE_SHOW_UPDATE_PROMPT_DIALOG = False
 
@@ -97,13 +95,14 @@ class MainWindow(QMainWindow):
         self.pending_update_file = None  # 待安装的更新文件
         self._update_shutdown_requested = False  # 是否正在为更新快速退出
         self._force_close = False  # 是否允许真正退出
-        self.debug_force_show_check_update_button = FORCE_SHOW_CHECK_UPDATE_BUTTON
         self._tray_icon = None
         self._tray_message_shown = False
         self._task_button_movie = None
         self._task_button_movie_path = None
 
         self.init_ui()
+        from query_tool.utils.update_checker import UpdateChecker
+        UpdateChecker.clear_legacy_cache()
         self._setup_system_tray()
         self.load_config()
         self.center_on_screen()
@@ -857,36 +856,27 @@ class MainWindow(QMainWindow):
     def _periodic_update_check(self):
         """定时检查更新（运行期间每 3 小时触发一次，强制刷新，不走缓存）"""
         try:
-            from query_tool.utils.logger import logger
-            
             if not hasattr(self, 'update_manager') or self.update_manager is None:
                 return
             
             if not self.update_manager.should_auto_check():
                 return
             
-            logger.info("定时检查更新（强制刷新）...")
-            
             def callback(has_update, version_info, message):
                 if has_update:
-                    logger.info(f"定时检查发现新版本: {version_info}")
                     self.update_manager.latest_version_info = version_info
                     self.update_manager.update_available.emit(version_info)
-                else:
-                    logger.info(f"定时检查更新: {message}")
             
             self.update_manager.checker.check_update_async_force_refresh(callback)
             
-        except Exception as e:
-            from query_tool.utils.logger import logger
-            logger.error(f"定时检查更新失败: {e}")
+        except Exception:
+            pass
 
     def check_update_on_startup(self):
         """启动时检查更新"""
         try:
             from query_tool.utils.update_manager import UpdateManager
             from query_tool.version import get_short_version
-            from query_tool.utils.logger import logger
 
             # 获取当前版本号（去掉 V 前缀）
             current_version = get_short_version().replace('V', '')
@@ -897,7 +887,6 @@ class MainWindow(QMainWindow):
             # 检查下载目录中是否有已下载的文件（用于恢复中断的更新）
             latest_file, recovered_info = self._find_recoverable_update_package(current_version)
             if latest_file and recovered_info:
-                logger.info(f"发现已准备好的更新包: {latest_file}")
                 self.update_manager.latest_version_info = recovered_info
                 self.update_manager.downloaded_file_path = str(latest_file)
                 self.pending_update_file = str(latest_file)
@@ -906,18 +895,14 @@ class MainWindow(QMainWindow):
                 if strategy == 'auto':
                     from query_tool.utils.update_downloader import UpdateInstaller
                     if UpdateInstaller.can_apply_update():
-                        logger.info("静默下载并自动重启模式，直接安装已下载的文件")
                         self._start_external_update_install(str(latest_file), restart=True)
                         return
-                    logger.warning("当前运行方式不支持自动安装已下载更新，跳过启动时自动应用")
                 elif strategy in ('prompt', 'silent', 'manual'):
-                    logger.info("检测到已下载更新包，显示强制重启弹窗")
                     self._show_update_complete_dialog_with_focus()
                     return
 
             # 检查是否应该自动检查更新
             if not self.update_manager.should_auto_check():
-                logger.info("更新策略为 manual，跳过自动检查")
                 return
             
             # 连接信号
@@ -926,12 +911,10 @@ class MainWindow(QMainWindow):
             self.update_manager.download_finished.connect(self.on_download_finished)
             
             # 异步检查更新
-            logger.info("开始检查更新...")
             self.update_manager.check_update_async()
             
-        except Exception as e:
-            from query_tool.utils.logger import logger
-            logger.error(f"检查更新失败: {e}")
+        except Exception:
+            pass
     
     def on_update_available(self, version_info):
         """发现新版本"""
@@ -1079,18 +1062,11 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(500, self._show_update_complete_dialog_with_focus)
         
         else:
-            logger.error(f"下载失败: {result}")
-            
             # 隐藏下载进度标签和呼吸闪烁
             self.download_progress_label.setVisible(False)
             self.breathing_label.stop()
             self.breathing_label.setVisible(False)
             
-            strategy = self.update_manager.get_update_strategy()
-            
-            # 只在非静默自动下载模式下显示错误提示
-            if strategy not in ('silent', 'auto'):
-                self.show_error(f"下载更新失败: {result}", 5000)
     
     def show_update_complete_dialog(self, version_info=None):
         """显示更新完成对话框"""

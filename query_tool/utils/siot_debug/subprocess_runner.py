@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .command_catalog import is_getsystemcfg_command, is_startlogp2p_command, is_syscmd_family_command, parse_startlogp2p_level
-from .config import APP_LOG_DIR, DEFAULT_COMMAND_TIMEOUT_MS, RUN_LOG_PATH
+from .config import DEFAULT_COMMAND_TIMEOUT_MS
 from .models import CloudCredentials, CommandResult, DeviceCredentials, TransferProgress
 from .p2p_session import P2PDeviceSession
 from .session import DeviceSession
@@ -50,7 +50,11 @@ class _StreamLogEmitter:
     def start(self, device_sn: str, download_root: str):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_sn = (device_sn or "unknown").strip() or "unknown"
-        root = Path(download_root).expanduser() if (download_root or "").strip() else APP_LOG_DIR
+        root_text = (download_root or "").strip()
+        if not root_text:
+            self.stop(flush=False)
+            return ""
+        root = Path(root_text).expanduser()
         stream_log_dir = root / safe_sn
         stream_log_dir.mkdir(parents=True, exist_ok=True)
         self.stop(flush=False)
@@ -113,21 +117,10 @@ _STREAM_LOG_EMITTER = _StreamLogEmitter()
 
 
 def _configure_runtime_logging():
-    APP_LOG_DIR.mkdir(parents=True, exist_ok=True)
-
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
-    root_logger.setLevel(logging.INFO)
-
-    file_handler = logging.FileHandler(str(RUN_LOG_PATH), encoding="utf-8")
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s %(levelname)s:%(name)s:%(message)s",
-            datefmt="%m-%d %H:%M:%S",
-        )
-    )
-    root_logger.addHandler(file_handler)
+    root_logger.setLevel(logging.CRITICAL + 1)
+    root_logger.addHandler(logging.NullHandler())
 
 
 def _emit(event: str, **payload):

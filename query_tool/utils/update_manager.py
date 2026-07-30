@@ -36,11 +36,8 @@ class UpdateManager(QObject):
         """异步检查更新"""
         def callback(has_update, version_info, message):
             if has_update:
-                logger.info(f"发现新版本: {version_info}")
                 self.latest_version_info = version_info
                 self.update_available.emit(version_info)
-            else:
-                logger.info(f"检查更新: {message}")
         
         self.checker.check_update_async(callback)
     
@@ -103,8 +100,6 @@ class UpdateManager(QObject):
             if self.latest_version_info:
                 self.save_download_metadata(result, self.latest_version_info)
             logger.info(f"下载完成: {result}")
-        else:
-            logger.error(f"下载失败: {result}")
         
         self.download_finished.emit(success, result)
     

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.modules.setdefault("ddddocr", types.SimpleNamespace())
 
-from query_tool.utils.update_downloader import UpdateInstaller
+from query_tool.utils.update_downloader import UpdateDownloader, UpdateInstaller
 
 
 class UpdateInstallerPathTests(unittest.TestCase):
@@ -134,6 +134,25 @@ class UpdateInstallerPathTests(unittest.TestCase):
                 stale_dirs = UpdateInstaller.find_stale_nested_runtime_dirs()
 
             self.assertEqual([stale_nested_root.resolve()], [Path(item) for item in stale_dirs])
+
+    def test_update_script_only_removes_managed_empty_download_dir(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            download_dir = Path(temp_dir) / "downloads"
+            download_dir.mkdir()
+            package_path = download_dir / "TPQueryTool_3.7.1.exe"
+            script_path = Path(temp_dir) / "tpquerytool_update.ps1"
+
+            with patch.object(UpdateDownloader, "DOWNLOAD_DIR", download_dir), \
+                 patch("query_tool.utils.update_downloader.tempfile.gettempdir", return_value=temp_dir):
+                generated_script = UpdateInstaller.create_update_script(
+                    str(package_path),
+                    str(Path(temp_dir) / "TPQueryTool.exe"),
+                )
+
+            self.assertEqual(script_path, Path(generated_script))
+            content = script_path.read_text(encoding="utf-8")
+            self.assertIn("$ManagedDownloadDir", content)
+            self.assertIn("[string]::Equals($DownloadDir, $ManagedDownloadDir", content)
 
 
 if __name__ == "__main__":

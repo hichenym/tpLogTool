@@ -107,9 +107,6 @@ def resolve_sdk_bin_dir(preferred: str | Path | None = None) -> Path:
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SDK_BIN_DIR = resolve_sdk_bin_dir(PROJECT_ROOT / "query_tool" / "dll")
 
-APP_LOG_DIR = Path.home() / ".TPQueryTool" / "logs"
-RUN_LOG_PATH = APP_LOG_DIR / "siot_debug_run.log"
-
 CLOUD_LOGIN_URL = "https://app-auth.seetong.com/seetong-member-auth/oauth/token"
 CLOUD_ACCESS_URL = "https://app-auth.seetong.com/seetong-client/client/access-node"
 CLOUD_AUTH_BASIC = "Basic c2VldG9uZ19jbG91ZF9tZW1iZXI6c2VldG9uZ19jbG91ZF9tZW1iZXJfc2VjcmV0"

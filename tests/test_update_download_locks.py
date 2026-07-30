@@ -42,17 +42,54 @@ class UpdateDownloadLockTests(unittest.TestCase):
             self.assertFalse(acquired)
             self.assertEqual(original_payload, lock_path.read_text(encoding="utf-8"))
 
-    def test_update_downloader_init_cleans_stale_lock_files(self):
+    def test_update_downloader_init_removes_empty_download_dir(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            download_dir = Path(temp_dir)
-            lock_path = download_dir / "TPQueryTool_3.7.1.exe.lock"
-            lock_path.write_text("626262\n" + str(download_dir / "TPQueryTool_3.7.1.exe") + "\n", encoding="utf-8")
+            download_dir = Path(temp_dir) / "downloads"
+            download_dir.mkdir()
 
-            with patch.object(UpdateDownloader, "DOWNLOAD_DIR", download_dir), \
-                 patch("query_tool.utils.update_downloader._is_process_active", return_value=False):
+            with patch.object(UpdateDownloader, "DOWNLOAD_DIR", download_dir):
                 UpdateDownloader()
 
-            self.assertFalse(lock_path.exists())
+            self.assertFalse(download_dir.exists())
+
+    def test_update_downloader_init_preserves_nonempty_download_dir(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            download_dir = Path(temp_dir) / "downloads"
+            download_dir.mkdir()
+            package_file = download_dir / "TPQueryTool_3.7.1.exe"
+            package_file.write_bytes(b"update package")
+
+            with patch.object(UpdateDownloader, "DOWNLOAD_DIR", download_dir):
+                UpdateDownloader()
+
+            self.assertTrue(download_dir.exists())
+            self.assertTrue(package_file.exists())
+
+    def test_download_creates_directory_when_starting(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            download_dir = Path(temp_dir) / "downloads"
+
+            class _Signal:
+                def connect(self, _callback):
+                    pass
+
+            class _Thread:
+                def __init__(self, *_args, **_kwargs):
+                    self.progress = _Signal()
+                    self.finished = _Signal()
+
+                def start(self):
+                    pass
+
+                def isRunning(self):
+                    return True
+
+            with patch.object(UpdateDownloader, "DOWNLOAD_DIR", download_dir), \
+                 patch("query_tool.utils.update_downloader.DownloadThread", _Thread):
+                downloader = UpdateDownloader()
+                downloader.download("https://example.com/update.exe", "TPQueryTool_3.7.1.exe")
+
+            self.assertTrue(download_dir.exists())
 
 
 if __name__ == "__main__":

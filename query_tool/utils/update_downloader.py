@@ -440,16 +440,22 @@ class UpdateDownloader:
     DOWNLOAD_DIR = Path.home() / '.TPQueryTool' / 'downloads'
     
     def __init__(self):
-        self._ensure_download_dir()
-        self._clean_temp_files()  # 清理残留的临时文件
-        self._clean_stale_lock_files()
+        self._remove_empty_download_dir()
         self.download_thread: Optional[DownloadThread] = None
         self._is_downloading = False  # 标记是否正在下载
         self._current_download_url = None  # 当前下载的 URL
     
     def _ensure_download_dir(self):
-        """确保下载目录存在"""
+        """在实际开始下载前创建下载目录。"""
         self.DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _remove_empty_download_dir(self):
+        """仅删除空下载目录，保留任何用户或更新残留文件。"""
+        try:
+            if self.DOWNLOAD_DIR.is_dir() and not any(self.DOWNLOAD_DIR.iterdir()):
+                self.DOWNLOAD_DIR.rmdir()
+        except Exception:
+            pass
     
     def _clean_temp_files(self):
         """清理残留的临时文件（可选：保留用于断点续传）"""
@@ -537,6 +543,8 @@ class UpdateDownloader:
         if self._is_downloading and self.download_thread:
             logger.warning(f"取消之前的下载，开始新的下载")
             self.cancel_download()
+
+        self._ensure_download_dir()
         
         save_path = str(self.DOWNLOAD_DIR / filename)
         
@@ -554,8 +562,11 @@ class UpdateDownloader:
         def on_finished(success, result):
             self._is_downloading = False
             self._current_download_url = None
-            if finished_callback:
-                finished_callback(success, result)
+            try:
+                if finished_callback:
+                    finished_callback(success, result)
+            finally:
+                self._remove_empty_download_dir()
         
         if progress_callback:
             self.download_thread.progress.connect(progress_callback)
@@ -579,6 +590,7 @@ class UpdateDownloader:
         
         self._is_downloading = False
         self._current_download_url = None
+        self._remove_empty_download_dir()
     
     def is_downloading(self) -> bool:
         """
@@ -949,9 +961,7 @@ class UpdateInstaller:
             str: 脚本文件路径
         """
         runtime_dir = UpdateInstaller.get_runtime_directory_path() or ""
-        log_dir = Path.home() / '.TPQueryTool' / 'logs'
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / 'update_installer.log'
+        managed_download_dir = str(UpdateDownloader.DOWNLOAD_DIR)
         script_path = os.path.join(tempfile.gettempdir(), 'tpquerytool_update.ps1')
 
         script_content = f"""$ErrorActionPreference = 'Stop'
@@ -962,11 +972,11 @@ $BackupExe = '{UpdateInstaller._quote_ps(current_exe_path)}.bak'
 $MetadataPath = '{UpdateInstaller._quote_ps(str(Path(new_exe_path).with_name(Path(new_exe_path).name + ".meta.json")))}'
 $Restart = {'$true' if restart else '$false'}
 $RuntimeDir = '{UpdateInstaller._quote_ps(runtime_dir)}'
-$LogPath = '{UpdateInstaller._quote_ps(str(log_path))}'
+$ManagedDownloadDir = '{UpdateInstaller._quote_ps(managed_download_dir)}'
+$DownloadDir = Split-Path -Path $PackageExe -Parent
 
 function Write-Log([string]$message) {{
-    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    Add-Content -LiteralPath $LogPath -Value "$timestamp [installer] $message"
+    return
 }}
 
 function Wait-ParentExit([int]$targetPid, [int]$timeoutSeconds) {{
@@ -1047,6 +1057,13 @@ try {{
     }}
     if (Test-Path -LiteralPath $MetadataPath) {{
         Remove-Item -LiteralPath $MetadataPath -Force -ErrorAction SilentlyContinue
+    }}
+    if (
+        [string]::Equals($DownloadDir, $ManagedDownloadDir, [System.StringComparison]::OrdinalIgnoreCase) -and
+        (Test-Path -LiteralPath $DownloadDir) -and
+        -not (Get-ChildItem -LiteralPath $DownloadDir -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+    ) {{
+        Remove-Item -LiteralPath $DownloadDir -Force -ErrorAction SilentlyContinue
     }}
     Write-Log "更新安装完成"
 }} catch {{

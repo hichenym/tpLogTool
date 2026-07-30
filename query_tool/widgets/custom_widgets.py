@@ -356,10 +356,6 @@ class SettingsDialog(AdaptiveDialog):
         # 加载 Seetong 账号配置
         self.seetong_username, self.seetong_password = get_seetong_account_config()
         
-        # 加载日志配置
-        from query_tool.utils.config import get_log_config
-        self.enable_file_log = get_log_config()
-        
         self.init_ui()
     
     def showEvent(self, event):
@@ -415,10 +411,6 @@ class SettingsDialog(AdaptiveDialog):
         # 账号配置标签页
         account_tab = self.create_account_tab()
         self.tab_widget.addTab(account_tab, "账号配置")
-        
-        # 日志配置标签页
-        log_tab = self.create_log_tab()
-        self.tab_widget.addTab(log_tab, "日志配置")
         
         # 关于/更新标签页
         about_tab = self.create_about_tab()
@@ -577,23 +569,6 @@ class SettingsDialog(AdaptiveDialog):
 
         return group
     
-    def create_log_tab(self):
-        """创建日志配置标签页"""
-        tab = QWidget()
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setSpacing(12)
-        tab_layout.setContentsMargins(15, 15, 15, 10)
-        
-        # 文件日志复选框
-        self.file_log_checkbox = QCheckBox("记录调试信息")
-        self.file_log_checkbox.setChecked(self.enable_file_log)
-        self.file_log_checkbox.stateChanged.connect(self.on_file_log_changed)
-        tab_layout.addWidget(self.file_log_checkbox)
-        
-        tab_layout.addStretch()
-        
-        return tab
-
     def create_about_tab(self):
         """创建关于/更新标签页"""
         from query_tool.version import get_short_version, get_build_date_formatted
@@ -626,24 +601,14 @@ class SettingsDialog(AdaptiveDialog):
 
         tab_layout.addWidget(version_group)
 
-        # 检查更新策略，决定是否显示更新检测组
+        # 当前版本只使用进程内存缓存；没有历史缓存文件时不暴露更新入口。
         current_version = get_short_version().replace('V', '')
         checker = UpdateChecker(current_version)
-        update_strategy = checker.should_auto_check()  # 获取更新策略
-        
-        # 从缓存加载版本信息以获取更新策略
         cached_info = checker._load_cache()
-        if cached_info:
-            update_strategy_str = cached_info.update_strategy
-        else:
-            update_strategy_str = 'prompt'  # 默认策略
+        update_strategy_str = cached_info.update_strategy if cached_info else 'prompt'
+        has_legacy_cache_file = UpdateChecker.LEGACY_CACHE_FILE.exists()
 
-        force_show_check_update_btn = bool(
-            getattr(self.main_window, 'debug_force_show_check_update_button', False)
-        )
-
-        # 只有当更新策略不是静默自动下载类时才显示更新检测组
-        if force_show_check_update_btn or update_strategy_str not in ('silent', 'auto'):
+        if has_legacy_cache_file and update_strategy_str not in ('silent', 'auto'):
             # 更新检测组
             update_group = QGroupBox("更新检测")
             update_group.setStyleSheet(StyleManager.get_GROUP_BOX())
@@ -660,7 +625,7 @@ class SettingsDialog(AdaptiveDialog):
 
             tab_layout.addWidget(update_group)
         else:
-            # 静默自动下载模式，不显示检查更新按钮
+            # 没有历史缓存文件或静默策略时不显示检查更新按钮。
             self.check_update_btn_widget = None
 
         tab_layout.addStretch()
@@ -684,20 +649,13 @@ class SettingsDialog(AdaptiveDialog):
         from PyQt5.QtWidgets import QApplication
         from query_tool.version import get_short_version
         from query_tool.utils.update_checker import UpdateChecker
-        from query_tool.utils.logger import logger
-
-        logger.info("用户点击检查更新按钮")
-
         # 检查按钮是否存在（静默更新模式下不存在）
         if not hasattr(self, 'check_update_btn_widget') or self.check_update_btn_widget is None:
-            logger.warning("检查更新按钮不存在（可能是静默更新模式）")
             return
 
         # 禁用按钮
         self.check_update_btn_widget.setEnabled(False)
         self.check_update_btn_widget.setText("检查中...")
-        logger.info("按钮已禁用，显示'检查中...'")
-
         # 禁用保存和取消按钮
         self.save_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
@@ -708,67 +666,38 @@ class SettingsDialog(AdaptiveDialog):
         try:
             # 获取当前版本（去掉V前缀）
             current_version = get_short_version().replace('V', '')
-            logger.info(f"当前版本: {current_version}")
 
             # 创建更新检查器
             self.update_checker_temp = UpdateChecker(current_version)
-            logger.info("更新检查器已创建")
-            
+
             # 异步检查（强制刷新，忽略缓存）
             def callback(has_update, version_info, message):
-                logger.info(f"检查更新回调: has_update={has_update}, message={message}")
                 # 使用信号在主线程中处理结果
                 self.update_signals.update_check_result.emit(has_update, version_info, message)
-            
-            logger.info("启动异步检查更新（强制刷新）")
+
             self.update_checker_temp.check_update_async_force_refresh(callback)
 
-        except Exception as e:
-            # 检查失败
-            logger.error(f"检查更新失败: {e}", exc_info=True)
-
-            if self.main_window and hasattr(self.main_window, 'show_error'):
-                self.main_window.show_error(f"检查更新失败：{str(e)}")
-            else:
-                logger.error(f"无法显示错误消息: main_window={self.main_window}")
-            
+        except Exception:
             self._restore_buttons()
     
     def _on_update_check_result(self, has_update, version_info, message):
         """处理更新检查结果"""
         from query_tool.version import get_short_version
-        from query_tool.utils.logger import logger
-        
-        logger.info(f"处理更新检查结果: has_update={has_update}, message={message}")
-        
         try:
             if has_update:
                 # 有新版本，显示更新提示对话框
                 current_version = get_short_version().replace('V', '')
-                logger.info(f"发现新版本: {version_info.version}")
-                
+
                 if self.main_window:
                     if hasattr(self.main_window, 'show_update_prompt_dialog'):
-                        logger.info("调用 show_update_prompt_dialog")
                         self.main_window.show_update_prompt_dialog(version_info, current_version)
-                    else:
-                        logger.error("main_window 没有 show_update_prompt_dialog 方法")
-                else:
-                    logger.error("main_window 为 None")
-            else:
+            elif message:
                 # 已是最新版本
-                logger.info(f"检查结果: {message}")
-                
                 if self.main_window:
                     if hasattr(self.main_window, 'show_success'):
-                        logger.info("调用 show_success")
                         self.main_window.show_success("已是最新版本")
-                    else:
-                        logger.error("main_window 没有 show_success 方法")
-                else:
-                    logger.error("main_window 为 None")
-        except Exception as e:
-            logger.error(f"处理更新检查结果失败: {e}", exc_info=True)
+        except Exception:
+            pass
         finally:
             self._restore_buttons()
     
@@ -822,29 +751,6 @@ class SettingsDialog(AdaptiveDialog):
         except:
             return date_str
 
-    
-    def on_file_log_changed(self, state):
-        """文件日志复选框状态改变"""
-        from query_tool.utils.logger import logger
-        from query_tool.utils.config import save_log_config
-        
-        enable = (state == Qt.Checked)
-        
-        # 实时生效
-        if enable:
-            logger.enable_file_log()
-        else:
-            logger.disable_file_log()
-        
-        # 保存配置
-        save_log_config(enable)
-        
-        # 显示提示
-        if self.main_window and hasattr(self.main_window, 'show_info'):
-            if enable:
-                self.main_window.show_info("文件日志已启用")
-            else:
-                self.main_window.show_info("文件日志已禁用")
     
     def on_show_password_changed(self, state, password_input):
         """显示/隐藏密码"""

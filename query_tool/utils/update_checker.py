@@ -1,16 +1,12 @@
 """
 自动更新检查模块
 """
-import os
-import json
 import requests
 import threading
+import shutil
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 from datetime import datetime, timedelta
-
-from query_tool.utils.logger import logger
-
 
 def _flag_is_true(value: Any, default: bool = False) -> bool:
     """Only bool True or string 'true' should be treated as enabled."""
@@ -89,14 +85,15 @@ class UpdateChecker:
     # GitHub Raw URL
     VERSION_URL = "https://raw.githubusercontent.com/hichenym/tpLogTool/main/version.json"
     
-    # 缓存目录
-    CACHE_DIR = Path.home() / '.TPQueryTool' / 'update'
-    
-    # 缓存文件
-    CACHE_FILE = CACHE_DIR / 'version_cache.json'
+    # 仅用于清理历史版本留下的磁盘缓存；新版本绝不创建该目录或文件。
+    LEGACY_CACHE_DIR = Path.home() / '.TPQueryTool' / 'update'
+    LEGACY_CACHE_FILE = LEGACY_CACHE_DIR / 'version_cache.json'
     
     # 缓存有效期（小时）
     CACHE_DURATION = 6
+    _memory_cache_data: Optional[Dict[str, Any]] = None
+    _memory_cache_at: Optional[datetime] = None
+    _memory_cache_lock = threading.Lock()
     
     def __init__(self, current_version: str):
         """
@@ -106,11 +103,15 @@ class UpdateChecker:
             current_version: 当前版本号，如 "3.1.0"
         """
         self.current_version = current_version
-        self._ensure_cache_dir()
-    
-    def _ensure_cache_dir(self):
-        """确保缓存目录存在"""
-        self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self.clear_legacy_cache()
+
+    @classmethod
+    def clear_legacy_cache(cls):
+        """删除旧版落盘更新缓存，避免在用户目录留下更新信息。"""
+        try:
+            shutil.rmtree(cls.LEGACY_CACHE_DIR, ignore_errors=True)
+        except Exception:
+            pass
     
     def _compare_version(self, version1: str, version2: str) -> int:
         """
@@ -142,8 +143,7 @@ class UpdateChecker:
                     return -1
             
             return 0
-        except Exception as e:
-            logger.error(f"版本比较失败: {e}")
+        except Exception:
             return 0
     
     def _fetch_version_info(self) -> Optional[VersionInfo]:
@@ -157,8 +157,6 @@ class UpdateChecker:
         url = self.VERSION_URL
         
         try:
-            logger.info(f"正在从远程获取版本信息...")
-            
             response = requests.get(
                 url,
                 timeout=10,
@@ -168,22 +166,15 @@ class UpdateChecker:
             
             data = response.json()
             version_info = VersionInfo(data)
-            
-            logger.info(f"成功获取版本信息: {version_info}")
-            
-            # 保存到缓存
+
+            # 仅缓存到当前进程内存，绝不写入用户目录。
             self._save_cache(data)
             
             return version_info
             
-        except requests.RequestException as e:
-            logger.warning(f"获取版本信息失败: {e}")
-        except Exception as e:
-            logger.error(f"解析版本信息失败: {e}")
-        
-        # 获取失败，尝试读取缓存
-        logger.warning("远程获取失败，尝试读取缓存")
-        return self._load_cache()
+        except Exception:
+            # 仓库不可访问或响应异常时静默失效，不影响主程序。
+            return None
     
     def _get_version_info_with_cache(self) -> Optional[VersionInfo]:
         """
@@ -192,58 +183,42 @@ class UpdateChecker:
         Returns:
             VersionInfo: 版本信息，失败返回 None
         """
-        # 1. 先尝试从缓存加载
+        # 优先使用当前进程内存中的版本信息。
         cached_info = self._load_cache()
-        
         if cached_info:
-            logger.info(f"使用缓存的版本信息: {cached_info}")
             return cached_info
-        
-        # 2. 缓存不存在或已过期，从远程获取
-        logger.info("缓存不可用，从远程获取版本信息")
         return self._fetch_version_info()
     
     def _save_cache(self, data: Dict[str, Any]):
-        """保存缓存"""
-        try:
-            cache_data = {
-                'timestamp': datetime.now().isoformat(),
-                'version_info': data
-            }
-            
-            with open(self.CACHE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, ensure_ascii=False, indent=2)
-            
-            logger.debug("版本信息已缓存")
-        except Exception as e:
-            logger.error(f"保存缓存失败: {e}")
+        """保存到进程内存。"""
+        with self._memory_cache_lock:
+            type(self)._memory_cache_data = dict(data)
+            type(self)._memory_cache_at = datetime.now()
+
+    @classmethod
+    def get_memory_cache_data(cls) -> Dict[str, Any]:
+        """返回未过期的进程内存缓存副本。"""
+        with cls._memory_cache_lock:
+            if (
+                not cls._memory_cache_data
+                or not cls._memory_cache_at
+                or datetime.now() - cls._memory_cache_at > timedelta(hours=cls.CACHE_DURATION)
+            ):
+                return {}
+            return dict(cls._memory_cache_data)
     
     def _load_cache(self) -> Optional[VersionInfo]:
-        """加载缓存"""
+        """从进程内存加载有效缓存。"""
         try:
-            if not self.CACHE_FILE.exists():
-                logger.debug("缓存文件不存在")
+            with self._memory_cache_lock:
+                cache_data = type(self)._memory_cache_data
+                cached_at = type(self)._memory_cache_at
+            if not cache_data or not cached_at:
                 return None
-            
-            with open(self.CACHE_FILE, 'r', encoding='utf-8') as f:
-                cache_data = json.load(f)
-            
-            # 检查缓存是否过期
-            timestamp = datetime.fromisoformat(cache_data['timestamp'])
-            age = datetime.now() - timestamp
-            age_hours = age.total_seconds() / 3600
-            
-            if age > timedelta(hours=self.CACHE_DURATION):
-                logger.info(f"缓存已过期（{age_hours:.1f} 小时 > {self.CACHE_DURATION} 小时）")
+            if datetime.now() - cached_at > timedelta(hours=self.CACHE_DURATION):
                 return None
-            
-            version_info = VersionInfo(cache_data['version_info'])
-            logger.info(f"从缓存加载版本信息: {version_info}（缓存时间: {age_hours:.1f} 小时前）")
-            
-            return version_info
-            
-        except Exception as e:
-            logger.error(f"加载缓存失败: {e}")
+            return VersionInfo(cache_data)
+        except Exception:
             return None
     
     def _check_compatibility(self, version_info: VersionInfo) -> Tuple[bool, str]:
@@ -283,7 +258,7 @@ class UpdateChecker:
             version_info = self._get_version_info_with_cache()
             
             if not version_info:
-                return False, None, "无法获取版本信息"
+                return False, None, ""
             
             # 比较版本号
             compare_result = self._compare_version(version_info.version, self.current_version)
@@ -293,7 +268,6 @@ class UpdateChecker:
             
             # 检查是否被用户跳过
             if self._is_version_skipped(version_info.version):
-                logger.info(f"版本 {version_info.version} 已被用户跳过")
                 return False, None, f"版本 {version_info.version} 已被跳过"
             
             # 检查兼容性
@@ -306,9 +280,8 @@ class UpdateChecker:
             message = f"发现新版本 V{version_info.version}"
             return True, version_info, message
             
-        except Exception as e:
-            logger.error(f"检查更新失败: {e}")
-            return False, None, f"检查更新失败: {e}"
+        except Exception:
+            return False, None, ""
     
     def check_update_force_refresh(self) -> Tuple[bool, Optional[VersionInfo], str]:
         """
@@ -325,7 +298,7 @@ class UpdateChecker:
             version_info = self._fetch_version_info()
             
             if not version_info:
-                return False, None, "无法获取版本信息"
+                return False, None, ""
             
             # 比较版本号
             compare_result = self._compare_version(version_info.version, self.current_version)
@@ -335,7 +308,6 @@ class UpdateChecker:
             
             # 检查是否被用户跳过
             if self._is_version_skipped(version_info.version):
-                logger.info(f"版本 {version_info.version} 已被用户跳过")
                 return False, None, f"版本 {version_info.version} 已被跳过"
             
             # 检查兼容性
@@ -348,9 +320,8 @@ class UpdateChecker:
             message = f"发现新版本 V{version_info.version}"
             return True, version_info, message
             
-        except Exception as e:
-            logger.error(f"检查更新失败: {e}")
-            return False, None, f"检查更新失败: {e}"
+        except Exception:
+            return False, None, ""
     
     def check_update_async(self, callback):
         """
@@ -360,8 +331,10 @@ class UpdateChecker:
             callback: 回调函数，参数为 (has_update, version_info, message)
         """
         def _check():
-            result = self.check_update()
-            callback(*result)
+            try:
+                callback(*self.check_update())
+            except Exception:
+                pass
         
         thread = threading.Thread(target=_check, daemon=True)
         thread.start()
@@ -374,8 +347,10 @@ class UpdateChecker:
             callback: 回调函数，参数为 (has_update, version_info, message)
         """
         def _check():
-            result = self.check_update_force_refresh()
-            callback(*result)
+            try:
+                callback(*self.check_update_force_refresh())
+            except Exception:
+                pass
         
         thread = threading.Thread(target=_check, daemon=True)
         thread.start()
@@ -426,12 +401,11 @@ class UpdateChecker:
             try:
                 # 设置跳过的版本号
                 winreg.SetValueEx(reg_key, "SkippedVersion", 0, winreg.REG_SZ, version)
-                logger.info(f"已跳过版本: {version}（保存到注册表）")
             finally:
                 winreg.CloseKey(reg_key)
             
-        except Exception as e:
-            logger.error(f"保存跳过版本到注册表失败: {e}")
+        except Exception:
+            pass
     
     def _is_version_skipped(self, version: str) -> bool:
         """
@@ -459,10 +433,8 @@ class UpdateChecker:
                 skipped_version, _ = winreg.QueryValueEx(reg_key, "SkippedVersion")
                 
                 if skipped_version == version:
-                    logger.debug(f"版本 {version} 已被跳过（注册表）")
                     return True
                 else:
-                    logger.debug(f"版本 {version} 未被跳过（注册表中跳过的是: {skipped_version}）")
                     return False
                     
             finally:
@@ -470,10 +442,8 @@ class UpdateChecker:
                 
         except FileNotFoundError:
             # 注册表键不存在，说明没有跳过任何版本
-            logger.debug(f"版本 {version} 未被跳过（注册表键不存在）")
             return False
-        except Exception as e:
-            logger.error(f"检查跳过版本失败: {e}")
+        except Exception:
             return False
     
     def clear_skipped_version(self):
@@ -492,16 +462,15 @@ class UpdateChecker:
             try:
                 # 删除跳过版本的值
                 winreg.DeleteValue(reg_key, "SkippedVersion")
-                logger.info("已清除跳过版本记录（注册表）")
             except FileNotFoundError:
-                logger.debug("跳过版本记录不存在")
+                pass
             finally:
                 winreg.CloseKey(reg_key)
                 
         except FileNotFoundError:
-            logger.debug("注册表键不存在，无需清除")
-        except Exception as e:
-            logger.error(f"清除跳过版本记录失败: {e}")
+            pass
+        except Exception:
+            pass
     
     def get_skipped_version(self) -> Optional[str]:
         """
@@ -528,6 +497,5 @@ class UpdateChecker:
                 
         except FileNotFoundError:
             return None
-        except Exception as e:
-            logger.error(f"获取跳过版本失败: {e}")
+        except Exception:
             return None
