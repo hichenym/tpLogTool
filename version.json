@@ -10,7 +10,7 @@
   "release_notes_url": "https://github.com/hichenym/tpLogTool/releases/tag/v3.7.5",
   "min_version": "3.0.0",
   "update_strategy": "auto",
-  "show_change": true,
+  "show_change": false,
   "changelog": [
     "优化设备连接和文件下载速度",
     "交互页增加命令提示功能",
