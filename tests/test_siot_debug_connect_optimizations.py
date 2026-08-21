@@ -122,6 +122,17 @@ class _FakeQuery:
         raise AssertionError("model fallback should not request device version")
 
 
+class _NonSiotQuery(_FakeQuery):
+    def __init__(self, online_state):
+        self.online_state = online_state
+
+    def is_siot_platform_device(self, dev_id=None, sn=None):
+        return False
+
+    def query_device_online_state(self, sn, dev_id=None):
+        return self.online_state
+
+
 class _DummyProcess:
     stdin = None
     stdout = None
@@ -183,6 +194,9 @@ class _FakeConnectSession:
 
 
 class SiotDebugConnectOptimizationTests(unittest.TestCase):
+    def setUp(self):
+        service._DEVICE_CONTEXT_CACHE.clear()
+
     def test_build_connect_payload_includes_prefetched_credentials(self):
         credentials = DeviceCredentials(
             sn="SN001",
@@ -221,6 +235,23 @@ class SiotDebugConnectOptimizationTests(unittest.TestCase):
         self.assertEqual("DEV001", credentials.dev_id)
         self.assertEqual("cloud-password", credentials.password)
         self.assertEqual("", context["model"])
+
+    def test_online_non_siot_device_uses_p2p_then_tpsrtc_strategy(self):
+        with mock.patch.object(service, "get_shared_device_query", return_value=_NonSiotQuery(True)):
+            credentials, context = service.resolve_device_credentials("SN001", "prod", "user", "pass")
+
+        self.assertFalse(credentials.is_siot)
+        self.assertEqual("p2p_then_siot", credentials.protocol)
+        self.assertIs(True, context["online_state"])
+
+    def test_offline_or_unknown_non_siot_device_uses_p2p_only(self):
+        for online_state in (False, None):
+            with self.subTest(online_state=online_state):
+                with mock.patch.object(service, "get_shared_device_query", return_value=_NonSiotQuery(online_state)):
+                    credentials, context = service.resolve_device_credentials("SN001", "prod", "user", "pass")
+
+                self.assertEqual("p2p", credentials.protocol)
+                self.assertIs(online_state, context["online_state"])
 
     def test_connect_with_accounts_passes_prefetched_cloud_credentials_to_subprocess(self):
         worker = service.SiotDebugWorker()

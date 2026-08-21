@@ -47,6 +47,14 @@ TPS_MSG_NOTIFY_LOGIN_AGAIN = TPS_MSG_BASE + 48
 P2P_DEVICE_USERNAME = "admin"
 P2P_LOGIN_DEVICE_LIST_PARSE_WARNING = -2105006
 
+
+class P2PConnectionError(SiotError):
+    """P2P transport/login failed before a device session was established."""
+
+
+class P2PAuthenticationError(SiotError):
+    """The device rejected the P2P credentials; another transport will not help."""
+
 P2P_FAILURE_EVENTS = {
     TPS_MSG_P2P_OFFLINE,
     TPS_MSG_NOTIFY_AUTH_FAILED,
@@ -359,6 +367,7 @@ class P2PDeviceSession:
         self._connected = False
         self._target_id = ""
         self._connect_error = ""
+        self._connect_auth_failed = False
         self._disconnect_reason = ""
 
         self._active_waiter: Optional[_P2PCommandWaiter] = None
@@ -386,6 +395,7 @@ class P2PDeviceSession:
                 return
             self._target_id = target_id
             self._connect_error = ""
+            self._connect_auth_failed = False
             self._disconnect_reason = ""
             self._connected = False
             self._connect_ready.clear()
@@ -403,7 +413,7 @@ class P2PDeviceSession:
             b"",
         )
         if rc != 0 and not _is_benign_p2p_login_return_code(rc):
-            raise SiotError(f"P2P登录失败: {rc}")
+            raise P2PConnectionError(f"P2P登录失败: {rc}")
         if rc != 0:
             logging.warning(
                 "P2P FC_Login returned warning code %s for device %s; continuing to wait for callbacks",
@@ -416,7 +426,8 @@ class P2PDeviceSession:
             timeout_message = self._connect_error or self._disconnect_reason
             if not timeout_message and rc != 0:
                 timeout_message = f"P2P连接设备超时，登录返回码: {rc}"
-            raise SiotError(timeout_message or "P2P连接设备超时")
+            error_type = P2PAuthenticationError if self._connect_auth_failed else P2PConnectionError
+            raise error_type(timeout_message or "P2P连接设备超时")
 
     def execute_command(
         self,
@@ -713,7 +724,10 @@ class P2PDeviceSession:
                 return 0
 
             if msg_type in P2P_FAILURE_EVENTS:
-                self._handle_disconnect(self._build_p2p_error(msg_type, data_ptr, data_len))
+                self._handle_disconnect(
+                    self._build_p2p_error(msg_type, data_ptr, data_len),
+                    authentication_failure=msg_type == TPS_MSG_NOTIFY_AUTH_FAILED,
+                )
                 return 0
 
             if msg_type != TPS_MSG_P2P_LOG or not data_ptr or data_len == 0:
@@ -725,12 +739,13 @@ class P2PDeviceSession:
             logging.exception("P2P callback handling failed, msg_type=%s", msg_type)
         return 0
 
-    def _handle_disconnect(self, message: str) -> None:
+    def _handle_disconnect(self, message: str, *, authentication_failure: bool = False) -> None:
         message = (message or "").strip() or "P2P连接已断开"
         if self._connect_error and _is_generic_disconnect_message(message):
             message = self._connect_error
         self._connected = False
         self._connect_error = message
+        self._connect_auth_failed = authentication_failure
         self._disconnect_reason = message
         self._invalidate_interactive_command_session()
         self._connect_ready.set()
@@ -827,6 +842,7 @@ class P2PDeviceSession:
         self._connected = False
         self._target_id = ""
         self._connect_error = ""
+        self._connect_auth_failed = False
         self._disconnect_reason = ""
         self._invalidate_interactive_command_session()
         self._stream_log_listener = None

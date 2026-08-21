@@ -74,6 +74,129 @@ class DebugProtocolSelectionTests(unittest.TestCase):
         self.assertEqual(["p2p"], [name for name, _ in factories])
         self.assertIs(factories[0][1], subprocess_runner.P2PDeviceSession)
 
+    def test_online_non_siot_device_tries_p2p_then_tpsrtc(self):
+        credentials = DeviceCredentials(
+            sn="SN001",
+            username="admin",
+            password="pwd",
+            dev_id="DEV001",
+            is_siot=False,
+            protocol="p2p_then_siot",
+        )
+
+        factories = subprocess_runner._build_session_factories(
+            credentials,
+            "cloud-user",
+            "cloud-pass",
+        )
+
+        self.assertEqual(["p2p", "siot"], [name for name, _ in factories])
+        self.assertIs(factories[0][1], subprocess_runner.P2PDeviceSession)
+
+    def test_online_non_siot_device_without_cloud_account_only_tries_p2p(self):
+        credentials = DeviceCredentials(
+            sn="SN001",
+            username="admin",
+            password="pwd",
+            dev_id="DEV001",
+            is_siot=False,
+            protocol="p2p_then_siot",
+        )
+
+        factories = subprocess_runner._build_session_factories(credentials, "", "")
+
+        self.assertEqual(["p2p"], [name for name, _ in factories])
+
+    def test_non_siot_fallback_only_runs_for_p2p_connection_errors(self):
+        credentials = DeviceCredentials(
+            sn="SN001",
+            username="admin",
+            password="pwd",
+            dev_id="DEV001",
+            is_siot=False,
+            protocol="p2p_then_siot",
+        )
+        p2p_factory = object()
+        tpsrtc_factory = object()
+        successful_session = object()
+
+        with mock.patch.object(
+            subprocess_runner,
+            "_build_session_factories",
+            return_value=[("p2p", p2p_factory), ("siot", tpsrtc_factory)],
+        ), mock.patch.object(
+            subprocess_runner,
+            "_connect_with_retries",
+            side_effect=[p2p_session.P2PConnectionError("P2P连接超时"), successful_session],
+        ) as connect_mock, mock.patch.object(subprocess_runner, "_emit") as emit_mock:
+            session, protocol, fallback_from = subprocess_runner._connect_with_protocol_fallback(
+                credentials,
+                "cloud-user",
+                "cloud-pass",
+            )
+
+        self.assertIs(successful_session, session)
+        self.assertEqual("siot", protocol)
+        self.assertEqual("p2p", fallback_from)
+        self.assertEqual(2, connect_mock.call_count)
+        emit_mock.assert_called_once_with("status", message="P2P连接失败，切换TPSRTC")
+
+    def test_non_siot_does_not_fallback_after_p2p_authentication_error(self):
+        credentials = DeviceCredentials(
+            sn="SN001",
+            username="admin",
+            password="pwd",
+            dev_id="DEV001",
+            is_siot=False,
+            protocol="p2p_then_siot",
+        )
+
+        with mock.patch.object(
+            subprocess_runner,
+            "_build_session_factories",
+            return_value=[("p2p", object()), ("siot", object())],
+        ), mock.patch.object(
+            subprocess_runner,
+            "_connect_with_retries",
+            side_effect=p2p_session.P2PAuthenticationError("设备认证失败"),
+        ) as connect_mock, mock.patch.object(subprocess_runner, "_emit"):
+            with self.assertRaisesRegex(p2p_session.P2PAuthenticationError, "设备认证失败"):
+                subprocess_runner._connect_with_protocol_fallback(
+                    credentials,
+                    "cloud-user",
+                    "cloud-pass",
+                )
+
+        self.assertEqual(1, connect_mock.call_count)
+
+    def test_non_siot_does_not_fallback_after_p2p_initialization_error(self):
+        credentials = DeviceCredentials(
+            sn="SN001",
+            username="admin",
+            password="pwd",
+            dev_id="DEV001",
+            is_siot=False,
+            protocol="p2p_then_siot",
+        )
+
+        with mock.patch.object(
+            subprocess_runner,
+            "_build_session_factories",
+            return_value=[("p2p", object()), ("siot", object())],
+        ), mock.patch.object(
+            subprocess_runner,
+            "_connect_with_retries",
+            side_effect=RuntimeError("初始化交互终端失败"),
+        ) as connect_mock, mock.patch.object(subprocess_runner, "_emit"):
+            with self.assertRaisesRegex(RuntimeError, "初始化交互终端失败"):
+                subprocess_runner._connect_with_protocol_fallback(
+                    credentials,
+                    "cloud-user",
+                    "cloud-pass",
+                )
+
+        self.assertEqual(1, connect_mock.call_count)
+
     def test_siot_device_requires_seetong_account(self):
         credentials = DeviceCredentials(
             sn="SN001",

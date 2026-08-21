@@ -12,7 +12,7 @@ from pathlib import Path
 from .command_catalog import is_getsystemcfg_command, is_startlogp2p_command, is_syscmd_family_command, parse_startlogp2p_level
 from .config import DEFAULT_COMMAND_TIMEOUT_MS
 from .models import CloudCredentials, CommandResult, DeviceCredentials, TransferProgress
-from .p2p_session import P2PDeviceSession
+from .p2p_session import P2PConnectionError, P2PDeviceSession
 from .session import DeviceSession
 
 CONNECT_WAKEUP_ATTEMPTS = 1
@@ -21,6 +21,7 @@ AUTH_RETRY_DELAY_S = 0.8
 INIT_START_TIMEOUT_MS = 5_000
 STREAM_LOG_FLUSH_INTERVAL_S = 0.2
 STREAM_LOG_MAX_BATCH = 50
+P2P_THEN_SIOT_PROTOCOL = "p2p_then_siot"
 
 
 def _is_auth_failed_message(message: str) -> bool:
@@ -285,7 +286,7 @@ def _is_wakeup_failed_message(message: str) -> bool:
 
 def _normalized_protocol(credentials: DeviceCredentials) -> str:
     protocol = (credentials.protocol or "").strip().lower()
-    if protocol in {"siot", "p2p", "auto"}:
+    if protocol in {"siot", "p2p", "auto", P2P_THEN_SIOT_PROTOCOL}:
         return protocol
     if credentials.is_siot is True:
         return "siot"
@@ -305,6 +306,21 @@ def _build_session_factories(
 
     if protocol == "p2p":
         factories.append(("p2p", P2PDeviceSession))
+        return factories
+
+    if protocol == P2P_THEN_SIOT_PROTOCOL:
+        factories.append(("p2p", P2PDeviceSession))
+        if cloud_username and cloud_password:
+            factories.append(
+                (
+                    "siot",
+                    lambda: DeviceSession(
+                        cloud_username,
+                        cloud_password,
+                        prefetched_cloud_credentials=prefetched_cloud_credentials,
+                    ),
+                )
+            )
         return factories
 
     if protocol == "siot":
@@ -420,12 +436,16 @@ def _connect_with_retries(session_factory: Callable[[], object], credentials: De
             session = session_factory()
             try:
                 session.connect(credentials, status_callback=lambda msg: _emit("status", message=msg))
-                init_result = session.execute_command(
-                    "syscmd start",
-                    timeout_ms=INIT_START_TIMEOUT_MS,
-                    progress_callback=None,
-                    stream_log_callback=None,
-                )
+                try:
+                    init_result = session.execute_command(
+                        "syscmd start",
+                        timeout_ms=INIT_START_TIMEOUT_MS,
+                        progress_callback=None,
+                        stream_log_callback=None,
+                    )
+                except P2PConnectionError as exc:
+                    # TPSRTC fallback is reserved for the initial P2P login only.
+                    raise RuntimeError(str(exc)) from exc
                 if not init_result.success and not _is_empty_start_result(init_result):
                     init_message = (init_result.display_text or _format_command_result("syscmd start", init_result)).strip()
                     raise RuntimeError(init_message or "初始化交互终端失败")
@@ -453,6 +473,50 @@ def _connect_with_retries(session_factory: Callable[[], object], credentials: De
                 raise RuntimeError("\n".join(wakeup_failures) or "唤醒失败")
 
     raise RuntimeError(last_connect_error or "登录设备失败")
+
+
+def _connect_with_protocol_fallback(
+    credentials: DeviceCredentials,
+    cloud_username: str,
+    cloud_password: str,
+    prefetched_cloud_credentials: CloudCredentials | None = None,
+):
+    protocol = _normalized_protocol(credentials)
+    session_factories = _build_session_factories(
+        credentials,
+        cloud_username,
+        cloud_password,
+        prefetched_cloud_credentials=prefetched_cloud_credentials,
+    )
+    if protocol != P2P_THEN_SIOT_PROTOCOL and len(session_factories) > 1:
+        protocol_names = " -> ".join(name.upper() for name, _ in session_factories)
+        _emit("status", message=f"设备类型未明确，按 {protocol_names} 顺序尝试连接...")
+
+    connect_errors = []
+    for index, (protocol_name, session_factory) in enumerate(session_factories):
+        try:
+            session = _connect_with_retries(session_factory, credentials)
+            return session, protocol_name, "p2p" if index > 0 else ""
+        except Exception as exc:
+            connect_errors.append(str(exc))
+            if protocol == P2P_THEN_SIOT_PROTOCOL:
+                if protocol_name != "p2p" or not isinstance(exc, P2PConnectionError):
+                    raise
+                if index < len(session_factories) - 1:
+                    _emit("status", message="P2P连接失败，切换TPSRTC")
+                    continue
+                raise RuntimeError(
+                    f"{exc}\\n设备已确认在线，但未配置Seetong账号，无法尝试TPSRTC兼容连接。"
+                ) from exc
+
+            if index < len(session_factories) - 1:
+                _emit("status", message=f"{protocol_name.upper()}连接失败，正在尝试备用协议...")
+                continue
+            if len(connect_errors) > 1:
+                raise RuntimeError("\\n".join(connect_errors))
+            raise
+
+    raise RuntimeError("登录设备失败")
 
 
 def main():
@@ -490,31 +554,14 @@ def main():
                 prefetched_cloud_credentials = CloudCredentials(**cloud_credentials_payload)
             except Exception:
                 prefetched_cloud_credentials = None
-        connect_errors = []
-        session_factories = _build_session_factories(
+        session, connected_protocol, fallback_from = _connect_with_protocol_fallback(
             credentials,
             cloud_username,
             cloud_password,
             prefetched_cloud_credentials=prefetched_cloud_credentials,
         )
-        if len(session_factories) > 1:
-            protocol_names = " -> ".join(name.upper() for name, _ in session_factories)
-            _emit("status", message=f"设备类型未明确，按 {protocol_names} 顺序尝试连接...")
-
-        for index, (protocol_name, session_factory) in enumerate(session_factories):
-            try:
-                session = _connect_with_retries(session_factory, credentials)
-                connected = True
-                _emit("connected")
-                break
-            except Exception as exc:
-                connect_errors.append(str(exc))
-                if index < len(session_factories) - 1:
-                    _emit("status", message=f"{protocol_name.upper()}连接失败，正在尝试备用协议...")
-                    continue
-                if len(connect_errors) > 1:
-                    raise RuntimeError("\n".join(connect_errors))
-                raise
+        connected = True
+        _emit("connected", protocol=connected_protocol, fallback_from=fallback_from)
 
         while True:
             line = sys.stdin.readline()
