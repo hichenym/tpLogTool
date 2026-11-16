@@ -25,6 +25,7 @@ from query_tool.utils import ButtonManager, ThreadManager, StyleManager
 from query_tool.utils.theme_manager import t
 from query_tool.utils.error_record_api import MetaLoadThread, ErrorRecordQueryThread, _make_device_query
 from query_tool.utils.logger import logger
+from query_tool.utils.config import get_active_environment
 from query_tool.widgets.custom_widgets import set_dark_title_bar
 
 
@@ -43,10 +44,11 @@ class DeviceInfoQueryThread(QThread):
         super().__init__()
         self.device_sn = device_sn
         self.fallback_model = fallback_model
+        self.env = get_active_environment()
 
     def run(self):
         try:
-            dq = _make_device_query()
+            dq = _make_device_query(self.env)
             result = dq.get_device_info(dev_sn=self.device_sn)
             if not result.get("success"):
                 raise RuntimeError(result.get("msg", "查询设备信息失败"))
@@ -598,8 +600,8 @@ class ErrorRecordPage(BasePage):
         self._set_meta_loading_state(True)
 
         thread = MetaLoadThread()
-        thread.finished.connect(self._on_meta_loaded)
-        thread.error.connect(self._on_meta_error)
+        thread.finished.connect(lambda models, modules, env=thread.env: self._on_meta_loaded(models, modules) if env == get_active_environment() else None)
+        thread.error.connect(lambda message, env=thread.env: self._on_meta_error(message) if env == get_active_environment() else None)
         thread.finished.connect(lambda: thread.deleteLater())
         self.thread_mgr.add("meta", thread)
         thread.start()
@@ -648,6 +650,19 @@ class ErrorRecordPage(BasePage):
             return
         self.current_page = 1
         self._do_query(1)
+
+    def on_environment_changed(self, env):
+        sn = self.sn_input.text()
+        self.on_reset()
+        self._model_map = {}
+        self._module_list = []
+        self._module_key_map = {}
+        self._meta_loaded = False
+        self._meta_last_loaded_at = 0
+        for combo in (self.model_combo, self.version_combo, self.module_combo):
+            self._set_combo_items(combo, [])
+        self.sn_input.setText(sn)
+        self._update_query_button_state()
 
     def on_refresh_meta(self):
         if self._meta_loading:
@@ -708,8 +723,8 @@ class ErrorRecordPage(BasePage):
             device_identify=device_identify, module=module_key,
             error_code=error_code, start_time=start_time, end_time=end_time
         )
-        thread.finished.connect(self._on_query_success)
-        thread.error.connect(self._on_query_error)
+        thread.finished.connect(lambda *args, env=thread.env: self._on_query_success(*args) if env == get_active_environment() else None)
+        thread.error.connect(lambda message, env=thread.env: self._on_query_error(message) if env == get_active_environment() else None)
         thread.finished.connect(lambda: thread.deleteLater())
         self._query_thread = thread
         self.thread_mgr.add("query", thread)
@@ -1081,6 +1096,7 @@ class _FullExportThread(QThread):
         self._file_path = file_path
         self._mode = mode          # 'csv' or 'json'
         self._cancelled = False
+        self._env = get_active_environment()
 
     def cancel(self):
         self._cancelled = True
@@ -1103,7 +1119,7 @@ class _FullExportThread(QThread):
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
             # 先用一个实例拿第一页，确认总页数（同时预热 token 缓存）
-            dq = _make_device_query()
+            dq = _make_device_query(self._env)
             first_records, _, total_pages, _ = fetch_error_records(
                 dq, page=1, size=self._per_page, **self._params
             )
@@ -1121,7 +1137,7 @@ class _FullExportThread(QThread):
                 max_workers = min(10, total_pages - 1)
 
                 def fetch_page(page):
-                    dq_i = _make_device_query()
+                    dq_i = _make_device_query(self._env)
                     records, _, _, _ = fetch_error_records(
                         dq_i, page=page, size=self._per_page, **self._params
                     )
@@ -1188,7 +1204,7 @@ class _FullExportThread(QThread):
                 return sn, ""
             try:
                 from query_tool.utils.error_record_api import _make_device_query
-                dq_i = _make_device_query()
+                dq_i = _make_device_query(self._env)
                 info = dq_i.get_device_info(dev_sn=sn)
                 recs = info.get('data', {}).get('records', [])
                 if recs and not self._cancelled:

@@ -6,10 +6,10 @@ from datetime import datetime
 # 版本号配置
 VERSION_MAJOR = 3  # 主版本号：重大功能更新或架构变更
 VERSION_MINOR = 8  # 次版本号：新增功能或较大改进
-VERSION_PATCH = 1  # 修订号：Bug修复或小改进
+VERSION_PATCH = 3  # 修订号：Bug修复或小改进
 
 # 自动获取编译日期
-BUILD_DATE = "20260821"
+BUILD_DATE = "20261116"
 
 def get_version():
     """获取版本号元组"""
@@ -36,6 +36,9 @@ def get_build_date_formatted():
 
 # 版本历史（仅记录用户感知的重要更新、功能改进和bug修复）
 VERSION_HISTORY = """
+
+V3.8.3(20261116)
+- 设备、调试、命令和记录页功能支持一键切换测试环境和生产环境
 
 V3.8.1(20260821)
 - 修复非siot设备实际使用tpsrtc协议导致无法登录

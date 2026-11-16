@@ -9,9 +9,10 @@ from .session import fetch_cloud_credentials
 
 
 class CloudCredentialPrefetcher:
-    def __init__(self, username: str, password: str) -> None:
+    def __init__(self, username: str, password: str, env: str = 'pro') -> None:
         self.username = str(username or "").strip()
         self.password = str(password or "").strip()
+        self.env = env
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self._credentials: Optional[CloudCredentials] = None
@@ -46,6 +47,7 @@ class CloudCredentialPrefetcher:
                 self.username,
                 self.password,
                 force_refresh=False,
+                env=self.env,
             )
         except Exception as exc:
             self._error = exc
@@ -71,6 +73,7 @@ def build_connect_payload(
             "sn": device_credentials.sn,
             "username": device_credentials.username,
             "password": device_credentials.password,
+            "env": device_credentials.env,
             "dev_id": device_credentials.dev_id,
             "protocol": device_credentials.protocol,
             "is_siot": device_credentials.is_siot,

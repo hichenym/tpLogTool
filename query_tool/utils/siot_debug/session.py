@@ -167,9 +167,12 @@ def _http_get(url: str, headers: dict[str, str]) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def fetch_cloud_credentials(username: str, password: str, force_refresh: bool = False) -> CloudCredentials:
+def fetch_cloud_credentials(username: str, password: str, force_refresh: bool = False, env: str = 'pro') -> CloudCredentials:
+    from query_tool.utils.environment import cloud_endpoints, normalize_environment
+    env = normalize_environment(env)
+    login_url, access_url = cloud_endpoints(env)
     if not force_refresh:
-        cached_credentials = load_cached_cloud_credentials(username, password)
+        cached_credentials = load_cached_cloud_credentials(username, password, env=env)
         if cached_credentials is not None:
             logging.info("Using cached SIOT cloud credentials")
             return cached_credentials
@@ -196,7 +199,7 @@ def fetch_cloud_credentials(username: str, password: str, force_refresh: bool = 
     )
 
     logging.info("Logging in to cloud platform...")
-    login_response = _http_post(CLOUD_LOGIN_URL, login_body, login_headers)
+    login_response = _http_post(login_url, login_body, login_headers)
     if login_response.get("code") != 200:
         raise SiotError(f"cloud login failed: {login_response.get('msg', login_response)}")
 
@@ -213,7 +216,7 @@ def fetch_cloud_credentials(username: str, password: str, force_refresh: bool = 
     }
 
     logging.info("Fetching SIOT access credentials...")
-    access_response = _http_get(CLOUD_ACCESS_URL, access_headers)
+    access_response = _http_get(access_url, access_headers)
     if access_response.get("code") != 200:
         raise SiotError(f"cloud access-node fetch failed: {access_response.get('msg', access_response)}")
 
@@ -228,8 +231,9 @@ def fetch_cloud_credentials(username: str, password: str, force_refresh: bool = 
         relay_nodes=relay_nodes,
         vip_relay_nodes=vip_relay_nodes,
         jwt_key_version=int(data.get("signKeyVer", 0)),
+        env=env,
     )
-    save_cached_cloud_credentials(username, password, credentials)
+    save_cached_cloud_credentials(username, password, credentials, env=env)
     logging.info("SIOT credentials obtained successfully")
     logging.info("  Access node: %s", credentials.access_node)
     return credentials
@@ -448,7 +452,8 @@ class DeviceSession:
         self._cb_send_sdp = TPSRTC_SendSDPCallback(self._on_send_sdp)
 
     def _load_cloud_credentials_for_connect(self, force_refresh: bool) -> CloudCredentials:
-        if not force_refresh and self._prefetched_cloud_credentials is not None:
+        env = getattr(getattr(self, 'device', None), 'env', 'pro')
+        if not force_refresh and self._prefetched_cloud_credentials is not None and self._prefetched_cloud_credentials.env == env:
             credentials = self._prefetched_cloud_credentials
             self._prefetched_cloud_credentials = None
             logging.info("Using prefetched SIOT cloud credentials")
@@ -457,6 +462,7 @@ class DeviceSession:
             self.cloud_username,
             self.cloud_password,
             force_refresh=force_refresh,
+            env=env,
         )
 
     def _query_device_wait_timeout(self) -> float:
@@ -476,7 +482,7 @@ class DeviceSession:
                 self.close()
                 self.device = device
                 self._status_callback = status_callback
-                invalidate_cached_cloud_credentials(self.cloud_username, self.cloud_password)
+                invalidate_cached_cloud_credentials(self.cloud_username, self.cloud_password, env=device.env)
                 if retry_index >= MAX_CLOUD_CREDENTIAL_REFRESH_RETRIES:
                     raise SiotError(exc.user_message)
                 logging.warning(
@@ -1360,15 +1366,21 @@ class DeviceSession:
             return self._gateway_id_4g
         return self._gateway_id or DEVICE_GATEWAY_ID
 
-    def _prepare_device_via_siot_helper(self) -> None:
-        if self.device is None:
-            raise SiotError("device session is not initialized")
-
-        logging.info("Preparing device via libsiot helper: %s", self.device.sn)
-        params = {
-            "cloud_username": self.cloud_username,
-            "cloud_password": self.cloud_password,
-            "gateway_id": "",
+    def _build_prepare_params(self):
+        if self.device is None or self.cloud_credentials is None:
+            raise SiotError('device session is not initialized')
+        credentials = self.cloud_credentials
+        if credentials.env != self.device.env:
+            raise SiotError('设备与调试节点所属平台不一致，已停止连接')
+        return {
+            'access_node': credentials.access_node,
+            'access_token': credentials.access_jwt_token,
+            'client_id': credentials.client_id,
+            'key_version': credentials.jwt_key_version,
+            'relay_token': credentials.relay_jwt_token,
+            'relay_nodes': credentials.relay_nodes,
+            'vip_relay_nodes': credentials.vip_relay_nodes,
+            'gateway_id': self._current_gateway_id,
             "is_4g": True,
             "status_timeout_ms": 10_000,
             "login_timeout_ms": 30_000,
@@ -1377,6 +1389,10 @@ class DeviceSession:
             "wakeup_retry_count": DEFAULT_WAKEUP_RETRY_COUNT,
             "debug": False,
         }
+
+    def _prepare_device_via_siot_helper(self) -> None:
+        params = self._build_prepare_params()
+        logging.info("Preparing device via libsiot helper: %s", self.device.sn)
         proc = subprocess.Popen(
             build_internal_command(
                 "--siot-helper-prepare",
@@ -1481,6 +1497,7 @@ class DeviceSession:
                 self.cloud_username,
                 self.cloud_password,
                 force_refresh=True,
+                env=self.device.env if self.device else 'pro',
             )
             ret = self.lib.TPSIOT_RedirectAccess(
                 self._siot_conn,

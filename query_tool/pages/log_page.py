@@ -181,7 +181,7 @@ class BatchLogFetchThread(QThread):
         self._process_lock = threading.Lock()
         self._active_processes = set()
         self._executor = None
-        self._cloud_prefetcher = CloudCredentialPrefetcher(seetong_username, seetong_password)
+        self._cloud_prefetcher = CloudCredentialPrefetcher(seetong_username, seetong_password, env=env)
 
     def cancel(self):
         self._stop_event.set()
@@ -1285,6 +1285,9 @@ class LogPage(BasePage):
             return
 
         self._start_execution(selected_sns, reset_table=False, run_mode="retry")
+
+    def on_environment_changed(self, env):
+        self._reset_result_view()
 
     def on_reset_clicked(self):
         if self.fetch_running:

@@ -152,6 +152,7 @@ class QueryWorker(QObject):
                         break
                     row, result = future.result()
                     if result:
+                        result['env'] = self.env
                         self.single_result.emit(row, result)
                     completed += 1
                     # 每 5 个任务或最后一个任务时更新进度
@@ -522,6 +523,8 @@ class PhoneQueryWorker(QObject):
                     models.add(device["model"])
             
             # 发送成功信号
+            for result in results:
+                result['env'] = self.env
             self.success.emit(results, sorted(list(models)))
             
         except Exception as e:

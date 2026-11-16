@@ -273,7 +273,8 @@ class SnQueryDialog(AdaptiveDialog):
         from query_tool.utils.config import get_account_config
         env, username, password = get_account_config()
         if not username or not password:
-            self.status_label.setText("运维账号未配置，请先在设置中配置")
+            from query_tool.utils.environment import environment_label
+            self.status_label.setText(f"{environment_label(env)}运维账号未配置，请先在设置中配置")
             self.status_label.setStyleSheet(f"color: {t('status_offline')}; font-size: 11px;")
             prompt_configure_account(self, account_type="device")
             return

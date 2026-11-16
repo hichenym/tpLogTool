@@ -46,7 +46,7 @@ def _normalize_user_message(message: str) -> str:
     return str(message or "").strip()
 
 
-def validate_seetong_login(username: str, password: str) -> Tuple[bool, str]:
+def validate_seetong_login(username: str, password: str, env: str = 'pro') -> Tuple[bool, str]:
     """校验 Seetong 账号是否可登录。"""
     username = username.strip()
     password = password.strip()
@@ -54,7 +54,7 @@ def validate_seetong_login(username: str, password: str) -> Tuple[bool, str]:
         return False, "请输入账号和密码"
 
     try:
-        fetch_cloud_credentials(username, password, force_refresh=True)
+        fetch_cloud_credentials(username, password, force_refresh=True, env=env)
         return True, "验证成功"
     except Exception as exc:
         logger.error(f"Seetong 账号验证失败: {exc}")
@@ -82,6 +82,7 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
                     dev_id=context.get("dev_id", ""),
                     is_siot=context.get("is_siot"),
                     protocol=context.get("protocol", "auto"),
+                    env=env,
                 ),
                 context,
             )
@@ -131,6 +132,7 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
         "is_siot": is_siot,
         "online_state": online_state,
         "protocol": protocol,
+        "env": env,
     }
     with _DEVICE_CONTEXT_CACHE_LOCK:
         if is_siot is not False:
@@ -147,6 +149,7 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
             dev_id=dev_id,
             is_siot=is_siot,
             protocol=protocol,
+            env=env,
         ),
         context,
     )
@@ -200,10 +203,11 @@ class SiotDebugWorker(QObject):
             elif context.get("is_siot") is False:
                 self.status_message.emit("查询到非SIOT设备")
             if protocol == "siot" and (not seetong_username.strip() or not seetong_password.strip()):
-                raise RuntimeError("当前设备为SIOT设备，请先在设置中配置Seetong账号")
+                from query_tool.utils.environment import environment_label
+                raise RuntimeError(f"当前设备为SIOT设备，请先在设置中配置{environment_label(env)}Seetong账号")
             prefetched_cloud_credentials = None
             if protocol in {"siot", "auto"}:
-                prefetcher = CloudCredentialPrefetcher(seetong_username, seetong_password).start()
+                prefetcher = CloudCredentialPrefetcher(seetong_username, seetong_password, env=env).start()
                 prefetched_cloud_credentials = prefetcher.get(require=protocol == "siot")
             self.status_message.emit(f"已获取设备密码，目标设备: {context['sn']}")
 

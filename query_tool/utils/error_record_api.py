@@ -4,21 +4,23 @@
 """
 from PyQt5.QtCore import QThread, pyqtSignal
 from query_tool.utils.logger import logger
+from query_tool.utils.config import get_active_environment
+from query_tool.utils.environment import environment_label
 
 BASE_URL = "https://console.seetong.com"
 _BASIC_AUTH = "Basic c2VldG9uZ19jbG91ZF9hZG1pbjpzZWV0b25nX2Nsb3VkX2FkbWluX3NlY3JldA=="
 
 
-def _make_device_query():
+def _make_device_query(env=None):
     """
     创建 DeviceQuery 实例（use_cache=True，缓存命中直接用；
     若缓存 token 已失效，DeviceQuery._request 内部会自动 401 刷新）
     """
     from query_tool.utils.config import get_account_config
     from query_tool.utils.device_query import DeviceQuery
-    env, username, password = get_account_config()
+    env, username, password = get_account_config(env)
     if not username or not password:
-        raise RuntimeError("账号未配置，请先在设置中配置账号")
+        raise RuntimeError(f"{environment_label(env)}运维账号未配置，请先在设置中配置账号")
     dq = DeviceQuery(env, username, password, use_cache=True)
     if dq.init_error:
         raise RuntimeError(dq.init_error)
@@ -112,9 +114,13 @@ class MetaLoadThread(QThread):
     finished = pyqtSignal(dict, list)   # model_map, module_list
     error = pyqtSignal(str)
 
+    def __init__(self, env=None):
+        super().__init__()
+        self.env = env or get_active_environment()
+
     def run(self):
         try:
-            dq = _make_device_query()
+            dq = _make_device_query(self.env)
             model_map = fetch_model_list(dq)
             module_list = fetch_module_list(dq)
             self.finished.emit(model_map, module_list)
@@ -130,7 +136,7 @@ class ErrorRecordQueryThread(QThread):
 
     def __init__(self, page=1, size=100, device_sn="", device_model="",
                  device_identify="", module="", error_code="",
-                 start_time="", end_time=""):
+                 start_time="", end_time="", env=None):
         super().__init__()
         self.page = page
         self.size = size
@@ -141,10 +147,11 @@ class ErrorRecordQueryThread(QThread):
         self.error_code = error_code
         self.start_time = start_time
         self.end_time = end_time
+        self.env = env or get_active_environment()
 
     def run(self):
         try:
-            dq = _make_device_query()
+            dq = _make_device_query(self.env)
             records, current, pages, total = fetch_error_records(
                 dq, self.page, self.size,
                 self.device_sn, self.device_model, self.device_identify,

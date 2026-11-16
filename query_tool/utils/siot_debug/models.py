@@ -10,6 +10,7 @@ class DeviceCredentials:
     dev_id: str = ""
     is_siot: Optional[bool] = None
     protocol: str = "siot"
+    env: str = 'pro'
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class CloudCredentials:
     relay_nodes: str
     vip_relay_nodes: str
     jwt_key_version: int
+    env: str = 'pro'
 
 
 @dataclass

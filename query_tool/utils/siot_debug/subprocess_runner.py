@@ -325,7 +325,8 @@ def _build_session_factories(
 
     if protocol == "siot":
         if not cloud_username or not cloud_password:
-            raise RuntimeError("当前设备为SIOT设备，请先在设置中配置Seetong账号")
+                from query_tool.utils.environment import environment_label
+                raise RuntimeError(f"当前设备为SIOT设备，请先在设置中配置{environment_label(credentials.env)}Seetong账号")
         factories.append(
             (
                 "siot",
@@ -543,6 +544,7 @@ def main():
             dev_id=str(device.get("dev_id") or "").strip(),
             is_siot=device.get("is_siot"),
             protocol=str(device.get("protocol") or "").strip() or "auto",
+            env=str(device.get("env") or 'pro'),
         )
 
         cloud_username = str(cloud.get("username") or "").strip()

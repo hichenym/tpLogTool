@@ -14,7 +14,7 @@ import ctypes
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QStatusBar, QStackedWidget, QDesktopWidget,
-    QSystemTrayIcon, QMenu, QAction
+    QSystemTrayIcon, QMenu, QAction, QDialog
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
 from PyQt5.QtGui import QIcon, QMovie
@@ -44,6 +44,8 @@ from query_tool.utils.task_center import (
 from query_tool.utils.theme_manager import theme_manager
 from query_tool.utils.single_instance import SingleInstanceController
 from query_tool.widgets import SettingsDialog, TaskCenterDialog
+from query_tool.widgets.environment_switch import EnvironmentSwitch
+from query_tool.utils.environment import environment_label
 
 # 禁用SSL警告
 requests.packages.urllib3.disable_warnings()
@@ -81,7 +83,7 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("查询工具")
+        self.setWindowTitle(f'查询工具 · {environment_label(config_manager.get_active_environment())}')
         self.setMinimumSize(600, 450)
         self.setWindowIcon(QIcon(":/icons/app/logo.png"))
         self._apply_initial_window_size()
@@ -211,6 +213,9 @@ class MainWindow(QMainWindow):
         
         menu_layout.addStretch()
         menu_layout.addWidget(self.task_center_btn)
+        self.environment_switch = EnvironmentSwitch(env=config_manager.get_active_environment())
+        self.environment_switch.environment_changed.connect(self.on_environment_changed)
+        menu_layout.addWidget(self.environment_switch)
         menu_layout.addWidget(self.theme_btn)
         menu_layout.addWidget(self.settings_btn)
         menu_layout.addSpacing(5)
@@ -428,6 +433,28 @@ class MainWindow(QMainWindow):
             return True
         return False
     
+    def on_environment_changed(self, env):
+        current = config_manager.get_active_environment()
+        if env == current:
+            return
+        if count_running_tasks() or any(page.is_environment_busy() for page in self.pages):
+            self.environment_switch.set_environment(current)
+            self.on_page_status_message('当前平台仍有查询、调试连接或任务运行，请先完成任务或断开连接后再切换', 'warning', 5000)
+            return
+        if any(dialog.isVisible() for dialog in self.findChildren(QDialog)):
+            self.environment_switch.set_environment(current)
+            self.on_page_status_message('请先关闭当前设备操作或设置窗口，再切换平台', 'warning', 5000)
+            return
+        if not config_manager.set_active_environment(env):
+            self.environment_switch.set_environment(current)
+            self.on_page_status_message('平台选择保存失败，请检查注册表写入权限后重试；当前平台保持不变', 'error', 5000)
+            return
+        for page in self.pages:
+            page.on_environment_changed(env)
+        self.setWindowTitle(f'查询工具 · {environment_label(env)}')
+        self.pages[self.stacked_widget.currentIndex()].on_page_show()
+        self.on_page_status_message(f'已切换至{environment_label(env)}，旧平台查询结果已清空', 'success', 3000)
+
     def on_settings_clicked(self):
         """设置按钮点击"""
         dialog = SettingsDialog(self)

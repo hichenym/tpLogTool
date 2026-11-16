@@ -246,11 +246,12 @@ def _install_common_utils_stubs(originals):
     _swap_module("query_tool.utils", utils_stub, originals)
 
     config_stub = types.ModuleType("query_tool.utils.config")
-    config_stub.get_account_config = lambda: ("", "", "")
+    config_stub.get_active_environment = lambda: 'pro'
+    config_stub.get_account_config = lambda env=None: (env or 'pro', "", "")
     config_stub.save_account_config = lambda *args, **kwargs: True
     config_stub.get_firmware_account_config = lambda: ("", "")
     config_stub.save_firmware_account_config = lambda *args, **kwargs: True
-    config_stub.get_seetong_account_config = lambda: ("", "")
+    config_stub.get_seetong_account_config = lambda env=None: ("", "")
     config_stub.save_seetong_account_config = lambda *args, **kwargs: True
     config_stub.get_log_config = lambda: False
     _swap_module("query_tool.utils.config", config_stub, originals)

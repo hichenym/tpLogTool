@@ -16,7 +16,7 @@ from .base_page import BasePage
 from .page_registry import register_page
 from query_tool.utils import (
     ButtonManager, MessageManager, ThreadManager, StyleManager, TableHelper,
-    get_account_config, DeviceQuery, check_device_online
+    get_account_config, config_manager, DeviceQuery, check_device_online
 )
 from query_tool.utils.theme_manager import t, theme_manager
 from query_tool.utils.runtime_credential_cache import get_shared_device_query
@@ -1226,6 +1226,8 @@ class DeviceStatusPage(BasePage):
         if not isinstance(item, dict):
             self.show_error(f"第 {row} 行数据格式错误")
             return
+        if item.get('env') and item['env'] != config_manager.get_active_environment():
+            return
         
         self.query_results[row] = item
         
@@ -1344,6 +1346,19 @@ class DeviceStatusPage(BasePage):
         
         # 初始化匹配数量为全部数量
         self.match_count_label.setText(f"数量: {self.result_table.rowCount()} / {self.total_count}")
+
+    def on_environment_changed(self, env):
+        sn_text = self.sn_input.toPlainText()
+        id_text = self.id_input.toPlainText()
+        self.on_clear()
+        self.sn_input.setPlainText(sn_text)
+        self.id_input.setPlainText(id_text)
+        self._device_query = None
+        self._device_query_env = None
+        self._query_thread = None
+
+        self.phone_query_btn.setEnabled(True)
+        self.phone_query_btn.setText('账号查询')
 
     def on_clear(self):
         """清空按钮点击"""
@@ -2253,6 +2268,8 @@ class DeviceStatusPage(BasePage):
     
     def on_phone_query_success(self, results, models):
         """账号查询成功"""
+        if results and results[0].get('env') and results[0]['env'] != config_manager.get_active_environment():
+            return
         self.phone_query_results = results
         
         # 添加账号到历史

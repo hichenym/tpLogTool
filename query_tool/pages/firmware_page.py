@@ -1189,7 +1189,8 @@ class FirmwarePage(BasePage):
 
         env, username, password = get_account_config()
         if not username or not password:
-            self.show_warning("固件已保存，但运维账号未配置，未执行立即下发")
+            from query_tool.utils.environment import environment_label
+            self.show_warning(f"固件已保存，但{environment_label(env)}运维账号未配置，未执行立即下发")
             return
 
         device_query = get_shared_device_query(env, username, password)

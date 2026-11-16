@@ -27,21 +27,23 @@ class ThreadManager:
         self.threads[name] = thread
         
         # 线程完成后自动清理
-        thread.finished.connect(lambda: self._on_thread_finished(name))
+        thread.finished.connect(lambda *args, expected=thread: self._on_thread_finished(name, expected))
         
         logger.debug(f"添加线程: {name}")
         return thread
     
-    def _on_thread_finished(self, name):
+    def _on_thread_finished(self, name, expected=None):
         """线程完成回调"""
-        thread = self.threads.get(name)
+        thread = expected or self.threads.get(name)
         if thread:
             # 延迟删除，确保所有信号处理完成
-            QTimer.singleShot(100, lambda: self._cleanup_thread(name))
+            QTimer.singleShot(100, lambda: self._cleanup_thread(name, thread))
     
-    def _cleanup_thread(self, name):
+    def _cleanup_thread(self, name, expected=None):
         """清理线程"""
         thread = self.threads.get(name)
+        if expected is not None and thread is not expected:
+            return
         if thread:
             try:
                 # 不再调用deleteLater，因为线程已经在外部调用了

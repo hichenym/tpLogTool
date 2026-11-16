@@ -16,7 +16,9 @@ from query_tool.utils.config import (
     get_account_config, save_account_config,
     get_firmware_account_config, save_firmware_account_config,
     get_seetong_account_config, save_seetong_account_config,
+    get_active_environment,
 )
+from query_tool.utils.environment import ENVIRONMENTS, environment_label
 from query_tool.utils.device_query import DeviceQuery
 from query_tool.utils.style_manager import StyleManager
 from query_tool.utils.theme_manager import t
@@ -118,9 +120,14 @@ def _normalize_account_type(account_type):
     return normalized if normalized in ACCOUNT_PROMPT_COPY else None
 
 
-def _resolve_account_prompt_copy(account_type=None, title=None, text=None):
+def _resolve_account_prompt_copy(account_type=None, title=None, text=None, env=None):
     normalized_account_type = _normalize_account_type(account_type)
-    defaults = ACCOUNT_PROMPT_COPY.get(normalized_account_type, {})
+    defaults = dict(ACCOUNT_PROMPT_COPY.get(normalized_account_type, {}))
+    if normalized_account_type in (ACCOUNT_TYPE_DEVICE, ACCOUNT_TYPE_SEETONG):
+        platform = environment_label(env or get_active_environment())
+        name = '运维账号' if normalized_account_type == ACCOUNT_TYPE_DEVICE else 'Seetong账号'
+        defaults['title'] = f'需要配置{platform}{name}'
+        defaults['text'] = f'检测到{platform}{name}未配置，是否现在配置？'
     return {
         "account_type": normalized_account_type,
         "title": title or defaults.get("title") or "需要配置账号",
@@ -348,7 +355,15 @@ class SettingsDialog(AdaptiveDialog):
         
         # 加载设备账号配置
         self.env, self.device_username, self.device_password = get_account_config()
-        self.env = 'pro'  # 固定使用生产环境
+        self.account_profiles = {
+            ACCOUNT_TYPE_DEVICE: {env: get_account_config(env)[1:] for env in ENVIRONMENTS},
+            ACCOUNT_TYPE_SEETONG: {env: get_seetong_account_config(env) for env in ENVIRONMENTS},
+        }
+        self.initial_account_profiles = {name: profiles.copy() for name, profiles in self.account_profiles.items()}
+        self.account_environments = {name: self.env for name in self.account_profiles}
+        self.account_switches = {}
+        self.account_password_inputs = {}
+        self.account_password_checks = {}
         
         # 加载固件账号配置
         self.firmware_username, self.firmware_password = get_firmware_account_config()
@@ -454,12 +469,15 @@ class SettingsDialog(AdaptiveDialog):
         # 创建滚动区域
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_area.setFrameShape(QFrame.NoFrame)
         scroll_area.setStyleSheet(StyleManager.get_SCROLL_AREA())
         self.account_scroll_area = scroll_area
 
         # 滚动内容容器
         scroll_content = QWidget()
+        from PyQt5.QtWidgets import QSizePolicy
+        scroll_content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setSpacing(0)
         scroll_layout.setContentsMargins(15, 15, 15, 15)
@@ -505,8 +523,18 @@ class SettingsDialog(AdaptiveDialog):
         group.setStyleSheet(StyleManager.get_GROUP_BOX())
         
         group_layout = QVBoxLayout(group)
-        group_layout.setSpacing(12)
+        group_layout.setSpacing(8)
         group_layout.setContentsMargins(15, 15, 15, 15)
+        if account_type in self.account_profiles:
+            from query_tool.widgets.environment_switch import EnvironmentSwitch
+            platform_layout = QHBoxLayout()
+            platform_layout.addStretch()
+            platform_switch = EnvironmentSwitch(env=self.account_environments[account_type])
+            platform_switch.setFixedSize(52, 28)
+            platform_switch.environment_changed.connect(lambda env: self.on_account_environment_changed(account_type, env))
+            self.account_switches[account_type] = platform_switch
+            platform_layout.addWidget(platform_switch)
+            group_layout.addLayout(platform_layout)
         
         # 账号输入
         username_layout = QHBoxLayout()
@@ -566,8 +594,33 @@ class SettingsDialog(AdaptiveDialog):
 
         self.account_group_widgets[account_type] = group
         self.account_username_inputs[account_type] = username_input
+        self.account_password_inputs[account_type] = password_input
+        self.account_password_checks[account_type] = show_password_checkbox
+        self._update_account_placeholders(account_type)
 
         return group
+
+    def _store_account_draft(self, account_type):
+        env = self.account_environments[account_type]
+        self.account_profiles[account_type][env] = (
+            self.account_username_inputs[account_type].text().strip(),
+            self.account_password_inputs[account_type].text().strip(),
+        )
+
+    def _update_account_placeholders(self, account_type):
+        if account_type in self.account_environments:
+            platform = environment_label(self.account_environments[account_type])
+            self.account_username_inputs[account_type].setPlaceholderText(f'请输入{platform}账号...')
+            self.account_password_inputs[account_type].setPlaceholderText(f'请输入{platform}密码...')
+
+    def on_account_environment_changed(self, account_type, env):
+        self._store_account_draft(account_type)
+        self.account_environments[account_type] = env
+        username, password = self.account_profiles[account_type][env]
+        self.account_password_checks[account_type].setChecked(False)
+        self.account_username_inputs[account_type].setText(username)
+        self.account_password_inputs[account_type].setText(password)
+        self._update_account_placeholders(account_type)
     
     def create_about_tab(self):
         """创建关于/更新标签页"""
@@ -765,10 +818,12 @@ class SettingsDialog(AdaptiveDialog):
         
         username = username_input.text().strip()
         password = password_input.text().strip()
+        env = self.account_environments.get(account_type, self.env)
+        platform = environment_label(env)
         
         if not username or not password:
             if self.main_window and hasattr(self.main_window, 'show_warning'):
-                self.main_window.show_warning("请输入账号和密码")
+                self.main_window.show_warning(f"请输入{platform}账号和密码" if account_type != 'firmware' else '请输入固件账号和密码')
             return
         
         # 禁用按钮并更改状态
@@ -779,6 +834,8 @@ class SettingsDialog(AdaptiveDialog):
         # 同时禁用保存和取消按钮，防止测试过程中关闭对话框
         self.save_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
+        for platform_switch in self.account_switches.values():
+            platform_switch.setEnabled(False)
         
         # 强制刷新UI，确保按钮状态立即显示
         QApplication.processEvents()
@@ -787,16 +844,15 @@ class SettingsDialog(AdaptiveDialog):
             if account_type == "device":
                 # 测试运维账号
                 if self.main_window and hasattr(self.main_window, 'show_progress'):
-                    self.main_window.show_progress("正在测试运维账号连接...")
+                    self.main_window.show_progress(f"正在验证{platform}运维账号...")
                 
-                env = 'pro'  # 固定使用生产环境
                 query = DeviceQuery(env, username, password, use_cache=False)
                 if query.init_error:
                     if self.main_window and hasattr(self.main_window, 'show_error'):
-                        self.main_window.show_error(f"运维账号连接失败：{query.init_error}")
+                        self.main_window.show_error(f"{platform}运维账号连接失败：{query.init_error}")
                 elif query.token:
                     if self.main_window and hasattr(self.main_window, 'show_success'):
-                        self.main_window.show_success("运维账号验证成功！")
+                        self.main_window.show_success(f"{platform}运维账号验证成功！")
                 else:
                     if self.main_window and hasattr(self.main_window, 'show_error'):
                         self.main_window.show_error("无法获取访问令牌，请检查账号密码")
@@ -817,17 +873,17 @@ class SettingsDialog(AdaptiveDialog):
             else:
                 # 测试 Seetong 账号
                 if self.main_window and hasattr(self.main_window, 'show_progress'):
-                    self.main_window.show_progress("正在测试 Seetong 账号连接...")
+                    self.main_window.show_progress(f"正在验证{platform}Seetong账号...")
 
                 from query_tool.utils.siot_debug import validate_seetong_login
-                success, message = validate_seetong_login(username, password)
+                success, message = validate_seetong_login(username, password, env=env)
 
                 if success:
                     if self.main_window and hasattr(self.main_window, 'show_success'):
-                        self.main_window.show_success("Seetong 账号验证成功！")
+                        self.main_window.show_success(f"{platform}Seetong账号验证成功！")
                 else:
                     if self.main_window and hasattr(self.main_window, 'show_error'):
-                        self.main_window.show_error(f"Seetong 账号连接失败：{message}")
+                        self.main_window.show_error(f"{platform}Seetong账号连接失败：{message}")
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'show_error'):
                 self.main_window.show_error(f"测试失败：{str(e)}")
@@ -837,78 +893,43 @@ class SettingsDialog(AdaptiveDialog):
             test_btn.setText(original_text)
             self.save_btn.setEnabled(True)
             self.cancel_btn.setEnabled(True)
+            for platform_switch in self.account_switches.values():
+                platform_switch.setEnabled(True)
     
     def on_save(self):
         """保存配置"""
-        # 获取运维账号
-        device_username = self.device_username_input.text().strip()
-        device_password = self.device_password_input.text().strip()
-        
-        # 获取固件账号
+        for account_type in self.account_profiles:
+            self._store_account_draft(account_type)
         firmware_username = self.firmware_username_input.text().strip()
         firmware_password = self.firmware_password_input.text().strip()
-
-        # 获取 Seetong 账号
-        seetong_username = self.seetong_username_input.text().strip()
-        seetong_password = self.seetong_password_input.text().strip()
-        account_credentials_changed = self._have_account_credentials_changed(
-            device_username,
-            device_password,
-            firmware_username,
-            firmware_password,
-            seetong_username,
-            seetong_password,
-        )
-        
-        # 检查运维账号是否部分填写（只填了账号或只填了密码）
-        if (device_username and not device_password) or (not device_username and device_password):
-            if self.main_window and hasattr(self.main_window, 'show_warning'):
-                self.main_window.show_warning("运维账号和密码必须同时填写或同时为空")
-            return
-        
-        # 检查固件账号是否部分填写（只填了账号或只填了密码）
-        if (firmware_username and not firmware_password) or (not firmware_username and firmware_password):
-            if self.main_window and hasattr(self.main_window, 'show_warning'):
-                self.main_window.show_warning("固件账号和密码必须同时填写或同时为空")
-            return
-
-        # 检查 Seetong 账号是否部分填写（只填了账号或只填了密码）
-        if (seetong_username and not seetong_password) or (not seetong_username and seetong_password):
-            if self.main_window and hasattr(self.main_window, 'show_warning'):
-                self.main_window.show_warning("Seetong 账号和密码必须同时填写或同时为空")
-            return
-        
-        # 保存运维账号到注册表（允许为空）
-        env = 'pro'  # 固定使用生产环境
-        device_saved = save_account_config(env, device_username, device_password)
-        
-        # 保存固件账号到注册表（允许为空）
-        firmware_saved = save_firmware_account_config(firmware_username, firmware_password)
-
-        # 保存 Seetong 账号到注册表（允许为空）
-        seetong_saved = save_seetong_account_config(seetong_username, seetong_password)
-        
-        if device_saved and firmware_saved and seetong_saved:
-            self.device_username = device_username
-            self.device_password = device_password
-            self.firmware_username = firmware_username
-            self.firmware_password = firmware_password
-            self.seetong_username = seetong_username
-            self.seetong_password = seetong_password
-            if self.main_window and hasattr(self.main_window, 'show_success'):
-                self.main_window.show_success("配置已保存！")
-            if account_credentials_changed:
-                from query_tool.utils.data_sync import sync_user_version
-                sync_user_version(force=True)
-            self.accept()
-        else:
+        entries = [('固件账号', firmware_username, firmware_password)]
+        for account_type, profiles in self.account_profiles.items():
+            name = '运维账号' if account_type == 'device' else 'Seetong账号'
+            entries.extend((f'{environment_label(env)}{name}', username, password) for env, (username, password) in profiles.items())
+        for label, username, password in entries:
+            if bool(username) != bool(password):
+                if self.main_window and hasattr(self.main_window, 'show_warning'):
+                    self.main_window.show_warning(f'{label}和密码必须同时填写或同时为空')
+                return
+        changed = self.account_profiles != self.initial_account_profiles or (firmware_username, firmware_password) != (self.firmware_username, self.firmware_password)
+        failures = []
+        for env in ENVIRONMENTS:
+            username, password = self.account_profiles['device'][env]
+            if not save_account_config(env, username, password):
+                failures.append(f'{environment_label(env)}运维账号')
+            username, password = self.account_profiles['seetong'][env]
+            if not save_seetong_account_config(username, password, env=env):
+                failures.append(f'{environment_label(env)}Seetong账号')
+        if not save_firmware_account_config(firmware_username, firmware_password):
+            failures.append('固件账号')
+        if failures:
             if self.main_window and hasattr(self.main_window, 'show_error'):
-                error_msg = "保存失败："
-                if not device_saved:
-                    error_msg += "运维账号 "
-                if not firmware_saved:
-                    error_msg += "固件账号 "
-                if not seetong_saved:
-                    error_msg += "Seetong账号 "
-                self.main_window.show_error(error_msg)
+                self.main_window.show_error('保存失败：' + '、'.join(failures))
+            return
+        if self.main_window and hasattr(self.main_window, 'show_success'):
+            self.main_window.show_success('正式和测试平台账号已分别保存')
+        if changed:
+            from query_tool.utils.data_sync import sync_user_version
+            sync_user_version(force=True)
+        self.accept()
 

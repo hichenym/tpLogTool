@@ -1587,6 +1587,11 @@ class DebugPage(BasePage):
             return
         QTimer.singleShot(self.PENDING_RECONNECT_DELAY_MS, self._start_pending_connect)
 
+    def on_environment_changed(self, env):
+        self.current_context = {}
+        self.pending_target_sn = ''
+        self.on_console_clear_requested()
+
     def on_connect_button_clicked(self):
         if self.connecting and not self.connected:
             self.on_cancel_connect_clicked()

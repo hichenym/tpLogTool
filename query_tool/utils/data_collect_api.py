@@ -158,6 +158,8 @@ class DataCollectThread(QThread):
         self.end_time = end_time
         self.token = token
         self.host = host
+        from .config import get_account_config
+        self._account_context = get_account_config('test' if host == 'console-test.seetong.com' else 'pro')
 
     def run(self):
         try:
@@ -198,7 +200,7 @@ class DataCollectThread(QThread):
         try:
             from query_tool.utils.config import get_account_config
             from query_tool.utils.device_query import DeviceQuery
-            env, username, password = get_account_config()
+            env, username, password = self._account_context
             if not username or not password:
                 return None
             dq = DeviceQuery(env, username, password, use_cache=False)
@@ -223,6 +225,8 @@ class BatchDataCollectWorker:
         self.end_time = end_time
         self.token = token
         self.host = host
+        from .config import get_account_config
+        self._account_context = get_account_config('test' if host == 'console-test.seetong.com' else 'pro')
         self.max_workers = max_workers
         self.stopped = False
         self.progress_callback = None
@@ -237,7 +241,7 @@ class BatchDataCollectWorker:
         try:
             from query_tool.utils.config import get_account_config
             from query_tool.utils.device_query import DeviceQuery
-            env, username, password = get_account_config()
+            env, username, password = self._account_context
             if not username or not password:
                 return None
             dq = DeviceQuery(env, username, password, use_cache=False)
