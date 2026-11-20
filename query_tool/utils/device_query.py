@@ -11,6 +11,7 @@ from .config import config_manager
 from .session_manager import session_manager
 from .logger import logger
 from threading import Lock
+from .environment import console_host, normalize_environment
 
 
 class DeviceQuery:
@@ -18,7 +19,8 @@ class DeviceQuery:
     def __init__(self, env, username, password, use_cache=True):
         self.username = username
         self.password = password
-        self.host = 'console.seetong.com' if env == 'pro' else 'console-test.seetong.com'
+        env = normalize_environment(env)
+        self.host = console_host(env)
         self.env = env
         self.token = None
         self.refresh_token = None

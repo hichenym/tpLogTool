@@ -16,10 +16,33 @@ from query_tool.utils.config import (
     get_account_config, save_account_config,
     get_firmware_account_config, save_firmware_account_config,
     get_seetong_account_config, save_seetong_account_config,
+    get_active_environment,
 )
+from query_tool.utils.environment import ENVIRONMENTS, environment_label
 from query_tool.utils.device_query import DeviceQuery
 from query_tool.utils.style_manager import StyleManager
 from query_tool.utils.theme_manager import t
+
+
+ACCOUNT_TYPE_DEVICE = "device"
+ACCOUNT_TYPE_SEETONG = "seetong"
+ACCOUNT_TYPE_FIRMWARE = "firmware"
+ACCOUNT_CONFIG_TAB_INDEX = 0
+
+ACCOUNT_PROMPT_COPY = {
+    ACCOUNT_TYPE_DEVICE: {
+        "title": "需要配置运维账号",
+        "text": "检测到运维账号未配置，是否现在配置？",
+    },
+    ACCOUNT_TYPE_SEETONG: {
+        "title": "需要配置 Seetong 账号",
+        "text": "检测到 Seetong 账号未配置，是否现在配置？",
+    },
+    ACCOUNT_TYPE_FIRMWARE: {
+        "title": "需要配置固件账号",
+        "text": "检测到固件账号未配置，是否现在配置？",
+    },
+}
 
 
 def set_title_bar_theme(window, dark: bool = True):
@@ -92,7 +115,38 @@ def show_question_box(parent, title, text):
     return msg_box.exec_()
 
 
-def prompt_configure_account(parent, title, text, initial_tab=0):
+def _normalize_account_type(account_type):
+    normalized = str(account_type or "").strip().lower()
+    return normalized if normalized in ACCOUNT_PROMPT_COPY else None
+
+
+def _resolve_account_prompt_copy(account_type=None, title=None, text=None, env=None):
+    normalized_account_type = _normalize_account_type(account_type)
+    defaults = dict(ACCOUNT_PROMPT_COPY.get(normalized_account_type, {}))
+    if normalized_account_type in (ACCOUNT_TYPE_DEVICE, ACCOUNT_TYPE_SEETONG):
+        platform = environment_label(env or get_active_environment())
+        name = '运维账号' if normalized_account_type == ACCOUNT_TYPE_DEVICE else 'Seetong账号'
+        defaults['title'] = f'需要配置{platform}{name}'
+        defaults['text'] = f'检测到{platform}{name}未配置，是否现在配置？'
+    return {
+        "account_type": normalized_account_type,
+        "title": title or defaults.get("title") or "需要配置账号",
+        "text": text or defaults.get("text") or "检测到账号未配置，是否现在配置？",
+    }
+
+
+def open_settings_dialog(parent, initial_tab=0, target_account_type=None):
+    """打开设置对话框，并按账号类型定位到对应配置分组。"""
+    dialog = SettingsDialog(
+        parent,
+        initial_tab=initial_tab,
+        target_account_type=target_account_type,
+    )
+    dialog.exec_()
+    return dialog
+
+
+def prompt_configure_account(parent, title=None, text=None, initial_tab=0, account_type=None):
     """
     显示统一样式的账号配置提示框，并在确认后打开设置对话框。
 
@@ -101,13 +155,15 @@ def prompt_configure_account(parent, title, text, initial_tab=0):
         title: 弹窗标题
         text: 弹窗内容
         initial_tab: 设置对话框初始标签页
+        account_type: 账号类型，支持 device / seetong / firmware
 
     Returns:
         bool: 是否已打开设置对话框
     """
+    prompt_copy = _resolve_account_prompt_copy(account_type, title, text)
     msg_box = QMessageBox(parent)
-    msg_box.setWindowTitle(title)
-    msg_box.setText(text)
+    msg_box.setWindowTitle(prompt_copy["title"])
+    msg_box.setText(prompt_copy["text"])
     msg_box.setIcon(QMessageBox.Question)
     msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
     msg_box.setDefaultButton(QMessageBox.No)
@@ -132,8 +188,11 @@ def prompt_configure_account(parent, title, text, initial_tab=0):
     if msg_box.exec_() != QMessageBox.Yes:
         return False
 
-    dialog = SettingsDialog(parent, initial_tab=initial_tab)
-    dialog.exec_()
+    open_settings_dialog(
+        parent,
+        initial_tab=initial_tab,
+        target_account_type=prompt_copy["account_type"],
+    )
     return True
 
 
@@ -181,7 +240,7 @@ class ClickableLineEdit(QLineEdit):
 
 class SettingsDialog(AdaptiveDialog):
     """设置对话框"""
-    def __init__(self, parent=None, initial_tab=0):
+    def __init__(self, parent=None, initial_tab=0, target_account_type=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
@@ -191,10 +250,25 @@ class SettingsDialog(AdaptiveDialog):
         
         # 保存初始标签页索引
         self.initial_tab = initial_tab
+        self.target_account_type = _normalize_account_type(target_account_type)
+        self.account_scroll_area = None
+        self.account_scroll_content = None
+        self.account_group_widgets = {}
+        self.account_username_inputs = {}
+        self._target_account_scroll_scheduled = False
         
         # 加载设备账号配置
         self.env, self.device_username, self.device_password = get_account_config()
-        self.env = 'pro'  # 固定使用生产环境
+        self.env = get_active_environment()
+        self.account_profiles = {
+            ACCOUNT_TYPE_DEVICE: {env: get_account_config(env)[1:] for env in ENVIRONMENTS},
+            ACCOUNT_TYPE_SEETONG: {env: get_seetong_account_config(env) for env in ENVIRONMENTS},
+        }
+        self.initial_account_profiles = {name: profiles.copy() for name, profiles in self.account_profiles.items()}
+        self.account_environments = {name: self.env for name in self.account_profiles}
+        self.account_switches = {}
+        self.account_password_inputs = {}
+        self.account_password_checks = {}
         
         # 加载固件账号配置
         self.firmware_username, self.firmware_password = get_firmware_account_config()
@@ -202,20 +276,45 @@ class SettingsDialog(AdaptiveDialog):
         # 加载 Seetong 账号配置
         self.seetong_username, self.seetong_password = get_seetong_account_config()
         
-        # 加载日志配置
-        from query_tool.utils.config import get_log_config
-        self.enable_file_log = get_log_config()
-        
         self.init_ui()
     
     def showEvent(self, event):
         """对话框显示时设置深色标题栏"""
         super().showEvent(event)
         set_dark_title_bar(self)
-        
+
         # 设置初始标签页
         if hasattr(self, 'tab_widget') and hasattr(self, 'initial_tab'):
             self.tab_widget.setCurrentIndex(self.initial_tab)
+        self._schedule_target_account_focus()
+
+    def _schedule_target_account_focus(self):
+        if not self.target_account_type or self._target_account_scroll_scheduled:
+            return
+        self._target_account_scroll_scheduled = True
+        QTimer.singleShot(0, self.focus_target_account_group)
+
+    def focus_target_account_group(self):
+        """切换到账号配置页，并滚动定位到目标账号分组。"""
+        self._target_account_scroll_scheduled = False
+        if not self.target_account_type:
+            return
+
+        if hasattr(self, 'tab_widget'):
+            self.tab_widget.setCurrentIndex(ACCOUNT_CONFIG_TAB_INDEX)
+
+        group = self.account_group_widgets.get(self.target_account_type)
+        username_input = self.account_username_inputs.get(self.target_account_type)
+
+        if self.account_scroll_area is not None and group is not None:
+            scroll_bar = self.account_scroll_area.verticalScrollBar()
+            target_value = max(0, group.y() - 12)
+            scroll_bar.setValue(target_value)
+
+        if username_input is not None:
+            username_input.setFocus(Qt.OtherFocusReason)
+            if hasattr(username_input, "selectAll"):
+                username_input.selectAll()
         
     def init_ui(self):
         layout = self.init_dialog_layout(
@@ -232,10 +331,6 @@ class SettingsDialog(AdaptiveDialog):
         # 账号配置标签页
         account_tab = self.create_account_tab()
         self.tab_widget.addTab(account_tab, "账号配置")
-        
-        # 日志配置标签页
-        log_tab = self.create_log_tab()
-        self.tab_widget.addTab(log_tab, "日志配置")
         
         # 关于/更新标签页
         about_tab = self.create_about_tab()
@@ -279,40 +374,44 @@ class SettingsDialog(AdaptiveDialog):
         # 创建滚动区域
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_area.setFrameShape(QFrame.NoFrame)
         scroll_area.setStyleSheet(StyleManager.get_SCROLL_AREA())
-        
+        self.account_scroll_area = scroll_area
+
         # 滚动内容容器
         scroll_content = QWidget()
+        from PyQt5.QtWidgets import QSizePolicy
+        scroll_content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setSpacing(0)
         scroll_layout.setContentsMargins(15, 15, 15, 15)
-        
+        self.account_scroll_content = scroll_content
         # 运维账号组
-        device_group = self.create_account_group(
+        self.create_account_group(
             "运维账号",
             self.device_username,
             self.device_password,
             account_type="device"
         )
-        scroll_layout.addWidget(device_group)
-        
-        # 固件账号组
-        seetong_group = self.create_account_group(
+        scroll_layout.addWidget(self.account_group_widgets[ACCOUNT_TYPE_DEVICE])
+
+        # Seetong 账号组
+        self.create_account_group(
             "Seetong账号",
             self.seetong_username,
             self.seetong_password,
             account_type="seetong"
         )
-        scroll_layout.addWidget(seetong_group)
+        scroll_layout.addWidget(self.account_group_widgets[ACCOUNT_TYPE_SEETONG])
 
-        firmware_group = self.create_account_group(
+        self.create_account_group(
             "固件账号",
             self.firmware_username,
             self.firmware_password,
             account_type="firmware"
         )
-        scroll_layout.addWidget(firmware_group)
+        scroll_layout.addWidget(self.account_group_widgets[ACCOUNT_TYPE_FIRMWARE])
         
         scroll_layout.addStretch()
         
@@ -323,12 +422,23 @@ class SettingsDialog(AdaptiveDialog):
     
     def create_account_group(self, title, username, password, account_type="device"):
         """创建账号配置组"""
+        account_type = _normalize_account_type(account_type) or ACCOUNT_TYPE_DEVICE
         group = QGroupBox(title)
         group.setStyleSheet(StyleManager.get_GROUP_BOX())
         
         group_layout = QVBoxLayout(group)
-        group_layout.setSpacing(12)
+        group_layout.setSpacing(8)
         group_layout.setContentsMargins(15, 15, 15, 15)
+        if account_type in self.account_profiles:
+            from query_tool.widgets.environment_switch import EnvironmentSwitch
+            platform_layout = QHBoxLayout()
+            platform_layout.addStretch()
+            platform_switch = EnvironmentSwitch(env=self.account_environments[account_type])
+            platform_switch.setFixedSize(52, 28)
+            platform_switch.environment_changed.connect(lambda env: self.on_account_environment_changed(account_type, env))
+            self.account_switches[account_type] = platform_switch
+            platform_layout.addWidget(platform_switch)
+            group_layout.addLayout(platform_layout)
         
         # 账号输入
         username_layout = QHBoxLayout()
@@ -385,25 +495,36 @@ class SettingsDialog(AdaptiveDialog):
         else:
             self.seetong_username_input = username_input
             self.seetong_password_input = password_input
-        
+
+        self.account_group_widgets[account_type] = group
+        self.account_username_inputs[account_type] = username_input
+        self.account_password_inputs[account_type] = password_input
+        self.account_password_checks[account_type] = show_password_checkbox
+        self._update_account_placeholders(account_type)
+
         return group
-    
-    def create_log_tab(self):
-        """创建日志配置标签页"""
-        tab = QWidget()
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setSpacing(12)
-        tab_layout.setContentsMargins(15, 15, 15, 10)
-        
-        # 文件日志复选框
-        self.file_log_checkbox = QCheckBox("记录调试信息")
-        self.file_log_checkbox.setChecked(self.enable_file_log)
-        self.file_log_checkbox.stateChanged.connect(self.on_file_log_changed)
-        tab_layout.addWidget(self.file_log_checkbox)
-        
-        tab_layout.addStretch()
-        
-        return tab
+
+    def _store_account_draft(self, account_type):
+        env = self.account_environments[account_type]
+        self.account_profiles[account_type][env] = (
+            self.account_username_inputs[account_type].text().strip(),
+            self.account_password_inputs[account_type].text().strip(),
+        )
+
+    def _update_account_placeholders(self, account_type):
+        if account_type in self.account_environments:
+            platform = environment_label(self.account_environments[account_type])
+            self.account_username_inputs[account_type].setPlaceholderText(f'请输入{platform}账号...')
+            self.account_password_inputs[account_type].setPlaceholderText(f'请输入{platform}密码...')
+
+    def on_account_environment_changed(self, account_type, env):
+        self._store_account_draft(account_type)
+        self.account_environments[account_type] = env
+        username, password = self.account_profiles[account_type][env]
+        self.account_password_checks[account_type].setChecked(False)
+        self.account_username_inputs[account_type].setText(username)
+        self.account_password_inputs[account_type].setText(password)
+        self._update_account_placeholders(account_type)
 
     def create_about_tab(self):
         """创建关于标签页。"""
@@ -487,10 +608,12 @@ class SettingsDialog(AdaptiveDialog):
         
         username = username_input.text().strip()
         password = password_input.text().strip()
+        env = self.account_environments.get(account_type, self.env)
+        platform = environment_label(env)
         
         if not username or not password:
             if self.main_window and hasattr(self.main_window, 'show_warning'):
-                self.main_window.show_warning("请输入账号和密码")
+                self.main_window.show_warning(f"请输入{platform}账号和密码" if account_type != 'firmware' else '请输入固件账号和密码')
             return
         
         # 禁用按钮并更改状态
@@ -501,6 +624,8 @@ class SettingsDialog(AdaptiveDialog):
         # 同时禁用保存和取消按钮，防止测试过程中关闭对话框
         self.save_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
+        for platform_switch in self.account_switches.values():
+            platform_switch.setEnabled(False)
         
         # 强制刷新UI，确保按钮状态立即显示
         QApplication.processEvents()
@@ -509,16 +634,15 @@ class SettingsDialog(AdaptiveDialog):
             if account_type == "device":
                 # 测试运维账号
                 if self.main_window and hasattr(self.main_window, 'show_progress'):
-                    self.main_window.show_progress("正在测试运维账号连接...")
+                    self.main_window.show_progress(f"正在验证{platform}运维账号...")
                 
-                env = 'pro'  # 固定使用生产环境
                 query = DeviceQuery(env, username, password, use_cache=False)
                 if query.init_error:
                     if self.main_window and hasattr(self.main_window, 'show_error'):
-                        self.main_window.show_error(f"运维账号连接失败：{query.init_error}")
+                        self.main_window.show_error(f"{platform}运维账号连接失败：{query.init_error}")
                 elif query.token:
                     if self.main_window and hasattr(self.main_window, 'show_success'):
-                        self.main_window.show_success("运维账号验证成功！")
+                        self.main_window.show_success(f"{platform}运维账号验证成功！")
                 else:
                     if self.main_window and hasattr(self.main_window, 'show_error'):
                         self.main_window.show_error("无法获取访问令牌，请检查账号密码")
@@ -539,17 +663,17 @@ class SettingsDialog(AdaptiveDialog):
             else:
                 # 测试 Seetong 账号
                 if self.main_window and hasattr(self.main_window, 'show_progress'):
-                    self.main_window.show_progress("正在测试 Seetong 账号连接...")
+                    self.main_window.show_progress(f"正在验证{platform}Seetong账号...")
 
                 from query_tool.utils.siot_debug import validate_seetong_login
-                success, message = validate_seetong_login(username, password)
+                success, message = validate_seetong_login(username, password, env=env)
 
                 if success:
                     if self.main_window and hasattr(self.main_window, 'show_success'):
-                        self.main_window.show_success("Seetong 账号验证成功！")
+                        self.main_window.show_success(f"{platform}Seetong账号验证成功！")
                 else:
                     if self.main_window and hasattr(self.main_window, 'show_error'):
-                        self.main_window.show_error(f"Seetong 账号连接失败：{message}")
+                        self.main_window.show_error(f"{platform}Seetong账号连接失败：{message}")
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'show_error'):
                 self.main_window.show_error(f"测试失败：{str(e)}")
@@ -559,16 +683,31 @@ class SettingsDialog(AdaptiveDialog):
             test_btn.setText(original_text)
             self.save_btn.setEnabled(True)
             self.cancel_btn.setEnabled(True)
+            for platform_switch in self.account_switches.values():
+                platform_switch.setEnabled(True)
     
     def on_save(self):
         """保存配置"""
-        # 获取运维账号
-        device_username = self.device_username_input.text().strip()
-        device_password = self.device_password_input.text().strip()
-        
-        # 获取固件账号
+        for account_type in self.account_profiles:
+            self._store_account_draft(account_type)
         firmware_username = self.firmware_username_input.text().strip()
         firmware_password = self.firmware_password_input.text().strip()
+        device_env = self.account_environments[ACCOUNT_TYPE_DEVICE]
+        device_username, device_password = self.account_profiles[ACCOUNT_TYPE_DEVICE][device_env]
+        seetong_env = self.account_environments[ACCOUNT_TYPE_SEETONG]
+        seetong_username, seetong_password = self.account_profiles[ACCOUNT_TYPE_SEETONG][seetong_env]
+        entries = [('固件账号', firmware_username, firmware_password)]
+        for account_type, profiles in self.account_profiles.items():
+            name = '运维账号' if account_type == ACCOUNT_TYPE_DEVICE else 'Seetong账号'
+            entries.extend(
+                (f'{environment_label(env)}{name}', username, password)
+                for env, (username, password) in profiles.items()
+            )
+        for label, username, password in entries:
+            if bool(username) != bool(password):
+                if self.main_window and hasattr(self.main_window, 'show_warning'):
+                    self.main_window.show_warning(f'{label}和密码必须同时填写或同时为空')
+                return
 
         # 获取 Seetong 账号
         seetong_username = self.seetong_username_input.text().strip()
@@ -593,14 +732,23 @@ class SettingsDialog(AdaptiveDialog):
             return
         
         # 保存运维账号到注册表（允许为空）
-        env = 'pro'  # 固定使用生产环境
-        device_saved = save_account_config(env, device_username, device_password)
+        device_saved = True
+        for profile_env in ENVIRONMENTS:
+            profile_username, profile_password = self.account_profiles[ACCOUNT_TYPE_DEVICE][profile_env]
+            device_saved = save_account_config(profile_env, profile_username, profile_password) and device_saved
         
         # 保存固件账号到注册表（允许为空）
         firmware_saved = save_firmware_account_config(firmware_username, firmware_password)
 
         # 保存 Seetong 账号到注册表（允许为空）
-        seetong_saved = save_seetong_account_config(seetong_username, seetong_password)
+        seetong_saved = True
+        for profile_env in ENVIRONMENTS:
+            profile_username, profile_password = self.account_profiles[ACCOUNT_TYPE_SEETONG][profile_env]
+            seetong_saved = save_seetong_account_config(
+                profile_username,
+                profile_password,
+                env=profile_env,
+            ) and seetong_saved
         
         if device_saved and firmware_saved and seetong_saved:
             if self.main_window and hasattr(self.main_window, 'show_success'):

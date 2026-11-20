@@ -26,6 +26,25 @@ class BasePage(QWidget):
     def on_page_hide(self):
         """页面隐藏时调用（可选重写）"""
         pass
+
+    def is_environment_busy(self):
+        if any(getattr(self, name, False) for name in ('connected', 'connecting', 'canceling_connect', 'fetch_running', '_meta_loading')):
+            return True
+        manager = getattr(self, 'thread_mgr', None)
+        if manager and any(manager.is_running(name) for name in list(manager.threads)):
+            return True
+        for name in ('_query_thread', '_export_thread'):
+            thread = getattr(self, name, None)
+            if thread:
+                try:
+                    if thread.isRunning():
+                        return True
+                except RuntimeError:
+                    pass
+        return False
+
+    def on_environment_changed(self, env):
+        pass
     
     def load_config(self):
         """加载配置（子类可选实现）"""

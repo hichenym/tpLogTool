@@ -4,36 +4,8 @@
 """
 import logging
 import sys
-import os
-from logging.handlers import RotatingFileHandler
-from datetime import datetime
-import threading
-
-
-class _SafeRotatingFileHandler(RotatingFileHandler):
-    """线程安全的 RotatingFileHandler，Windows 下 rotate 时加锁并忽略文件占用错误"""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._rotate_lock = threading.Lock()
-
-    def doRollover(self):
-        if not self._rotate_lock.acquire(blocking=False):
-            # 另一个线程正在 rotate，跳过
-            return
-        try:
-            super().doRollover()
-        except (PermissionError, OSError):
-            # Windows 下文件被其他线程占用时忽略，下次再 rotate
-            pass
-        finally:
-            self._rotate_lock.release()
-
-    def emit(self, record):
-        try:
-            super().emit(record)
-        except (PermissionError, OSError):
-            pass
+import shutil
+from pathlib import Path
 
 
 class Logger:
@@ -69,73 +41,31 @@ class Logger:
         console_handler.setFormatter(console_formatter)
         self.logger.addHandler(console_handler)
         
-        # 从配置加载文件日志设置
-        self._load_file_log_config()
-    
-    def _load_file_log_config(self):
-        """从配置加载文件日志设置"""
+        # 文件日志已永久关闭，同时清理旧版本遗留的操作日志。
+        self._clear_log_directory()
+
+    @staticmethod
+    def _clear_log_directory():
+        """删除用户目录中由应用生成的历史日志。"""
         try:
-            from query_tool.utils.config import get_log_config
-            enable_file_log = get_log_config()
-            if enable_file_log:
-                self.enable_file_log()
-        except Exception as e:
-            # 配置加载失败，忽略
+            shutil.rmtree(Path.home() / '.TPQueryTool' / 'logs', ignore_errors=True)
+        except Exception:
             pass
     
     def enable_file_log(self):
-        """启用文件日志"""
-        if self._file_handler:
-            # 已经启用，不重复添加
-            return
-        
-        try:
-            # 创建用户目录下的logs目录
-            import os
-            from pathlib import Path
-            
-            # 获取用户主目录
-            user_home = Path.home()
-            log_dir = user_home / '.TPQueryTool' / 'logs'
-            
-            # 创建目录（如果不存在）
-            log_dir.mkdir(parents=True, exist_ok=True)
-            
-            # 生成日志文件名（按日期）
-            log_file = log_dir / f'app_{datetime.now().strftime("%Y%m%d")}.log'
-            
-            # 创建文件处理器（滚动日志，最大10MB，保留3个备份）
-            self._file_handler = _SafeRotatingFileHandler(
-                str(log_file),
-                maxBytes=10*1024*1024,  # 10MB
-                backupCount=3,
-                encoding='utf-8'
-            )
-            self._file_handler.setLevel(logging.DEBUG)  # 文件记录所有级别
-            
-            # 文件日志格式更详细
-            file_formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-            self._file_handler.setFormatter(file_formatter)
-            
-            self.logger.addHandler(self._file_handler)
-            self.info(f"文件日志已启用: {log_file}")
-            
-        except Exception as e:
-            print(f"启用文件日志失败: {e}")
+        """兼容旧调用：文件日志已永久关闭。"""
+        self.disable_file_log()
     
     def disable_file_log(self):
-        """禁用文件日志"""
+        """禁用文件日志并清理已有日志。"""
         if self._file_handler:
             try:
-                self.info("文件日志已禁用")
                 self.logger.removeHandler(self._file_handler)
                 self._file_handler.close()
                 self._file_handler = None
-            except Exception as e:
-                print(f"禁用文件日志失败: {e}")
+            except Exception:
+                pass
+        self._clear_log_directory()
     
     def is_file_log_enabled(self):
         """检查文件日志是否启用"""

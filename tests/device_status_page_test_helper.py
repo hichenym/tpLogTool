@@ -137,6 +137,7 @@ def _install_query_tool_stubs(originals):
     utils_stub.StyleManager = _StyleManager
     utils_stub.TableHelper = _Dummy
     utils_stub.get_account_config = lambda: ("", "", "")
+    utils_stub.config_manager = types.SimpleNamespace(get_active_environment=lambda: 'pro')
     utils_stub.DeviceQuery = _Dummy
     utils_stub.check_device_online = lambda *args, **kwargs: False
     _swap_module("query_tool.utils", utils_stub, originals)

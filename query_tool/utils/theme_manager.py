@@ -29,6 +29,7 @@ DARK_THEME = {
     # 强调色
     "accent":         "#0d7377",
     "accent_dim":     "#0a5a5d",
+    "platform_test_bg": "#70474b",
     "accent_select":  "rgba(13, 115, 119, 0.3)",
     # 状态色
     "status_online":  "#00FF00",
@@ -60,6 +61,7 @@ LIGHT_THEME = {
     # 强调色
     "accent":         "#0d7377",
     "accent_dim":     "#0a5a5d",
+    "platform_test_bg": "#97565b",
     "accent_select":  "rgba(13, 115, 119, 0.2)",
     # 状态色
     "status_online":  "#00aa00",

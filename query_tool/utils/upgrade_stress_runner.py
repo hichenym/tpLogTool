@@ -205,7 +205,8 @@ def run_task(task_id: str) -> int:
     username = task_config.get("username", "")
     password = task_config.get("password", "")
     if not username or not password:
-        mark_task_failed(task_id, "运维账号未配置完整")
+        from query_tool.utils.environment import environment_label
+        mark_task_failed(task_id, f"{environment_label(env)}运维账号未配置完整")
         return 3
 
     device_query = DeviceQuery(env, username, password)

@@ -9,6 +9,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from typing import List
+from .environment import normalize_environment
 
 # 注册表路径
 REGISTRY_PATH = r"Software\TPQueryTool"
@@ -34,6 +35,7 @@ class SeetongAccountConfig:
     """Seetong 账号配置"""
     username: str = ''
     password: str = ''
+    env: str = 'pro'
 
 
 @dataclass
@@ -43,6 +45,7 @@ class AppConfig:
     phone_history: List[str] = field(default_factory=list)
     debug_shortcuts: List[str] = field(default_factory=list)
     debug_shortcuts_initialized: bool = False
+    debug_command_history: List[str] = field(default_factory=list)
     last_debug_sn: str = ''
     debug_download_path: str = ''
     last_log_sn: str = ''
@@ -59,6 +62,55 @@ class ConfigManager:
     
     def __init__(self, registry_path=REGISTRY_PATH):
         self.registry_path = registry_path
+        self._active_environment = None
+
+    def get_active_environment(self):
+        if getattr(self, '_active_environment', None) is None:
+            try:
+                self._active_environment = normalize_environment(self._get_value('active_environment', 'pro'))
+            except ValueError:
+                self._active_environment = 'pro'
+        return self._active_environment
+
+    def set_active_environment(self, env):
+        selected = normalize_environment(env)
+        if not self._set_value('active_environment', selected):
+            return False
+        self._active_environment = selected
+        return True
+
+    def _load_platform_credentials(self, account_type, env):
+        username = self._get_value(f'{account_type}_{env}_username')
+        encoded = self._get_value(f'{account_type}_{env}_password', '')
+        if username is None:
+            legacy_env = self._get_value('account_env', 'pro') if account_type == 'account' else 'pro'
+            if legacy_env == env:
+                username = self._get_value(f'{account_type}_username', '')
+                encoded = self._get_value(f'{account_type}_password', '')
+        password = ''
+        if encoded:
+            try:
+                password = base64.b64decode(encoded.encode()).decode()
+            except (ValueError, UnicodeDecodeError):
+                from .logger import logger
+                logger.warning(f'{env} 平台账号密码解码失败')
+        return username or '', password
+
+    def _save_platform_credentials(self, account_type, env, username, password):
+        if account_type == 'account' and env == 'pro' and self._get_value('account_env', 'pro') == 'test' and self._get_value('account_test_username') is None:
+            migrated = [
+                self._set_value('account_test_username', self._get_value('account_username', '')),
+                self._set_value('account_test_password', self._get_value('account_password', '')),
+            ]
+            if not all(migrated):
+                return False
+        encoded = base64.b64encode(password.encode()).decode()
+        results = [self._set_value(f'{account_type}_{env}_username', username), self._set_value(f'{account_type}_{env}_password', encoded)]
+        if env == 'pro':
+            results.extend([self._set_value(f'{account_type}_username', username), self._set_value(f'{account_type}_password', encoded)])
+            if account_type == 'account':
+                results.append(self._set_value('account_env', 'pro'))
+        return all(results)
 
     @staticmethod
     def _build_scoped_key(prefix, *parts):
@@ -102,22 +154,13 @@ class ConfigManager:
                     from query_tool.utils.logger import logger
                     logger.debug(f"关闭注册表键失败: {e}")
     
-    def load_account_config(self) -> AccountConfig:
+    def load_account_config(self, env=None) -> AccountConfig:
         """加载账号配置"""
         from query_tool.utils.logger import logger
         
         logger.debug("加载运维账号配置")
-        env = self._get_value('account_env', 'pro')
-        username = self._get_value('account_username', '')
-        password_encoded = self._get_value('account_password', '')
-        
-        password = ''
-        if password_encoded:
-            try:
-                password = base64.b64decode(password_encoded.encode()).decode()
-            except (ValueError, UnicodeDecodeError) as e:
-                logger.error(f"密码解码失败: {e}")
-                print(f"密码解码失败: {e}")
+        env = normalize_environment(env or self.get_active_environment())
+        username, password = self._load_platform_credentials('account', env)
         
         if username:
             logger.info(f"运维账号配置已加载: {username}@{env}")
@@ -132,10 +175,9 @@ class ConfigManager:
         
         logger.debug(f"保存运维账号配置: {config.username}@{config.env}")
         try:
-            self._set_value('account_env', config.env)
-            self._set_value('account_username', config.username)
-            password_encoded = base64.b64encode(config.password.encode()).decode()
-            self._set_value('account_password', password_encoded)
+            env = normalize_environment(config.env)
+            if not self._save_platform_credentials('account', env, config.username, config.password):
+                return False
             logger.info(f"运维账号配置已保存: {config.username}@{config.env}")
             return True
         except Exception as e:
@@ -196,28 +238,20 @@ class ConfigManager:
             return False
         return self._set_value('firmware_file_dialog_dir', normalized_dir)
 
-    def load_seetong_account_config(self) -> SeetongAccountConfig:
+    def load_seetong_account_config(self, env=None) -> SeetongAccountConfig:
         """加载 Seetong 账号配置"""
         from query_tool.utils.logger import logger
 
         logger.debug("加载 Seetong 账号配置")
-        username = self._get_value('seetong_username', '')
-        password_encoded = self._get_value('seetong_password', '')
-
-        password = ''
-        if password_encoded:
-            try:
-                password = base64.b64decode(password_encoded.encode()).decode()
-            except (ValueError, UnicodeDecodeError) as e:
-                logger.error(f"Seetong 密码解码失败: {e}")
-                print(f"密码解码失败: {e}")
+        env = normalize_environment(env or self.get_active_environment())
+        username, password = self._load_platform_credentials('seetong', env)
 
         if username:
             logger.info(f"Seetong 账号配置已加载: {username}")
         else:
             logger.debug("Seetong 账号未配置")
 
-        return SeetongAccountConfig(username=username, password=password)
+        return SeetongAccountConfig(username=username, password=password, env=env)
 
     def save_seetong_account_config(self, config: SeetongAccountConfig) -> bool:
         """保存 Seetong 账号配置"""
@@ -225,9 +259,9 @@ class ConfigManager:
 
         logger.debug(f"保存 Seetong 账号配置: {config.username}")
         try:
-            self._set_value('seetong_username', config.username)
-            password_encoded = base64.b64encode(config.password.encode()).decode()
-            self._set_value('seetong_password', password_encoded)
+            env = normalize_environment(config.env)
+            if not self._save_platform_credentials('seetong', env, config.username, config.password):
+                return False
             logger.info(f"Seetong 账号配置已保存: {config.username}")
             return True
         except Exception as e:
@@ -243,6 +277,8 @@ class ConfigManager:
         debug_shortcuts_str = self._get_value('debug_shortcuts', '')
         debug_shortcuts = self._decode_string_list(debug_shortcuts_str)
         debug_shortcuts_initialized = self._get_value('debug_shortcuts_initialized', '0') == '1'
+        debug_command_history_str = self._get_value('debug_command_history', '')
+        debug_command_history = self._decode_string_list(debug_command_history_str)
         last_debug_sn = self._get_value('last_debug_sn', '')
         debug_download_path = self._get_value('debug_download_path', '')
         last_log_sn = self._get_value('last_log_sn', '')
@@ -259,6 +295,7 @@ class ConfigManager:
             phone_history=phone_history,
             debug_shortcuts=debug_shortcuts,
             debug_shortcuts_initialized=debug_shortcuts_initialized,
+            debug_command_history=debug_command_history,
             last_debug_sn=last_debug_sn,
             debug_download_path=debug_download_path,
             last_log_sn=last_log_sn,
@@ -279,6 +316,8 @@ class ConfigManager:
             debug_shortcuts_str = json.dumps(config.debug_shortcuts[:50], ensure_ascii=False)
             self._set_value('debug_shortcuts', debug_shortcuts_str)
             self._set_value('debug_shortcuts_initialized', '1' if config.debug_shortcuts_initialized else '0')
+            debug_command_history_str = json.dumps(config.debug_command_history[:100], ensure_ascii=False)
+            self._set_value('debug_command_history', debug_command_history_str)
             self._set_value('last_debug_sn', config.last_debug_sn)
             self._set_value('debug_download_path', config.debug_download_path)
             self._set_value('last_log_sn', config.last_log_sn)
@@ -372,12 +411,13 @@ class ConfigManager:
             return [str(item) for item in payload if str(item).strip()]
         return [item for item in text.split('|') if item]
 
-    def save_seetong_cloud_cache(self, username, password, payload):
+    def save_seetong_cloud_cache(self, username, password, payload, env='pro'):
         """保存 Seetong 云登录缓存。"""
         import time
         try:
             scoped_key = self._build_scoped_key(
                 "seetong_cloud",
+                normalize_environment(env),
                 username,
                 hashlib.sha256((password or "").encode("utf-8")).hexdigest(),
             )
@@ -391,13 +431,14 @@ class ConfigManager:
             logger.error(f"保存 Seetong 云缓存失败: {e}")
             return False
 
-    def load_seetong_cloud_cache(self, username, password, max_age_seconds):
+    def load_seetong_cloud_cache(self, username, password, max_age_seconds, env='pro'):
         """加载 Seetong 云登录缓存。"""
         import time
 
         try:
             scoped_key = self._build_scoped_key(
                 "seetong_cloud",
+                normalize_environment(env),
                 username,
                 hashlib.sha256((password or "").encode("utf-8")).hexdigest(),
             )
@@ -416,12 +457,13 @@ class ConfigManager:
             logger.debug(f"加载 Seetong 云缓存失败: {e}")
         return None
 
-    def clear_seetong_cloud_cache(self, username, password):
+    def clear_seetong_cloud_cache(self, username, password, env='pro'):
         """清理 Seetong 云登录缓存。"""
         reg_key = None
         try:
             scoped_key = self._build_scoped_key(
                 "seetong_cloud",
+                normalize_environment(env),
                 username,
                 hashlib.sha256((password or "").encode("utf-8")).hexdigest(),
             )
@@ -454,9 +496,13 @@ config_manager = ConfigManager()
 
 
 # 向后兼容的函数
-def get_account_config():
+def get_active_environment():
+    return config_manager.get_active_environment()
+
+
+def get_account_config(env=None):
     """获取账号配置（向后兼容）"""
-    config = config_manager.load_account_config()
+    config = config_manager.load_account_config(env)
     return config.env, config.username, config.password
 
 
@@ -488,15 +534,15 @@ def save_firmware_file_dialog_dir(directory):
     return config_manager.save_firmware_file_dialog_dir(directory)
 
 
-def get_seetong_account_config():
+def get_seetong_account_config(env=None):
     """获取 Seetong 账号配置"""
-    config = config_manager.load_seetong_account_config()
+    config = config_manager.load_seetong_account_config(env)
     return config.username, config.password
 
 
-def save_seetong_account_config(username, password):
+def save_seetong_account_config(username, password, env=None):
     """保存 Seetong 账号配置"""
-    config = SeetongAccountConfig(username=username, password=password)
+    config = SeetongAccountConfig(username=username, password=password, env=env or config_manager.get_active_environment())
     return config_manager.save_seetong_account_config(config)
 
 

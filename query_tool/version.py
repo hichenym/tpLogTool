@@ -4,7 +4,7 @@
 
 # 版本号配置
 VERSION_MAJOR = 3  # 主版本号：重大功能更新或架构变更
-VERSION_MINOR = 7  # 次版本号：新增功能或较大改进
+VERSION_MINOR = 8  # 次版本号：新增功能或较大改进
 VERSION_PATCH = 3  # 修订号：Bug修复或小改进
 
 # 自动获取编译日期

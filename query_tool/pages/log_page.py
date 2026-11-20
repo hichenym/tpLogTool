@@ -42,10 +42,16 @@ from .page_registry import register_page
 from query_tool.utils import StyleManager, config_manager, get_account_config, get_seetong_account_config
 from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.logger import logger
-from query_tool.utils.siot_debug import DEFAULT_COMMAND_TIMEOUT_MS, is_getsystemcfg_command, is_syscmd_family_command
+from query_tool.utils.siot_debug import (
+    CloudCredentialPrefetcher,
+    DEFAULT_COMMAND_TIMEOUT_MS,
+    build_connect_payload,
+    is_getsystemcfg_command,
+    is_syscmd_family_command,
+)
 from query_tool.utils.siot_debug.service import resolve_device_credentials
 from query_tool.utils.theme_manager import t
-from query_tool.widgets import PlainTextEdit
+from query_tool.widgets import PlainTextEdit, prompt_configure_account
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -175,6 +181,7 @@ class BatchLogFetchThread(QThread):
         self._process_lock = threading.Lock()
         self._active_processes = set()
         self._executor = None
+        self._cloud_prefetcher = CloudCredentialPrefetcher(seetong_username, seetong_password, env=env)
 
     def cancel(self):
         self._stop_event.set()
@@ -199,6 +206,7 @@ class BatchLogFetchThread(QThread):
         failed_devices = 0
         total_files = 0
 
+        self._cloud_prefetcher.start()
         executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self._executor = executor
         pending_futures = set()
@@ -372,7 +380,14 @@ class BatchLogFetchThread(QThread):
         process = None
         event_queue = None
         try:
-            process, event_queue = self._start_process(credentials)
+            prefetched_cloud_credentials = None
+            protocol = str(credentials.protocol or "").strip().lower()
+            if protocol != "p2p":
+                prefetched_cloud_credentials = self._cloud_prefetcher.get(require=protocol == "siot")
+            process, event_queue = self._start_process(
+                credentials,
+                prefetched_cloud_credentials=prefetched_cloud_credentials,
+            )
             self._wait_for_connect(
                 event_queue,
                 status_callback=lambda text: self._on_connect_status(
@@ -592,7 +607,7 @@ class BatchLogFetchThread(QThread):
             return command
         return f"GetSystemCfg {command}"
 
-    def _start_process(self, credentials):
+    def _start_process(self, credentials, prefetched_cloud_credentials=None):
         process = subprocess.Popen(
             build_internal_command("--siot-subprocess-runner"),
             stdin=subprocess.PIPE,
@@ -613,21 +628,12 @@ class BatchLogFetchThread(QThread):
             self._active_processes.add(process)
         self._send_payload(
             process,
-            {
-                "action": "connect",
-                "cloud": {
-                    "username": self.seetong_username,
-                    "password": self.seetong_password,
-                },
-                "device": {
-                    "sn": credentials.sn,
-                    "username": credentials.username,
-                    "password": credentials.password,
-                    "dev_id": credentials.dev_id,
-                    "protocol": credentials.protocol,
-                    "is_siot": credentials.is_siot,
-                },
-            },
+            build_connect_payload(
+                device_credentials=credentials,
+                cloud_username=self.seetong_username,
+                cloud_password=self.seetong_password,
+                prefetched_cloud_credentials=prefetched_cloud_credentials,
+            ),
         )
         return process, event_queue
 
@@ -1128,6 +1134,15 @@ class LogPage(BasePage):
         self.retry_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         self.retry_btn.setEnabled(False)
         self.retry_btn.clicked.connect(self.on_retry_clicked)
+        self.reset_btn = QPushButton("重置")
+        self.reset_btn.setIcon(QIcon(":/icons/common/clean.png"))
+        self.reset_btn.setIconSize(QSize(16, 16))
+        self.reset_btn.setFixedSize(72, 28)
+        self.reset_btn.setToolTip("清空当前执行结果")
+        self.reset_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+        self.reset_btn.setEnabled(False)
+        self.reset_btn.clicked.connect(self.on_reset_clicked)
+        table_action_row.addWidget(self.reset_btn)
         table_action_row.addWidget(self.retry_btn)
 
         table_layout.addLayout(table_action_row)
@@ -1250,6 +1265,13 @@ class LogPage(BasePage):
                 self.worker_thread.cancel()
             return
 
+        seetong_username, seetong_password = get_seetong_account_config()
+        seetong_username = (seetong_username or "").strip()
+        seetong_password = (seetong_password or "").strip()
+        if not seetong_username or not seetong_password:
+            prompt_configure_account(self, account_type="seetong")
+            return
+
         sn_list = self._parse_sn_input(self.sn_input.toPlainText())
         self._start_execution(sn_list, reset_table=True, run_mode="execute")
 
@@ -1264,6 +1286,14 @@ class LogPage(BasePage):
 
         self._start_execution(selected_sns, reset_table=False, run_mode="retry")
 
+    def on_environment_changed(self, env):
+        self._reset_result_view()
+
+    def on_reset_clicked(self):
+        if self.fetch_running:
+            return
+        self._reset_result_view()
+
     def _collect_execution_context(self):
         commands = self.get_command_list()
         if not commands:
@@ -1272,12 +1302,15 @@ class LogPage(BasePage):
 
         env, device_username, device_password = get_account_config()
         if not device_username or not device_password:
-            self.show_warning("请先在设置中配置运维账号")
+            prompt_configure_account(self, account_type="device")
             return None
 
         seetong_username, seetong_password = get_seetong_account_config()
         seetong_username = (seetong_username or "").strip()
         seetong_password = (seetong_password or "").strip()
+        if not seetong_username or not seetong_password:
+            prompt_configure_account(self, account_type="seetong")
+            return None
         return {
             "commands": commands,
             "env": env,
@@ -1497,6 +1530,27 @@ class LogPage(BasePage):
         self._apply_result_column_widths()
         self._update_result_selection_state()
 
+    def _reset_result_view(self):
+        self._row_map = {}
+        self._device_payloads = {}
+        self.result_table.clearSelection()
+        self.result_table.setRowCount(0)
+        self.summary_label.setText("等待开始")
+        self.summary_label.setVisible(False)
+        self.detail_header_label.setText("设备执行详情")
+        self.detail_header_label.setVisible(False)
+        self.detail_view.clear()
+
+        self._result_checkbox_updating = True
+        try:
+            self.result_select_all_checkbox.setChecked(False)
+            self.result_corner_checkbox.setChecked(False)
+        finally:
+            self._result_checkbox_updating = False
+
+        self._apply_result_column_widths()
+        self._update_result_selection_state()
+
     def _prepare_retry_rows(self, sn_list):
         total_commands = len(self.get_command_list())
         for sn in sn_list:
@@ -1545,9 +1599,11 @@ class LogPage(BasePage):
         self.command_input.setEnabled(not running)
         self.sn_input.setEnabled(not running)
         self._set_result_checkboxes_enabled(not running)
-        self.result_select_all_checkbox.setEnabled(not running and self.result_table.rowCount() > 0)
-        self.result_corner_checkbox.setEnabled(not running and self.result_table.rowCount() > 0)
+        has_result_rows = self._has_result_rows()
+        self.result_select_all_checkbox.setEnabled(not running and has_result_rows)
+        self.result_corner_checkbox.setEnabled(not running and has_result_rows)
         self.retry_btn.setEnabled((not running) and self._has_selected_retryable_rows())
+        self.reset_btn.setEnabled((not running) and has_result_rows)
         self._update_fetch_button_state()
         if running:
             self.command_input.setReadOnly(True)
@@ -1646,6 +1702,8 @@ class LogPage(BasePage):
             self.choose_download_path_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         if hasattr(self, "fetch_btn"):
             self.fetch_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
+        if hasattr(self, "reset_btn"):
+            self.reset_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         if hasattr(self, "retry_btn"):
             self.retry_btn.setStyleSheet(StyleManager.get_ACTION_BUTTON())
         if hasattr(self, "download_path_label"):
@@ -2172,6 +2230,9 @@ class LogPage(BasePage):
     def _has_selected_retryable_rows(self) -> bool:
         return bool(self._get_selected_retryable_sns())
 
+    def _has_result_rows(self) -> bool:
+        return self.result_table.rowCount() > 0
+
     def _update_result_selection_state(self):
         total = self.result_table.rowCount()
         selected_rows = self._selected_result_rows()
@@ -2197,6 +2258,7 @@ class LogPage(BasePage):
             self.result_selection_label.setText(f"已选 {selected_count} / {total}，可重试 {retryable_count} 台")
 
         self.retry_btn.setEnabled((not self.fetch_running) and retryable_count > 0)
+        self.reset_btn.setEnabled((not self.fetch_running) and total > 0)
 
     def _build_file_segments(self, lines):
         return [

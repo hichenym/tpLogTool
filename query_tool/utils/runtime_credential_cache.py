@@ -24,8 +24,8 @@ def _account_key(env: str, username: str, password: str) -> str:
     return config_manager._build_scoped_key("runtime_account", env, username, password)
 
 
-def _cloud_key(username: str, password: str) -> str:
-    return config_manager._build_scoped_key("runtime_cloud", username, password)
+def _cloud_key(username: str, password: str, env: str = 'pro') -> str:
+    return config_manager._build_scoped_key("runtime_cloud", env, username, password)
 
 
 def get_shared_device_query(
@@ -61,10 +61,11 @@ def load_cached_cloud_credentials(
     username: str,
     password: str,
     *,
+    env: str = 'pro',
     ttl_seconds: float = SEETONG_CLOUD_CACHE_TTL_S,
 ) -> Optional["CloudCredentials"]:
     """优先从进程内，其次从注册表加载 Seetong 云凭证缓存。"""
-    key = _cloud_key(username, password)
+    key = _cloud_key(username, password, env)
     now = time.time()
 
     with _cache_lock:
@@ -72,7 +73,7 @@ def load_cached_cloud_credentials(
         if entry and (now - entry["created_at"]) < ttl_seconds:
             return entry["credentials"]
 
-    payload = config_manager.load_seetong_cloud_cache(username, password, ttl_seconds)
+    payload = config_manager.load_seetong_cloud_cache(username, password, ttl_seconds, env=env)
     if not payload:
         return None
 
@@ -80,8 +81,11 @@ def load_cached_cloud_credentials(
         from query_tool.utils.siot_debug.models import CloudCredentials
 
         credentials = CloudCredentials(**payload)
+        if credentials.env != env:
+            config_manager.clear_seetong_cloud_cache(username, password, env=env)
+            return None
     except Exception as exc:
-        config_manager.clear_seetong_cloud_cache(username, password)
+        config_manager.clear_seetong_cloud_cache(username, password, env=env)
         return None
 
     with _cache_lock:
@@ -92,21 +96,21 @@ def load_cached_cloud_credentials(
     return credentials
 
 
-def save_cached_cloud_credentials(username: str, password: str, credentials: "CloudCredentials") -> None:
+def save_cached_cloud_credentials(username: str, password: str, credentials: "CloudCredentials", env: str = 'pro') -> None:
     """保存 Seetong 云凭证到进程内和注册表。"""
-    key = _cloud_key(username, password)
+    key = _cloud_key(username, password, env)
     now = time.time()
     with _cache_lock:
         _cloud_credentials_cache[key] = {
             "credentials": credentials,
             "created_at": now,
         }
-    config_manager.save_seetong_cloud_cache(username, password, asdict(credentials))
+    config_manager.save_seetong_cloud_cache(username, password, asdict(credentials), env=env)
 
 
-def invalidate_cached_cloud_credentials(username: str, password: str) -> None:
+def invalidate_cached_cloud_credentials(username: str, password: str, env: str = 'pro') -> None:
     """清理 Seetong 云凭证缓存。"""
-    key = _cloud_key(username, password)
+    key = _cloud_key(username, password, env)
     with _cache_lock:
         _cloud_credentials_cache.pop(key, None)
-    config_manager.clear_seetong_cloud_cache(username, password)
+    config_manager.clear_seetong_cloud_cache(username, password, env=env)

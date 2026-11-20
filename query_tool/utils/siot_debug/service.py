@@ -15,6 +15,7 @@ from query_tool.utils.internal_launch import build_internal_command
 from query_tool.utils.logger import logger
 from query_tool.utils.runtime_credential_cache import get_shared_device_query
 
+from .connect_payload import CloudCredentialPrefetcher, build_connect_payload
 from .config import DEFAULT_COMMAND_TIMEOUT_MS, DEVICE_USERNAME
 from .models import DeviceCredentials
 from .session import fetch_cloud_credentials
@@ -45,7 +46,7 @@ def _normalize_user_message(message: str) -> str:
     return str(message or "").strip()
 
 
-def validate_seetong_login(username: str, password: str) -> Tuple[bool, str]:
+def validate_seetong_login(username: str, password: str, env: str = 'pro') -> Tuple[bool, str]:
     """校验 Seetong 账号是否可登录。"""
     username = username.strip()
     password = password.strip()
@@ -53,21 +54,25 @@ def validate_seetong_login(username: str, password: str) -> Tuple[bool, str]:
         return False, "请输入账号和密码"
 
     try:
-        fetch_cloud_credentials(username, password, force_refresh=True)
+        fetch_cloud_credentials(username, password, force_refresh=True, env=env)
         return True, "验证成功"
     except Exception as exc:
         logger.error(f"Seetong 账号验证失败: {exc}")
         return False, str(exc)
 
 
-def resolve_device_credentials(sn: str, env: str, username: str, password: str) -> Tuple[DeviceCredentials, Dict[str, str]]:
+def resolve_device_credentials(sn: str, env: str, username: str, password: str) -> Tuple[DeviceCredentials, Dict[str, object]]:
     """通过设备查询接口按 SN 获取设备密码，并组装调试连接所需凭据。"""
     password_digest = hashlib.sha256((password or "").encode("utf-8")).hexdigest()
     cache_key = f"{env}|{username}|{password_digest}|{sn.strip().upper()}"
     now = time.time()
     with _DEVICE_CONTEXT_CACHE_LOCK:
         entry = _DEVICE_CONTEXT_CACHE.get(cache_key)
-        if entry and (now - entry["created_at"]) < _DEVICE_CONTEXT_CACHE_TTL_S:
+        if (
+            entry
+            and entry["context"].get("is_siot") is not False
+            and (now - entry["created_at"]) < _DEVICE_CONTEXT_CACHE_TTL_S
+        ):
             context = dict(entry["context"])
             return (
                 DeviceCredentials(
@@ -77,6 +82,7 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
                     dev_id=context.get("dev_id", ""),
                     is_siot=context.get("is_siot"),
                     protocol=context.get("protocol", "auto"),
+                    env=env,
                 ),
                 context,
             )
@@ -94,7 +100,17 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
     dev_id = str(record.get("devId") or "").strip()
     real_sn = str(record.get("devSN") or sn).strip()
     is_siot = query.is_siot_platform_device(dev_id=dev_id, sn=real_sn)
-    protocol = "siot" if is_siot is True else "p2p" if is_siot is False else "auto"
+    online_state = None
+    if is_siot is True:
+        protocol = "siot"
+    elif is_siot is False:
+        try:
+            online_state = query.query_device_online_state(real_sn, dev_id=dev_id)
+        except Exception as exc:
+            logger.warning("查询非SIOT设备在线状态失败 %s: %s", real_sn, exc)
+        protocol = "p2p_then_siot" if online_state is True else "p2p"
+    else:
+        protocol = "auto"
     model = str(
         record.get("devModel")
         or record.get("deviceModel")
@@ -103,22 +119,6 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
     ).strip()
     if not dev_id:
         raise RuntimeError("设备ID为空，无法获取设备密码")
-
-    if not model and is_siot is not False:
-        try:
-            header_info = query.get_device_header(real_sn)
-            header_data = header_info.get("data") or {}
-            model = str(header_data.get("productName") or "").strip()
-        except Exception:
-            model = ""
-
-    if not model:
-        try:
-            version = str(query.get_device_version(dev_id) or "").strip()
-            if "-" in version:
-                model = version.split("-", 1)[0].strip()
-        except Exception:
-            model = ""
 
     device_password = (query.get_cloud_password(dev_id) or "").strip()
     if not device_password:
@@ -130,13 +130,16 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
         "dev_id": dev_id,
         "device_password": device_password,
         "is_siot": is_siot,
+        "online_state": online_state,
         "protocol": protocol,
+        "env": env,
     }
     with _DEVICE_CONTEXT_CACHE_LOCK:
-        _DEVICE_CONTEXT_CACHE[cache_key] = {
-            "context": dict(context),
-            "created_at": now,
-        }
+        if is_siot is not False:
+            _DEVICE_CONTEXT_CACHE[cache_key] = {
+                "context": dict(context),
+                "created_at": now,
+            }
 
     return (
         DeviceCredentials(
@@ -146,6 +149,7 @@ def resolve_device_credentials(sn: str, env: str, username: str, password: str) 
             dev_id=dev_id,
             is_siot=is_siot,
             protocol=protocol,
+            env=env,
         ),
         context,
     )
@@ -199,7 +203,12 @@ class SiotDebugWorker(QObject):
             elif context.get("is_siot") is False:
                 self.status_message.emit("查询到非SIOT设备")
             if protocol == "siot" and (not seetong_username.strip() or not seetong_password.strip()):
-                raise RuntimeError("当前设备为SIOT设备，请先在设置中配置Seetong账号")
+                from query_tool.utils.environment import environment_label
+                raise RuntimeError(f"当前设备为SIOT设备，请先在设置中配置{environment_label(env)}Seetong账号")
+            prefetched_cloud_credentials = None
+            if protocol in {"siot", "auto"}:
+                prefetcher = CloudCredentialPrefetcher(seetong_username, seetong_password, env=env).start()
+                prefetched_cloud_credentials = prefetcher.get(require=protocol == "siot")
             self.status_message.emit(f"已获取设备密码，目标设备: {context['sn']}")
 
             process = subprocess.Popen(
@@ -232,21 +241,12 @@ class SiotDebugWorker(QObject):
                 return
 
             self._send_to_process(
-                {
-                    "action": "connect",
-                    "cloud": {
-                        "username": seetong_username,
-                        "password": seetong_password,
-                    },
-                    "device": {
-                        "sn": credentials.sn,
-                        "username": credentials.username,
-                        "password": credentials.password,
-                        "dev_id": credentials.dev_id,
-                        "protocol": credentials.protocol,
-                        "is_siot": credentials.is_siot,
-                    },
-                }
+                build_connect_payload(
+                    device_credentials=credentials,
+                    cloud_username=seetong_username,
+                    cloud_password=seetong_password,
+                    prefetched_cloud_credentials=prefetched_cloud_credentials,
+                )
             )
         except Exception as exc:
             if self._is_connect_cancelled():
@@ -406,7 +406,13 @@ class SiotDebugWorker(QObject):
 
         if event == "connected":
             self._connected = True
-            self._context = self._pending_context or {}
+            self._context = dict(self._pending_context or {})
+            protocol = str(payload.get("protocol") or "").strip().lower()
+            if protocol:
+                self._context["connected_protocol"] = "tpsrtc" if protocol == "siot" else protocol
+            fallback_from = str(payload.get("fallback_from") or "").strip().lower()
+            if fallback_from:
+                self._context["fallback_from"] = "tpsrtc" if fallback_from == "siot" else fallback_from
             self.connected.emit(self._context)
             self._closing = False
             return

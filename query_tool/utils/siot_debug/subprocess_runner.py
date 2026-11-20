@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import shlex
 import sys
 import threading
 import time
@@ -12,19 +10,18 @@ from datetime import datetime
 from pathlib import Path
 
 from .command_catalog import is_getsystemcfg_command, is_startlogp2p_command, is_syscmd_family_command, parse_startlogp2p_level
-from .config import APP_LOG_DIR, DEFAULT_COMMAND_TIMEOUT_MS, RUN_LOG_PATH
-from .models import CommandResult, DeviceCredentials, TransferProgress
-from .p2p_session import P2PDeviceSession
+from .config import DEFAULT_COMMAND_TIMEOUT_MS
+from .models import CloudCredentials, CommandResult, DeviceCredentials, TransferProgress
+from .p2p_session import P2PConnectionError, P2PDeviceSession
 from .session import DeviceSession
 
 CONNECT_WAKEUP_ATTEMPTS = 1
 AUTH_RETRY_ATTEMPTS = 2
 AUTH_RETRY_DELAY_S = 0.8
-INIT_START_ATTEMPTS = 2
-INIT_START_RETRY_DELAY_S = 0.8
 INIT_START_TIMEOUT_MS = 5_000
 STREAM_LOG_FLUSH_INTERVAL_S = 0.2
 STREAM_LOG_MAX_BATCH = 50
+P2P_THEN_SIOT_PROTOCOL = "p2p_then_siot"
 
 
 def _is_auth_failed_message(message: str) -> bool:
@@ -54,7 +51,11 @@ class _StreamLogEmitter:
     def start(self, device_sn: str, download_root: str):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_sn = (device_sn or "unknown").strip() or "unknown"
-        root = Path(download_root).expanduser() if (download_root or "").strip() else APP_LOG_DIR
+        root_text = (download_root or "").strip()
+        if not root_text:
+            self.stop(flush=False)
+            return ""
+        root = Path(root_text).expanduser()
         stream_log_dir = root / safe_sn
         stream_log_dir.mkdir(parents=True, exist_ok=True)
         self.stop(flush=False)
@@ -117,21 +118,10 @@ _STREAM_LOG_EMITTER = _StreamLogEmitter()
 
 
 def _configure_runtime_logging():
-    APP_LOG_DIR.mkdir(parents=True, exist_ok=True)
-
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
-    root_logger.setLevel(logging.INFO)
-
-    file_handler = logging.FileHandler(str(RUN_LOG_PATH), encoding="utf-8")
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s %(levelname)s:%(name)s:%(message)s",
-            datefmt="%m-%d %H:%M:%S",
-        )
-    )
-    root_logger.addHandler(file_handler)
+    root_logger.setLevel(logging.CRITICAL + 1)
+    root_logger.addHandler(logging.NullHandler())
 
 
 def _emit(event: str, **payload):
@@ -145,6 +135,11 @@ def _format_file_progress(progress: TransferProgress) -> str:
     filename = progress.filename or "(unknown)"
     size_kb = progress.received_bytes / 1024
     return f"正在下载 {filename}: {size_kb:.1f} kb，包#{progress.packet_index}"
+
+
+def _format_prepare_download_message(command: str) -> str:
+    filename = _resolve_requested_filename(command)
+    return f"正在准备下载 {filename}..."
 
 
 class _ProgressEmitter:
@@ -180,6 +175,15 @@ class _ProgressEmitter:
             "progress",
             progress_id=self.progress_id,
             message=self._format_progress_text(progress),
+        )
+
+    def emit_message(self, message: str):
+        if message is None:
+            return
+        _emit(
+            "progress",
+            progress_id=self.progress_id,
+            message=str(message),
         )
 
     def _format_progress_text(self, progress: TransferProgress) -> str:
@@ -229,6 +233,13 @@ def _resolve_output_filename(command: str, result: CommandResult) -> str:
     return Path(candidate).name or "download.bin"
 
 
+def _resolve_requested_filename(command: str) -> str:
+    requested_path = _extract_getsystemcfg_path(command)
+    if not requested_path:
+        return "download.bin"
+    return Path(requested_path).name or "download.bin"
+
+
 def _save_getsystemcfg_file(command: str, result: CommandResult, download_root: str, device_sn: str) -> str:
     if not result.binary_payload:
         return ""
@@ -275,7 +286,7 @@ def _is_wakeup_failed_message(message: str) -> bool:
 
 def _normalized_protocol(credentials: DeviceCredentials) -> str:
     protocol = (credentials.protocol or "").strip().lower()
-    if protocol in {"siot", "p2p", "auto"}:
+    if protocol in {"siot", "p2p", "auto", P2P_THEN_SIOT_PROTOCOL}:
         return protocol
     if credentials.is_siot is True:
         return "siot"
@@ -288,6 +299,7 @@ def _build_session_factories(
     credentials: DeviceCredentials,
     cloud_username: str,
     cloud_password: str,
+    prefetched_cloud_credentials: CloudCredentials | None = None,
 ) -> list[tuple[str, Callable[[], object]]]:
     protocol = _normalized_protocol(credentials)
     factories: list[tuple[str, Callable[[], object]]] = []
@@ -296,41 +308,50 @@ def _build_session_factories(
         factories.append(("p2p", P2PDeviceSession))
         return factories
 
+    if protocol == P2P_THEN_SIOT_PROTOCOL:
+        factories.append(("p2p", P2PDeviceSession))
+        if cloud_username and cloud_password:
+            factories.append(
+                (
+                    "siot",
+                    lambda: DeviceSession(
+                        cloud_username,
+                        cloud_password,
+                        prefetched_cloud_credentials=prefetched_cloud_credentials,
+                    ),
+                )
+            )
+        return factories
+
     if protocol == "siot":
         if not cloud_username or not cloud_password:
-            raise RuntimeError("当前设备为SIOT设备，请先在设置中配置Seetong账号")
-        factories.append(("siot", lambda: DeviceSession(cloud_username, cloud_password)))
+                from query_tool.utils.environment import environment_label
+                raise RuntimeError(f"当前设备为SIOT设备，请先在设置中配置{environment_label(credentials.env)}Seetong账号")
+        factories.append(
+            (
+                "siot",
+                lambda: DeviceSession(
+                    cloud_username,
+                    cloud_password,
+                    prefetched_cloud_credentials=prefetched_cloud_credentials,
+                ),
+            )
+        )
         return factories
 
     if cloud_username and cloud_password:
-        factories.append(("siot", lambda: DeviceSession(cloud_username, cloud_password)))
+        factories.append(
+            (
+                "siot",
+                lambda: DeviceSession(
+                    cloud_username,
+                    cloud_password,
+                    prefetched_cloud_credentials=prefetched_cloud_credentials,
+                ),
+            )
+        )
     factories.append(("p2p", P2PDeviceSession))
     return factories
-
-
-def _try_probe_file_size(session, command: str) -> int:
-    file_path = _extract_getsystemcfg_path(command)
-    if not file_path:
-        return 0
-
-    quoted_path = shlex.quote(file_path)
-    probe_commands = (
-        f"syscmd stat -c %s -- {quoted_path}",
-        f"syscmd wc -c < {quoted_path}",
-    )
-    for probe_command in probe_commands:
-        try:
-            result = session.execute_command(probe_command, timeout_ms=5000, progress_callback=None)
-        except Exception:
-            continue
-        text = (result.display_text or "").strip()
-        match = re.search(r"(\d+)", text)
-        if match:
-            try:
-                return int(match.group(1))
-            except ValueError:
-                continue
-    return 0
 
 
 def _handle_command(session, payload: dict):
@@ -359,11 +380,12 @@ def _handle_command(session, payload: dict):
                 _emit("output", message=f"已开启 P2P 实时日志监听，开始写入: {stream_log_path}")
             else:
                 _emit("output", message="已开启 P2P 实时日志监听")
-        total_bytes = _try_probe_file_size(session, command) if is_getsystemcfg_command(command) else 0
         progress_emitter = _ProgressEmitter(
             progress_id=f"{command}:{time.monotonic_ns()}",
-            total_bytes=total_bytes,
+            total_bytes=0,
         )
+        if is_getsystemcfg_command(command):
+            progress_emitter.emit_message(_format_prepare_download_message(command))
         result = session.execute_command(
             command,
             timeout_ms=timeout_ms,
@@ -415,24 +437,21 @@ def _connect_with_retries(session_factory: Callable[[], object], credentials: De
             session = session_factory()
             try:
                 session.connect(credentials, status_callback=lambda msg: _emit("status", message=msg))
-                init_result = None
-                for init_attempt in range(INIT_START_ATTEMPTS):
+                try:
                     init_result = session.execute_command(
                         "syscmd start",
                         timeout_ms=INIT_START_TIMEOUT_MS,
                         progress_callback=None,
                         stream_log_callback=None,
                     )
-                    if init_result.success:
-                        break
-                    if _is_empty_start_result(init_result):
-                        if init_attempt < INIT_START_ATTEMPTS - 1:
-                            time.sleep(INIT_START_RETRY_DELAY_S)
-                            continue
-                        logging.warning("syscmd start returned empty result during connect; treating as soft success")
-                        break
+                except P2PConnectionError as exc:
+                    # TPSRTC fallback is reserved for the initial P2P login only.
+                    raise RuntimeError(str(exc)) from exc
+                if not init_result.success and not _is_empty_start_result(init_result):
                     init_message = (init_result.display_text or _format_command_result("syscmd start", init_result)).strip()
                     raise RuntimeError(init_message or "初始化交互终端失败")
+                if _is_empty_start_result(init_result):
+                    logging.warning("syscmd start returned empty result during connect; treating as soft success")
                 return session
             except Exception as exc:
                 last_connect_error = str(exc)
@@ -455,6 +474,50 @@ def _connect_with_retries(session_factory: Callable[[], object], credentials: De
                 raise RuntimeError("\n".join(wakeup_failures) or "唤醒失败")
 
     raise RuntimeError(last_connect_error or "登录设备失败")
+
+
+def _connect_with_protocol_fallback(
+    credentials: DeviceCredentials,
+    cloud_username: str,
+    cloud_password: str,
+    prefetched_cloud_credentials: CloudCredentials | None = None,
+):
+    protocol = _normalized_protocol(credentials)
+    session_factories = _build_session_factories(
+        credentials,
+        cloud_username,
+        cloud_password,
+        prefetched_cloud_credentials=prefetched_cloud_credentials,
+    )
+    if protocol != P2P_THEN_SIOT_PROTOCOL and len(session_factories) > 1:
+        protocol_names = " -> ".join(name.upper() for name, _ in session_factories)
+        _emit("status", message=f"设备类型未明确，按 {protocol_names} 顺序尝试连接...")
+
+    connect_errors = []
+    for index, (protocol_name, session_factory) in enumerate(session_factories):
+        try:
+            session = _connect_with_retries(session_factory, credentials)
+            return session, protocol_name, "p2p" if index > 0 else ""
+        except Exception as exc:
+            connect_errors.append(str(exc))
+            if protocol == P2P_THEN_SIOT_PROTOCOL:
+                if protocol_name != "p2p" or not isinstance(exc, P2PConnectionError):
+                    raise
+                if index < len(session_factories) - 1:
+                    _emit("status", message="P2P连接失败，切换TPSRTC")
+                    continue
+                raise RuntimeError(
+                    f"{exc}\\n设备已确认在线，但未配置Seetong账号，无法尝试TPSRTC兼容连接。"
+                ) from exc
+
+            if index < len(session_factories) - 1:
+                _emit("status", message=f"{protocol_name.upper()}连接失败，正在尝试备用协议...")
+                continue
+            if len(connect_errors) > 1:
+                raise RuntimeError("\\n".join(connect_errors))
+            raise
+
+    raise RuntimeError("登录设备失败")
 
 
 def main():
@@ -481,30 +544,26 @@ def main():
             dev_id=str(device.get("dev_id") or "").strip(),
             is_siot=device.get("is_siot"),
             protocol=str(device.get("protocol") or "").strip() or "auto",
+            env=str(device.get("env") or 'pro'),
         )
 
         cloud_username = str(cloud.get("username") or "").strip()
         cloud_password = str(cloud.get("password") or "").strip()
-        connect_errors = []
-        session_factories = _build_session_factories(credentials, cloud_username, cloud_password)
-        if len(session_factories) > 1:
-            protocol_names = " -> ".join(name.upper() for name, _ in session_factories)
-            _emit("status", message=f"设备类型未明确，按 {protocol_names} 顺序尝试连接...")
-
-        for index, (protocol_name, session_factory) in enumerate(session_factories):
+        prefetched_cloud_credentials = None
+        cloud_credentials_payload = cloud.get("credentials")
+        if isinstance(cloud_credentials_payload, dict):
             try:
-                session = _connect_with_retries(session_factory, credentials)
-                connected = True
-                _emit("connected")
-                break
-            except Exception as exc:
-                connect_errors.append(str(exc))
-                if index < len(session_factories) - 1:
-                    _emit("status", message=f"{protocol_name.upper()}连接失败，正在尝试备用协议...")
-                    continue
-                if len(connect_errors) > 1:
-                    raise RuntimeError("\n".join(connect_errors))
-                raise
+                prefetched_cloud_credentials = CloudCredentials(**cloud_credentials_payload)
+            except Exception:
+                prefetched_cloud_credentials = None
+        session, connected_protocol, fallback_from = _connect_with_protocol_fallback(
+            credentials,
+            cloud_username,
+            cloud_password,
+            prefetched_cloud_credentials=prefetched_cloud_credentials,
+        )
+        connected = True
+        _emit("connected", protocol=connected_protocol, fallback_from=fallback_from)
 
         while True:
             line = sys.stdin.readline()
